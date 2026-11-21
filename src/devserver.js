@@ -5,7 +5,8 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { Backend } = require("./backend");
-const { dispatch } = require("./api");
+const { dispatch, lockedState } = require("./api");
+const { AuthManager } = require("./auth");
 
 const PORT = Number(process.env.PORT || 5181);
 const dataDir = process.env.AF_DATA || path.join(__dirname, "..", ".devdata");
@@ -23,10 +24,19 @@ const backend = new Backend({
   encrypt: (s) => "plain:" + Buffer.from(s).toString("base64"),
   decrypt: (s) => (s.startsWith("plain:") ? Buffer.from(s.slice(6), "base64").toString() : s),
 });
+const enc = (s) => "plain:" + Buffer.from(s).toString("base64");
+const dec = (s) => (s.startsWith("plain:") ? Buffer.from(s.slice(6), "base64").toString() : s);
+const auth = new AuthManager({ dataDir, encrypt: enc, decrypt: dec, openExternal: (url) => console.log("Open to sign in with Google:", url) });
+backend.authInfo = () => auth.public();
+let started = false;
 const clients = new Set();
 const send = (type, payload) => { const msg = `data: ${JSON.stringify({ type, payload })}\n\n`; for (const c of clients) c.write(msg); };
-backend.on("state", (s) => send("state", s));
-backend.on("log", (l) => send("log", l));
+const sendState = () => send("state", auth.signedIn && started ? backend.publicState() : lockedState(auth));
+backend.on("state", (s) => auth.signedIn && send("state", s));
+backend.on("log", (l) => auth.signedIn && send("log", l));
+auth.on("change", sendState);
+auth.on("signedIn", async () => { if (!started) { started = true; await backend.init(); } sendState(); });
+auth.on("signedOut", () => { console.log("signed out — restart the dev server"); sendState(); });
 
 const MIME = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml", ".png": "image/png" };
 const RENDERER = path.join(__dirname, "..", "renderer");
@@ -36,7 +46,7 @@ http.createServer(async (req, res) => {
   if (url.pathname === "/events") {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
     clients.add(res);
-    res.write(`data: ${JSON.stringify({ type: "state", payload: backend.publicState() })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: "state", payload: auth.signedIn && started ? backend.publicState() : lockedState(auth) })}\n\n`);
     req.on("close", () => clients.delete(res));
     return;
   }
@@ -45,7 +55,7 @@ http.createServer(async (req, res) => {
     req.on("data", (c) => (body += c));
     req.on("end", async () => {
       try {
-        const value = await dispatch(backend, url.pathname.slice(5), JSON.parse(body || "[]"));
+        const value = await dispatch({ backend, auth }, url.pathname.slice(5), JSON.parse(body || "[]"));
         res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, value: value ?? null }));
       } catch (e) {
         res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: false, error: String(e.message || e) }));
@@ -58,5 +68,6 @@ http.createServer(async (req, res) => {
   res.writeHead(200, { "Content-Type": MIME[path.extname(file)] || "application/octet-stream" }).end(fs.readFileSync(file));
 }).listen(PORT, async () => {
   console.log(`VYRON dev server on http://localhost:${PORT} (data: ${dataDir})`);
-  await backend.init();
+  await auth.restore();
+  sendState();
 });

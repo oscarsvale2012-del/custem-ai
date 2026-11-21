@@ -1,15 +1,15 @@
-{
+﻿{
   "name": "vyron",
   "productName": "VYRON",
-  "version": "0.4.0",
-  "description": "VYRON — AI game studio: many AI agents, MCP servers and Roblox Studio working together",
+  "version": "0.5.0",
+  "description": "VYRON â€” AI game studio: many AI agents, MCP servers and Roblox Studio working together",
   "main": "main.js",
   "author": "VYRON",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
     "dev:web": "node src/devserver.js",
-    "test": "node test/run.js && node test/revenue.js",
+    "test": "node test/run.js && node test/revenue.js && node test/auth.js",
     "icon": "electron build/render-icon.js",
     "dist": "electron-builder --win --publish never"
   },

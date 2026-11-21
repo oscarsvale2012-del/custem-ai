@@ -191,6 +191,7 @@ class Backend extends EventEmitter {
       studios: this.studios,
       studioError: this.studioError,
       revenue: this.revenuePublic(),
+      auth: this.authInfo ? this.authInfo() : null,
       prompts: this.d.prompts,
       tasks: this.d.tasks.slice(-250).map((t) => ({ ...t, steps: t.steps.slice(-40) })),
       approvals: [...this.approvals.values()].map(({ resolve, ...a }) => a),

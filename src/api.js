@@ -1,5 +1,6 @@
 // The list of backend methods the renderer may call. Anything not listed
-// here cannot be reached from the UI.
+// here cannot be reached from the UI. Until the user is signed in, only the
+// sign-in methods work; everything else is locked.
 const METHODS = [
   "publicState", "saveSettings",
   "addProvider", "updateProvider", "removeProvider", "testProvider",
@@ -13,9 +14,36 @@ const METHODS = [
   "linkRoblox", "unlinkRoblox", "setRobloxApiKey", "clearRobloxApiKey", "refreshRevenue",
 ];
 
-async function dispatch(backend, method, args) {
+const AUTH = {
+  authStatus: (a) => a.public(),
+  authSetup: (a, cfg) => a.setConfig(cfg || {}),
+  authSignIn: (a, x) => a.signIn(x || {}),
+  authSignUp: (a, x) => a.signUp(x || {}),
+  authGoogle: (a) => a.signInWithGoogle(),
+  authCancelGoogle: (a) => a.cancelGoogle(),
+  authResetPassword: (a, x) => a.resetPassword(x || {}),
+  authResendVerify: (a) => a.resendVerification(),
+  authCheckVerified: (a) => a.checkVerified(),
+  authCancelVerify: (a) => a.cancelVerify(),
+  authSignOut: (a) => a.signOut(),
+};
+
+/** ctx = { backend, auth }. auth may be null (tests / no sign-in). */
+function lockedState(auth) { return { locked: true, auth: auth.public() }; }
+
+async function dispatch(ctx, method, args) {
+  const { backend, auth } = ctx.backend ? ctx : { backend: ctx, auth: null };
+  args = Array.isArray(args) ? args : [];
+  if (AUTH[method]) {
+    if (!auth) throw new Error("Sign-in is not available");
+    return AUTH[method](auth, ...args);
+  }
   if (!METHODS.includes(method)) throw new Error("Unknown method " + method);
-  return backend[method](...(Array.isArray(args) ? args : []));
+  if (auth && !auth.signedIn) {
+    if (method === "publicState") return lockedState(auth);
+    throw new Error("Sign in to VYRON first");
+  }
+  return backend[method](...args);
 }
 
-module.exports = { METHODS, dispatch };
+module.exports = { METHODS, dispatch, lockedState };

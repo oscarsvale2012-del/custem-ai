@@ -127,6 +127,8 @@ function restore(root, keep) {
 let lastRoute = null;
 function draw() {
   if (!S) return;
+  if (S.locked) { document.body.classList.add("locked"); drawLock(); return; }
+  if (document.body.classList.contains("locked")) { document.body.classList.remove("locked"); $("#lockRoot").innerHTML = ""; lastRoute = null; }
   document.documentElement.dataset.theme = S.settings.theme === "light" ? "light" : "dark";
   document.body.classList.toggle("noanim", S.settings.animations === false);
   document.body.classList.toggle("reduce", !!S.settings.reduceEffects);
@@ -175,7 +177,8 @@ function drawNav() {
   $("#sideFoot").innerHTML = `
     ${p ? `<div class="mini-proj" data-go="projects">${gameIcon(p, "sm")}<div class="grow"><div class="ell" style="font-weight:600;font-size:13px">${esc(p.game?.name || p.name)}</div><div class="faint" style="font-size:11.5px"><span class="dot ${p.studioConnected ? "connected" : "unknown"}" style="display:inline-block;width:6px;height:6px;margin-right:5px"></span>${p.studioConnected ? "Studio connected" : "Studio not linked"}</div></div></div>`
       : `<div class="mini-proj" data-go="projects"><div class="gicon sm"><div class="fallback">+</div></div><div class="faint" style="font-size:12.5px">Add a project</div></div>`}
-    <div class="faint" style="font-size:11.5px;padding:2px 4px">${conn}/${S.providers.length} providers · ${S.mcpServers.filter((m) => m.status === "connected").length}/${S.mcpServers.length} MCP</div>`;
+    <div class="faint" style="font-size:11.5px;padding:2px 4px">${conn}/${S.providers.length} providers · ${S.mcpServers.filter((m) => m.status === "connected").length}/${S.mcpServers.length} MCP</div>
+    ${S.auth?.user ? `<div class="row acct" data-go="settings" title="${esc(S.auth.user.email)}"><div class="av" style="margin:0;width:24px;height:24px;font-size:10px;overflow:hidden">${S.auth.user.photo ? `<img src="${esc(S.auth.user.photo)}" alt="" style="width:100%;height:100%;object-fit:cover">` : esc(initials(S.auth.user.name))}</div><span class="ell grow" style="font-size:12px">${esc(S.auth.user.email)}</span></div>` : ""}`;
 }
 
 /* ---------------- shared pieces ---------------- */
@@ -584,7 +587,11 @@ VIEWS.tasks = () => {
 VIEWS.settings = () => {
   const s = S.settings;
   const modes = [["ask_all", "Ask before every change", "Every file write and every non-read-only tool needs your approval."], ["ask_destructive", "Ask before risky actions (recommended)", "File edits are applied and backed up (undo any time). Deleting files and Studio/MCP actions that are not read-only ask first."], ["autonomous", "Autonomous", "Agents work on their own. Only deletes and tools marked destructive ask first."]];
-  return `<div class="grid g2">
+  const u = S.auth?.user;
+  return `${u ? `<div class="panel pad row" style="margin-bottom:16px;gap:14px"><div class="ava" style="border-radius:50%;overflow:hidden">${u.photo ? `<img src="${esc(u.photo)}" alt="" style="width:100%;height:100%;object-fit:cover">` : esc(initials(u.name))}</div>
+      <div class="grow"><div class="h3">${esc(u.name)}</div><div class="faint" style="font-size:12.5px">${esc(u.email)} · signed in with ${u.provider === "google" ? "Google" : "email"}${S.auth.offline ? " · offline" : ""}</div></div>
+      <button class="btn sm" data-act="editSignIn">Sign-in settings</button><button class="btn sm danger" data-act="authSignOut">Sign out</button></div>` : ""}
+  <div class="grid g2">
     <div class="panel pad"><div class="h3" style="margin-bottom:14px">Appearance</div>
       <div class="row" style="margin-bottom:14px"><span class="grow">Theme</span><div class="seg">${[["dark", "Dark"], ["light", "Light"]].map(([k, l]) => `<button class="${(s.theme || "dark") === k ? "on" : ""}" data-act="setting" data-key="theme" data-val="${k}">${l}</button>`).join("")}</div></div>
       <div class="row" style="margin-bottom:14px"><span class="grow">Animations</span><div class="toggle ${s.animations !== false ? "on" : ""}" data-act="setting" data-key="animations" data-val="${s.animations === false}"></div></div>
@@ -753,6 +760,83 @@ async function showChange(id) {
     `${c.status !== "undone" ? `<button class="btn" data-act="undo" data-id="${c.id}">${ic("undo")}Undo this change</button>` : '<span class="chip">Undone</span>'}<button class="btn primary" data-act="closeModal">Close</button>`, true);
 }
 
+/* ---------------- sign-in (lock screen) ---------------- */
+const GOOGLE_G = '<svg viewBox="0 0 48 48" width="18" height="18"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>';
+
+function setupForm(editing) {
+  return `<div class="stack" style="gap:2px">
+    <label class="field"><span>Firebase Web API key</span><input class="input mono" id="suKey" placeholder="AIza…" autocomplete="off"><small>Firebase console → Project settings → General → Web API Key.</small></label>
+    <label class="field"><span>Google OAuth client ID <span class="faint">(for “Continue with Google”)</span></span><input class="input mono" id="suGid" placeholder="…apps.googleusercontent.com" autocomplete="off"></label>
+    <label class="field"><span>Google OAuth client secret</span><input class="input mono" type="password" id="suGsec" placeholder="${editing ? "Leave blank to keep the saved one" : "GOCSPX-…"}" autocomplete="off"></label>
+    <label class="field"><span>Only allow these emails <span class="faint">(optional, comma separated)</span></span><input class="input" id="suAllow" placeholder="you@gmail.com"><small>Leave empty to allow any account in your Firebase project. For private use, put your own email here.</small></label>
+    <details class="howto"><summary>How do I get these? (about 5 minutes, free)</summary>
+      <ol>
+        <li>Go to <b>console.firebase.google.com</b> → <b>Add project</b> (any name, e.g. VYRON). Analytics can stay off.</li>
+        <li>In the project: <b>Build → Authentication → Get started</b>. Under <b>Sign-in method</b>, turn on <b>Email/Password</b> and <b>Google</b>.</li>
+        <li><b>Project settings</b> (gear) → <b>General</b> → copy the <b>Web API Key</b>. (If it's empty, add a Web app with the &lt;/&gt; button first.)</li>
+        <li>For Google: open <b>console.cloud.google.com</b> with the same project → <b>APIs &amp; Services → Credentials → Create credentials → OAuth client ID</b> → type <b>Desktop app</b>. Copy the client ID and secret.</li>
+        <li>Back in Firebase → Authentication → Sign-in method → Google → <b>Safelisted client IDs</b>: add that client ID. Save.</li>
+      </ol></details>
+  </div>`;
+}
+
+function drawLock() {
+  const A = S.auth;
+  const root = $("#lockRoot");
+  const keep = preserve(root);
+  const msg = ui.authErr ? `<div class="auth-msg bad">${esc(ui.authErr)}</div>` : ui.authInfo ? `<div class="auth-msg">${esc(ui.authInfo)}</div>` : "";
+  let body;
+  if (!A.configured || (ui.authMode === "setup" && A.canEditSetup)) {
+    body = `<h2>Set up sign-in</h2><p class="muted">VYRON uses Firebase Authentication for email and Google accounts. Do this once — after that you just sign in.</p>${msg}${setupForm(false)}
+      <button class="btn primary wide" data-act="authSetup" data-primary>Save and continue</button>
+      ${A.configured ? `<div class="auth-links"><a data-act="authMode" data-id="signin">Back to sign in</a></div>` : ""}`;
+  } else if (A.waitingForGoogle) {
+    body = `<h2>Continue in your browser</h2><p class="muted">A Google sign-in page opened in your web browser. Choose your account there, then come back here.</p>
+      <div class="row" style="justify-content:center;margin:18px 0"><span class="spinner" style="width:22px;height:22px"></span></div>${msg}
+      <button class="btn wide" data-act="authCancelGoogle">Cancel</button>`;
+  } else if (A.pendingVerify) {
+    body = `<h2>Verify your email</h2><p class="muted">We sent a link to <b>${esc(A.pendingVerify.email)}</b>. Open it to confirm it's your email, then press continue.</p>${msg}
+      <button class="btn primary wide" data-act="authCheck" data-primary>I've verified — continue</button>
+      <div class="row" style="justify-content:space-between;margin-top:10px"><button class="btn ghost sm" data-act="authResend">Resend email</button><button class="btn ghost sm" data-act="authCancelVerify">Use another account</button></div>`;
+  } else {
+    const mode = ui.authMode || "signin";
+    const google = A.googleEnabled ? `<button class="btn wide google" data-act="authGoogle">${GOOGLE_G}Continue with Google</button><div class="or"><span>or</span></div>` : "";
+    if (mode === "reset") {
+      body = `<h2>Reset password</h2><p class="muted">Enter your email and we'll send a link to choose a new password.</p>${msg}
+        <label class="field"><span>Email</span><input class="input" id="auEmail" type="email" autocomplete="email"></label>
+        <button class="btn primary wide" data-act="authReset" data-primary>Send reset link</button>
+        <div class="auth-links"><a data-act="authMode" data-id="signin">Back to sign in</a></div>`;
+    } else {
+      const up = mode === "signup";
+      body = `<h2>${up ? "Create your account" : "Sign in to VYRON"}</h2><p class="muted">${up ? "Use your email or Google account." : "Welcome back."}</p>${msg}${google}
+        <label class="field"><span>Email</span><input class="input" id="auEmail" type="email" autocomplete="email"></label>
+        <label class="field"><span>Password</span><input class="input" id="auPass" type="password" autocomplete="${up ? "new-password" : "current-password"}"></label>
+        ${up ? `<label class="field"><span>Repeat password</span><input class="input" id="auPass2" type="password" autocomplete="new-password"></label>` : ""}
+        <button class="btn primary wide" data-act="${up ? "authSignUp" : "authSignIn"}" data-primary>${up ? "Create account" : "Sign in"}</button>
+        <div class="auth-links">${up ? `<a data-act="authMode" data-id="signin">I already have an account</a>` : `<a data-act="authMode" data-id="signup">Create an account</a><a data-act="authMode" data-id="reset">Forgot password?</a>`}</div>`;
+    }
+  }
+  if (A.configured && A.canEditSetup && ui.authMode !== "setup" && !A.pendingVerify && !A.waitingForGoogle) body += `<div class="auth-links" style="justify-content:center;margin-top:8px"><a data-act="authMode" data-id="setup">Change sign-in setup</a></div>`;
+  root.innerHTML = `<div class="lock-bar"><div class="winctl">
+      <button data-host="minimize" title="Minimize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
+      <button data-host="close" class="x" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div></div>
+    <div class="lock"><div class="lock-card ${!A.configured ? "wide" : ""}"><img class="lock-logo" src="icon.svg" alt=""><div class="lock-brand">VYRON</div>${body}</div>
+    ${A.allowList ? '<div class="lock-foot">This copy of VYRON is private.</div>' : ""}</div>`;
+  const key = [A.configured, A.waitingForGoogle, !!A.pendingVerify, ui.authMode].join("|");
+  root.classList.toggle("settled", root.dataset.key === key);
+  root.dataset.key = key;
+  restore(root, keep);
+}
+
+async function authCall(btn, method, ...args) {
+  ui.authErr = ""; ui.authInfo = "";
+  const label = btn?.innerHTML;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>' + (btn.textContent || ""); }
+  try { return await B.call(method, ...args); }
+  catch (e) { ui.authErr = e.message; return undefined; }
+  finally { if (btn && btn.isConnected) { btn.disabled = false; btn.innerHTML = label; } render(); }
+}
+
 /* ---------------- actions ---------------- */
 const ACT = {
   closeModal, closeModalScrim: (el, e) => { if (e.target === el) closeModal(); },
@@ -865,6 +949,27 @@ const ACT = {
   async saveImproved() { await call("savePrompt", { title: val("impIdea").slice(0, 80), category: val("impCat"), body: val("impText") }); toast("Saved to the library"); },
   async buildImproved() { await call("build", val("impText")); closeModal(); toast("Build started"); go("tasks"); },
 
+  authMode: (el) => { ui.authMode = el.dataset.id; ui.authErr = ""; ui.authInfo = ""; render(); },
+  async authSetup(el) {
+    const r = await authCall(el, "authSetup", { apiKey: val("suKey"), googleClientId: val("suGid"), googleClientSecret: val("suGsec"), allowedEmails: val("suAllow") });
+    if (r !== undefined || !ui.authErr) { ui.authInfo = "Sign-in is set up. Create your account or sign in."; ui.authMode = "signin"; }
+    render();
+  },
+  async authSignIn(el) { await authCall(el, "authSignIn", { email: val("auEmail"), password: val("auPass") }); },
+  async authSignUp(el) {
+    if (val("auPass") !== val("auPass2")) { ui.authErr = "The passwords don't match."; return render(); }
+    await authCall(el, "authSignUp", { email: val("auEmail"), password: val("auPass") });
+  },
+  async authGoogle(el) { await authCall(el, "authGoogle"); },
+  async authCancelGoogle(el) { await authCall(el, "authCancelGoogle"); ui.authErr = ""; render(); },
+  async authReset(el) { const r = await authCall(el, "authResetPassword", { email: val("auEmail") }); if (!ui.authErr) { ui.authInfo = "If that email has an account, a reset link is on its way."; ui.authMode = "signin"; render(); } return r; },
+  async authResend(el) { await authCall(el, "authResendVerify"); if (!ui.authErr) { ui.authInfo = "Email sent again. Check your spam folder too."; render(); } },
+  async authCheck(el) { await authCall(el, "authCheckVerified"); },
+  async authCancelVerify(el) { await authCall(el, "authCancelVerify"); },
+  async authSignOut() { if (confirm("Sign out of VYRON? Running agents are stopped.")) await B.call("authSignOut"); },
+  editSignIn: () => modal("Sign-in settings", setupForm(true), `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="saveSignIn">Save</button>`, true),
+  async saveSignIn() { await call("authSetup", { apiKey: val("suKey"), googleClientId: val("suGid"), googleClientSecret: val("suGsec"), allowedEmails: val("suAllow") }); closeModal(); toast("Sign-in settings saved"); },
+
   async linkRoblox(el) {
     el.disabled = true; el.innerHTML = '<span class="spinner"></span>Waiting for Roblox sign-in…';
     try { const me = await call("linkRoblox"); toast(`Linked @${me.name}`); } catch { /* toasted */ } finally { render(); }
@@ -906,6 +1011,7 @@ document.addEventListener("input", (e) => { if (e.target.id === "promptSearch") 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { if ($("#modalRoot").innerHTML) closeModal(); else if (ui.drawer) { ui.drawer = null; render(); } }
   if (e.target.id === "chatInput" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ACT.chatSend(); }
+  if (e.key === "Enter" && e.target.closest?.("#lockRoot") && e.target.tagName === "INPUT") { e.preventDefault(); $("#lockRoot [data-primary]")?.click(); }
   if (e.target.id === "quickBuild" && e.key === "Enter" && (e.ctrlKey || e.metaKey)) ACT.quickBuild();
 });
 $("#top").addEventListener("dblclick", (e) => { if (!e.target.closest("button")) B.host("toggleMaximize"); });
@@ -927,7 +1033,7 @@ document.addEventListener("mousemove", (e) => {
 /* ripple on buttons and nav */
 document.addEventListener("pointerdown", (e) => {
   const t = e.target.closest(".btn,.nav,.pick");
-  if (!t || (S && S.settings.animations === false)) return;
+  if (!t || S?.settings?.animations === false) return;
   const r = t.getBoundingClientRect(), d = Math.max(r.width, r.height) * 2.2;
   const s = document.createElement("span");
   s.className = "ripple";
@@ -953,8 +1059,8 @@ function afterDraw() {
   addEventListener("resize", resize); resize();
   (function frame() {
     requestAnimationFrame(frame);
-    if (!S || S.settings.reduceEffects || document.hidden) { cx.clearRect(0, 0, W, H); return; }
-    const light = S.settings.theme === "light";
+    if (!S || S.settings?.reduceEffects || document.hidden) { cx.clearRect(0, 0, W, H); return; }
+    const light = S.settings?.theme === "light";
     cx.clearRect(0, 0, W, H);
     const D = 140 * devicePixelRatio;
     for (const p of pts) { p.x += p.vx; p.y += p.vy; if (p.x < 0 || p.x > W) p.vx *= -1; if (p.y < 0 || p.y > H) p.vy *= -1; }

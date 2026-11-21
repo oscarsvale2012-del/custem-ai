@@ -52,6 +52,19 @@ reviews and tests it, and reports what changed.
    choose your Rojo folder (run `rojo serve` there and connect the Rojo plugin).
 4. **Dashboard → Plan & build.** Describe what you want.
 
+## Sign-in
+
+VYRON is locked until you sign in with **email + password** or **Google**
+(Firebase Authentication). Nothing starts — no agents, providers or MCP
+servers — before sign-in. New email accounts must verify their address.
+
+First start asks for your Firebase setup once (the app shows the steps):
+a Firebase project with Email/Password and Google turned on, its Web API key,
+and a Google OAuth client ID + secret of type *Desktop app* (safelisted in
+Firebase's Google provider). Put your email in **Only allow these emails** to
+keep the app private. Google sign-in opens your normal browser, as Google
+requires. Tokens and the client secret are stored encrypted.
+
 ## Install VYRON on Windows
 
 1. Open the **Releases** page of this repository and download

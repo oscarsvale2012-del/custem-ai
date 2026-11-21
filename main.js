@@ -3,12 +3,18 @@ const { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, session } = req
 const path = require("path");
 const fs = require("fs");
 const { Backend } = require("./src/backend");
-const { dispatch } = require("./src/api");
+const { dispatch, lockedState } = require("./src/api");
+const { AuthManager, loadBundledConfig } = require("./src/auth");
 
 let win;
 let backend;
+let auth;
+let started = false;
+let quitting = false;
 
 app.setName("VYRON");
+// Testing: run a separate copy with its own data (and its own single-instance lock).
+if (process.env.VYRON_DATA_DIR) app.setPath("userData", process.env.VYRON_DATA_DIR);
 if (process.platform === "win32") app.setAppUserModelId("com.vyron.app");
 
 // Only one VYRON window at a time: opening it again focuses the running one.
@@ -91,7 +97,7 @@ function createWindow() {
   win.loadFile(path.join(__dirname, "renderer", "index.html"));
   win.once("ready-to-show", () => win.show());
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https:\/\/(create\.roblox\.com|www\.roblox\.com|console\.anthropic\.com|platform\.openai\.com|github\.com)\//.test(url)) shell.openExternal(url);
+    if (/^https:\/\/(create\.roblox\.com|www\.roblox\.com|console\.anthropic\.com|platform\.openai\.com|github\.com|console\.firebase\.google\.com|console\.cloud\.google\.com)\//.test(url)) shell.openExternal(url);
     return { action: "deny" };
   });
   win.on("maximize", () => win.webContents.send("event", "window", { maximized: true }));
@@ -100,7 +106,7 @@ function createWindow() {
 
 ipcMain.handle("call", async (_e, method, args) => {
   try {
-    return { ok: true, value: await dispatch(backend, method, args) };
+    return { ok: true, value: await dispatch({ backend, auth }, method, args) };
   } catch (err) {
     return { ok: false, error: String(err?.message || err) };
   }
@@ -120,14 +126,34 @@ ipcMain.handle("host", async (_e, cmd, arg) => {
 
 app.whenReady().then(async () => {
   if (!gotLock) return;
-  backend = new Backend({ dataDir: app.getPath("userData"), encrypt, decrypt, host: robloxHost });
-  backend.on("state", (s) => win && !win.isDestroyed() && win.webContents.send("event", "state", s));
-  backend.on("log", (l) => win && !win.isDestroyed() && win.webContents.send("event", "log", l));
+  const dataDir = app.getPath("userData");
+  backend = new Backend({ dataDir, encrypt, decrypt, host: robloxHost });
+  // Sign-in gate: nothing in the backend starts until the user is signed in.
+  auth = new AuthManager({
+    dataDir, encrypt, decrypt,
+    openExternal: (url) => shell.openExternal(url),
+    bundledConfig: loadBundledConfig(__dirname),
+  });
+  backend.authInfo = () => auth.public();
+  const send = (type, payload) => win && !win.isDestroyed() && win.webContents.send("event", type, payload);
+  const sendState = () => send("state", auth.signedIn && started ? backend.publicState() : lockedState(auth));
+  backend.on("state", (s) => auth.signedIn && send("state", s));
+  backend.on("log", (l) => auth.signedIn && send("log", l));
+  auth.on("change", sendState);
+  auth.on("signedIn", async () => {
+    if (!started) { started = true; await backend.init(); }
+    sendState();
+  });
+  auth.on("signedOut", async () => {
+    // Restart into the sign-in screen with everything stopped.
+    quitting = true;
+    try { await backend.shutdown(); } finally { app.relaunch(); app.exit(0); }
+  });
   createWindow();
-  await backend.init();
+  await auth.restore();
+  sendState();
 });
 
-let quitting = false;
 app.on("before-quit", async (e) => {
   if (quitting || !backend) return;
   e.preventDefault();

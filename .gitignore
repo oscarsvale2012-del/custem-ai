@@ -5,3 +5,6 @@ dist/
 .claude/
 .devdata-demo/
 .testdata-rev/
+.testdata-auth/
+.testdata-auth-real/
+src/auth-config.json
