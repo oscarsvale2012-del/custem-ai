@@ -1,4 +1,4 @@
-/* AgentForge renderer. All data comes from the backend (Electron main
+/* VYRON renderer. All data comes from the backend (Electron main
    process, or src/devserver.js in a browser). Nothing here is simulated. */
 "use strict";
 
@@ -488,7 +488,7 @@ VIEWS.revenue = () => {
   const head = `<div class="row"><div class="grow muted" style="font-size:12.5px">${R.refreshedAt ? "Updated " + ago(R.refreshedAt) + " · refreshes every 10 minutes" : ""}</div>${R.busy ? '<span class="chip"><span class="spinner"></span>Refreshing…</span>' : `<button class="btn sm" data-act="refreshRevenue" ${a || R.hasApiKey ? "" : "disabled"}>${ic("refresh")}Refresh</button>`}</div><div class="sp" style="height:12px"></div>`;
 
   const account = !a ? `<div class="panel game-card"><div class="gicon md"><div class="fallback">${ic("revenue").replace("<svg", '<svg style="width:28px;height:28px"')}</div></div><div class="grow stack" style="gap:8px"><h2 style="font:600 19px var(--f-head)">Link your Roblox account</h2>
-      <div class="muted" style="font-size:13px;max-width:640px">See your Robux balance, pending Robux and earnings here. You sign in on <b>roblox.com</b> in a separate window — AgentForge never sees your password. The sign-in stays encrypted on this PC and is only used to talk to roblox.com. Unlink any time to sign out.</div>
+      <div class="muted" style="font-size:13px;max-width:640px">See your Robux balance, pending Robux and earnings here. You sign in on <b>roblox.com</b> in a separate window — VYRON never sees your password. The sign-in stays encrypted on this PC and is only used to talk to roblox.com. Unlink any time to sign out.</div>
       <div class="row">${R.canLink ? `<button class="btn primary" data-act="linkRoblox">${ic("link")}Sign in with Roblox</button>` : '<span class="chip warn">Linking works in the desktop app</span>'}</div></div></div>`
     : `<div class="panel game-card"><div class="gicon md">${a.avatarUrl ? `<img src="${esc(a.avatarUrl)}" alt="">` : `<div class="fallback">${esc(initials(a.displayName))}</div>`}</div>
       <div class="grow stack" style="gap:6px;min-width:0"><div class="label">Linked Roblox account</div><h2 class="ell" style="font:600 20px var(--f-head)">${esc(a.displayName)} <span class="faint" style="font-size:14px;font-weight:500">@${esc(a.name)}</span></h2>
@@ -511,7 +511,7 @@ VIEWS.revenue = () => {
       <div class="list-row"><b class="grow" style="font-weight:600">Outgoing Robux</b></div>
       ${lines(true).map((l) => `<div class="list-row"><span class="grow muted">${esc(l.label)}</span>−${rbx(l.value)}</div>`).join("") || '<div class="list-row"><span class="faint">Nothing in this period</span></div>'}
       <div class="list-row"><b class="grow" style="font-weight:600">Total</b><b>−${rbx(frame.outgoing)}</b></div></div>
-    <div class="panel"><div class="panel-h"><h3>Pending Robux over time</h3></div><div class="panel-b">${R.history.length > 1 ? chart(R.history.map((h) => ({ time: h.date + "T00:00:00Z", value: h.pending })), { kind: "line", unit: " R$" }) : `<div class="empty"><b>Building up</b>AgentForge records your pending Robux once a day while it runs, so this chart fills in over the coming days.</div>`}</div></div>
+    <div class="panel"><div class="panel-h"><h3>Pending Robux over time</h3></div><div class="panel-b">${R.history.length > 1 ? chart(R.history.map((h) => ({ time: h.date + "T00:00:00Z", value: h.pending })), { kind: "line", unit: " R$" }) : `<div class="empty"><b>Building up</b>VYRON records your pending Robux once a day while it runs, so this chart fills in over the coming days.</div>`}</div></div>
   </div><div class="sp"></div>` : "";
 
   const keyCard = !R.hasApiKey ? `<div class="panel pad stack"><div class="row"><span style="width:18px;height:18px">${ic("key")}</span><div class="h3 grow">Daily revenue per game (official Roblox Analytics)</div></div>
@@ -531,7 +531,7 @@ VIEWS.revenue = () => {
       const total = rev.reduce((s, p) => s + p.value, 0);
       const lastFull = rev.length > 1 ? rev[rev.length - 2] : rev[0];
       const latest = (k) => { const s = m?.series?.[k] || []; return s.length ? s[s.length - (s.length > 1 ? 2 : 1)].value : null; };
-      return `<div class="panel"><div class="panel-h">${gameIcon({ id: g.universeId, name: g.name, game: { name: g.name, iconUrl: g.iconUrl } }, "sm")}<div class="grow" style="min-width:0"><h3 class="ell">${esc(g.name)}</h3><div class="faint" style="font-size:12px">Universe ${esc(g.universeId)}${g.projectId ? " · AgentForge project" : ""}</div></div>
+      return `<div class="panel"><div class="panel-h">${gameIcon({ id: g.universeId, name: g.name, game: { name: g.name, iconUrl: g.iconUrl } }, "sm")}<div class="grow" style="min-width:0"><h3 class="ell">${esc(g.name)}</h3><div class="faint" style="font-size:12px">Universe ${esc(g.universeId)}${g.projectId ? " · VYRON project" : ""}</div></div>
         ${m && !m.fatal ? `<div style="text-align:right"><div class="label">30-day revenue</div><div style="font:600 18px var(--f-head)">${rbx(total)}</div></div>` : ""}</div>
         <div class="panel-b">${!m ? `<div class="row faint" style="font-size:12.5px">${R.busy && !keyErr ? '<span class="spinner"></span>Loading analytics…' : keyErr ? "Waiting for a working API key." : "Not loaded yet — click Refresh."}</div>`
           : m.fatal ? `<div class="chip bad" style="height:auto;padding:8px 10px;white-space:normal;border-radius:10px">${esc(m.fatal)}</div>`
@@ -774,7 +774,7 @@ const ACT = {
     if (el.dataset.id) await call("updateProject", el.dataset.id, data); else await call("addProject", data);
     closeModal(); toast("Project saved");
   },
-  async removeProject(el) { if (confirm("Remove this project from AgentForge? Files on disk are not deleted.")) await call("removeProject", el.dataset.id); },
+  async removeProject(el) { if (confirm("Remove this project from VYRON? Files on disk are not deleted.")) await call("removeProject", el.dataset.id); },
   async snapshot() { const r = await call("snapshotProject", S.activeProjectId); toast(`Snapshot saved (${r.files} files)`); },
   async undo(el) { if (!confirm("Restore the previous version of this file?")) return; await call("undoChange", S.activeProjectId, el.dataset.id); closeModal(); toast("Change undone"); },
   viewChange: (el) => showChange(el.dataset.id),
@@ -869,7 +869,7 @@ const ACT = {
     el.disabled = true; el.innerHTML = '<span class="spinner"></span>Waiting for Roblox sign-in…';
     try { const me = await call("linkRoblox"); toast(`Linked @${me.name}`); } catch { /* toasted */ } finally { render(); }
   },
-  async unlinkRoblox() { if (confirm("Unlink your Roblox account and sign it out of AgentForge?")) { await call("unlinkRoblox"); toast("Roblox account unlinked"); } },
+  async unlinkRoblox() { if (confirm("Unlink your Roblox account and sign it out of VYRON?")) { await call("unlinkRoblox"); toast("Roblox account unlinked"); } },
   async refreshRevenue() { await call("refreshRevenue", true); },
   revTf: (el) => { ui.revTf = el.dataset.id; render(); },
   async saveRbxKey() { const k = val("rbxKey"); if (!k.trim()) return; await call("setRobloxApiKey", k); $("#rbxKey").value = ""; toast("API key saved — loading game analytics"); },

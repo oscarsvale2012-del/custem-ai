@@ -1,4 +1,4 @@
-# AgentForge
+# VYRON
 
 An AI game-development studio for Roblox: connect several AI models, give each
 agent a role, connect MCP servers (including Roblox Studio's own), and describe a
@@ -30,7 +30,7 @@ reviews and tests it, and reports what changed.
 - **Game card** — the real Roblox icon, name, Universe/Place ID, Studio status,
   agents at work, build progress and last change for the active project.
 - **Revenue** — link your Roblox account by signing in on roblox.com inside the
-  app (AgentForge never sees your password; the session is stored encrypted and
+  app (VYRON never sees your password; the session is stored encrypted and
   only used for roblox.com). Shows Robux balance, pending Robux, sales today and
   the Day/Week/Month/Year summary, and records pending Robux daily. With an
   Open Cloud API key (`universe.analytics:read`) each game shows its official
@@ -52,11 +52,19 @@ reviews and tests it, and reports what changed.
    choose your Rojo folder (run `rojo serve` there and connect the Rojo plugin).
 4. **Dashboard → Plan & build.** Describe what you want.
 
-## Download the .exe
+## Install VYRON on Windows
 
-Every push to `main` builds the app on GitHub: **Actions** → latest
-"Build Windows .exe" run → download **AgentForge-Windows**. Push a tag like
-`v0.2.0` to publish the installer and portable .exe as a GitHub Release.
+1. Open the **Releases** page of this repository and download
+   **VYRON-Setup-x.y.z.exe**.
+2. Run it. VYRON installs for your user (no admin needed), adds a **desktop
+   shortcut** and a **Start menu** entry, and starts.
+3. Pin it to the taskbar like any app. Uninstall from *Settings → Apps*.
+
+Prefer no install? Download **VYRON-x.y.z-Portable.exe** and run it directly.
+Upgrading from AgentForge moves your projects, agents and keys automatically.
+
+Every push to `main` also builds the app (Actions → "Build Windows .exe" →
+**VYRON-Windows**). Push a tag like `v0.4.0` to publish a new Release.
 
 ## Development
 

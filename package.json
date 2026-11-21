@@ -1,15 +1,16 @@
 {
-  "name": "agentforge",
-  "productName": "AgentForge",
-  "version": "0.3.0",
-  "description": "AI game development studio: many AI agents, MCP servers and Roblox Studio working together",
+  "name": "vyron",
+  "productName": "VYRON",
+  "version": "0.4.0",
+  "description": "VYRON — AI game studio: many AI agents, MCP servers and Roblox Studio working together",
   "main": "main.js",
-  "author": "AgentForge",
+  "author": "VYRON",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
     "dev:web": "node src/devserver.js",
     "test": "node test/run.js && node test/revenue.js",
+    "icon": "electron build/render-icon.js",
     "dist": "electron-builder --win --publish never"
   },
   "dependencies": {
@@ -21,12 +22,27 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.agentforge.launcher",
-    "productName": "AgentForge",
-    "directories": { "output": "dist" },
+    "appId": "com.vyron.app",
+    "productName": "VYRON",
+    "copyright": "VYRON",
+    "directories": { "output": "dist", "buildResources": "build" },
     "files": ["main.js", "preload.js", "src/**/*", "renderer/**/*", "package.json", "!src/devserver.js"],
-    "win": { "target": ["nsis", "portable"] },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true },
-    "portable": { "artifactName": "AgentForge-Portable-${version}.exe" }
+    "win": {
+      "target": ["nsis", "portable"],
+      "icon": "build/icon.png",
+      "executableName": "VYRON"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "VYRON",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "VYRON-Setup-${version}.${ext}"
+    },
+    "portable": { "artifactName": "VYRON-${version}-Portable.exe" }
   }
 }

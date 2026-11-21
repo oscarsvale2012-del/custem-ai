@@ -1,4 +1,4 @@
-/* AgentForge design system — calm dark glass with white light, one soft accent. */
+/* VYRON design system — calm dark glass with white light, one soft accent. */
 :root{
   --bg:#090a0f; --bg-2:#0e1016; --surface:rgba(255,255,255,.032); --surface-2:rgba(255,255,255,.055); --surface-3:rgba(255,255,255,.085);
   --border:rgba(255,255,255,.075); --border-2:rgba(255,255,255,.13); --hl:inset 0 1px 0 rgba(255,255,255,.06);
@@ -35,9 +35,8 @@ a{color:var(--accent);text-decoration:none}
 #shell{position:relative;z-index:1;display:grid;grid-template-columns:236px 1fr;height:100vh}
 #side{display:flex;flex-direction:column;padding:14px 12px;border-right:1px solid var(--border);background:linear-gradient(180deg,rgba(255,255,255,.02),transparent)}
 .brand{display:flex;align-items:center;gap:10px;padding:6px 8px 18px;-webkit-app-region:drag}
-.brand-mark{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:linear-gradient(145deg,#fff,#c9d6ff);box-shadow:0 0 18px rgba(255,255,255,.25),inset 0 -2px 4px rgba(0,0,30,.15)}
-.brand-mark svg{width:16px;height:16px;color:#0b1020}
-.brand b{font:600 15px var(--f-head);letter-spacing:-.01em}
+.brand-mark{width:32px;height:32px;display:block;filter:drop-shadow(0 0 10px rgba(255,255,255,.12))}
+.brand b{font:700 15px var(--f-head);letter-spacing:.16em}
 .brand small{display:block;color:var(--text-3);font-size:11px;margin-top:-2px}
 nav{display:flex;flex-direction:column;gap:2px}
 .nav{position:relative;overflow:hidden;display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:9px;color:var(--text-2);cursor:pointer;border:1px solid transparent;transition:background .2s,color .2s,border-color .2s;font-weight:500;font-size:13.5px;user-select:none}
@@ -254,9 +253,8 @@ textarea.input{height:auto;min-height:96px;padding:10px 12px;resize:vertical;lin
 /* boot */
 #boot{position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:var(--bg);transition:opacity .6s,filter .6s}
 #boot.gone{opacity:0;filter:blur(8px);pointer-events:none}
-#boot .bm{width:64px;height:64px;border-radius:18px;display:grid;place-items:center;background:linear-gradient(145deg,#fff,#c9d6ff);box-shadow:0 0 50px rgba(255,255,255,.3);animation:breathe 1.6s ease-in-out infinite;margin:0 auto 18px}
-#boot .bm svg{width:30px;height:30px;color:#0b1020}
-#boot h1{font:600 22px var(--f-head);letter-spacing:-.02em;text-align:center}
+#boot .bm{width:84px;height:84px;display:block;margin:0 auto 18px;filter:drop-shadow(0 0 28px rgba(255,255,255,.18));animation:breathe 1.6s ease-in-out infinite}
+#boot h1{font:700 22px var(--f-head);letter-spacing:.3em;text-align:center;padding-left:.3em}
 #boot p{color:var(--text-3);font-size:12.5px;text-align:center;margin-top:6px}
 #boot .bar{width:220px;margin:22px auto 0}
 

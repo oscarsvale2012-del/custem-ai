@@ -1,4 +1,4 @@
-// AgentForge backend: providers, agents, MCP servers, Roblox projects, the
+// VYRON backend: providers, agents, MCP servers, Roblox projects, the
 // task orchestrator, approvals, prompt library and chat. Runs in Electron's
 // main process (or in src/devserver.js for browser testing). The renderer only
 // ever sees publicState(), which never contains secrets.
@@ -43,7 +43,7 @@ class Backend extends EventEmitter {
       this.d.prompts = SEED_PROMPTS.map(([category, title, body]) => ({ id: uid("prm"), category, title, body, favorite: false, createdAt: now(), updatedAt: now() }));
     }
     this.store.save();
-    this.log("AgentForge started", "info", "System");
+    this.log("VYRON started", "info", "System");
     await Promise.all(this.d.providers.map((p) => this.testProvider(p.id).catch(() => {})));
     for (const s of this.d.mcpServers) if (s.autoConnect) this.connectServer(s.id);
     this._studioTimer = setInterval(() => this.detectStudios(true).catch(() => {}), 15000);
@@ -93,7 +93,7 @@ class Backend extends EventEmitter {
     this.save();
   }
 
-  /** Universes to show analytics for: games of AgentForge projects + games the linked account owns. */
+  /** Universes to show analytics for: games of VYRON projects + games the linked account owns. */
   revenueGames() {
     const map = new Map();
     for (const p of this.d.projects) if (p.universeId) map.set(p.universeId, { universeId: p.universeId, name: p.game?.name || p.name, iconUrl: p.game?.iconUrl || null, projectId: p.id });

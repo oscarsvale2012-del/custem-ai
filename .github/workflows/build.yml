@@ -32,7 +32,7 @@ jobs:
       - name: Upload .exe files
         uses: actions/upload-artifact@v4
         with:
-          name: AgentForge-Windows
+          name: VYRON-Windows
           path: dist/*.exe
 
       - name: Attach to GitHub Release (only for tags like v0.1.0)

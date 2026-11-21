@@ -1,7 +1,7 @@
 // Roblox game information from Roblox's public web APIs, plus helpers for
 // reading which places are open in Roblox Studio through the Studio MCP server.
 
-const UA = { "User-Agent": "AgentForge/0.2 (desktop app)", Accept: "application/json" };
+const UA = { "User-Agent": "VYRON/0.2 (desktop app)", Accept: "application/json" };
 
 async function getJson(url) {
   let r;

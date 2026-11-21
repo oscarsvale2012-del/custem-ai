@@ -57,6 +57,6 @@ http.createServer(async (req, res) => {
   if (!file.startsWith(RENDERER) || !fs.existsSync(file)) return res.writeHead(404).end("not found");
   res.writeHead(200, { "Content-Type": MIME[path.extname(file)] || "application/octet-stream" }).end(fs.readFileSync(file));
 }).listen(PORT, async () => {
-  console.log(`AgentForge dev server on http://localhost:${PORT} (data: ${dataDir})`);
+  console.log(`VYRON dev server on http://localhost:${PORT} (data: ${dataDir})`);
   await backend.init();
 });

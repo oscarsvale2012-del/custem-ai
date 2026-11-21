@@ -1,11 +1,39 @@
-// AgentForge — Electron main process. Hosts the backend and the window.
+// VYRON — Electron main process. Hosts the backend and the window.
 const { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, session } = require("electron");
 const path = require("path");
+const fs = require("fs");
 const { Backend } = require("./src/backend");
 const { dispatch } = require("./src/api");
 
 let win;
 let backend;
+
+app.setName("VYRON");
+if (process.platform === "win32") app.setAppUserModelId("com.vyron.app");
+
+// Only one VYRON window at a time: opening it again focuses the running one.
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) app.quit();
+app.on("second-instance", () => { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } });
+
+/* Earlier versions were called AgentForge. Move their data (projects, agents,
+   encrypted keys, Roblox sign-in) to VYRON's folder on first start. The
+   "Local State" file holds the key that decrypts saved secrets, so it moves too. */
+(function migrateFromAgentForge() {
+  try {
+    const newDir = app.getPath("userData");
+    const oldDir = path.join(app.getPath("appData"), "AgentForge");
+    if (path.resolve(oldDir).toLowerCase() === path.resolve(newDir).toLowerCase()) return;
+    if (!fs.existsSync(path.join(oldDir, "agentforge-data.json")) || fs.existsSync(path.join(newDir, "agentforge-data.json"))) return;
+    fs.mkdirSync(newDir, { recursive: true });
+    for (const item of ["agentforge-data.json", "Local State", "history", "snapshots", "Partitions"]) {
+      const from = path.join(oldDir, item);
+      if (fs.existsSync(from)) fs.cpSync(from, path.join(newDir, item), { recursive: true });
+    }
+  } catch (e) {
+    console.error("Could not move AgentForge data:", e.message);
+  }
+})();
 
 const encrypt = (s) => (safeStorage.isEncryptionAvailable() ? "enc:" + safeStorage.encryptString(s).toString("base64") : "plain:" + Buffer.from(s).toString("base64"));
 const decrypt = (s) => {
@@ -55,7 +83,8 @@ function createWindow() {
     minHeight: 700,
     frame: false,
     backgroundColor: "#0a0b10",
-    title: "AgentForge",
+    title: "VYRON",
+    icon: path.join(__dirname, "renderer", "icon.png"),
     show: false,
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
@@ -90,6 +119,7 @@ ipcMain.handle("host", async (_e, cmd, arg) => {
 });
 
 app.whenReady().then(async () => {
+  if (!gotLock) return;
   backend = new Backend({ dataDir: app.getPath("userData"), encrypt, decrypt, host: robloxHost });
   backend.on("state", (s) => win && !win.isDestroyed() && win.webContents.send("event", "state", s));
   backend.on("log", (l) => win && !win.isDestroyed() && win.webContents.send("event", "log", l));
@@ -99,7 +129,7 @@ app.whenReady().then(async () => {
 
 let quitting = false;
 app.on("before-quit", async (e) => {
-  if (quitting) return;
+  if (quitting || !backend) return;
   e.preventDefault();
   quitting = true;
   try { await backend?.shutdown(); } finally { app.exit(0); }

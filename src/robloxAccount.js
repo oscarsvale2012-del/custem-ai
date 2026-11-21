@@ -12,7 +12,7 @@ const sessionFetch = async (fetcher, url) => {
   return r.json();
 };
 
-const publicFetch = (url) => sessionFetch((u) => fetch(u, { headers: { "User-Agent": "AgentForge/0.2", Accept: "application/json" } }), url);
+const publicFetch = (url) => sessionFetch((u) => fetch(u, { headers: { "User-Agent": "VYRON/0.2", Accept: "application/json" } }), url);
 
 const LABELS = {
   salesTotal: "Sales of goods",

@@ -48,7 +48,7 @@ function roleNames() { return Object.keys(ROLES); }
 function systemPrompt({ agent, project, studio, toolsNote }) {
   const role = ROLES[agent.role] || ROLES["Luau Developer"];
   const lines = [
-    `You are ${agent.name}, an AI agent on a team of AI developers building a Roblox game together in a desktop app called AgentForge. ${role.prompt}`,
+    `You are ${agent.name}, an AI agent on a team of AI developers building a Roblox game together in a desktop app called VYRON. ${role.prompt}`,
     "",
     "Project:",
     project ? `- Game: ${project.game?.name || project.name}${project.game?.universeId ? ` (Universe ID ${project.game.universeId})` : ""}` : "- No project selected.",

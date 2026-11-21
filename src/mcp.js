@@ -60,7 +60,7 @@ class McpManager {
         transport = cfg.transport === "sse" ? new SSEClientTransport(new URL(cfg.url), opts) : new StreamableHTTPClientTransport(new URL(cfg.url), opts);
       } else throw new Error("Unknown transport " + cfg.transport);
 
-      const client = new Client({ name: "agentforge", version: "0.2.0" }, { capabilities: {} });
+      const client = new Client({ name: "vyron", version: "0.2.0" }, { capabilities: {} });
       l.client = client;
       l.transport = transport;
       transport.onclose = () => {
