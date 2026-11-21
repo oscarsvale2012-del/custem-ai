@@ -54,8 +54,10 @@ reviews and tests it, and reports what changed.
 
 ## Sign-in
 
-VYRON is locked until you sign in. Nothing starts — no agents, providers or
-MCP servers — before sign-in.
+Signing in is **optional** — VYRON opens straight away. In **Settings →
+Account** you can sign in with Google and, once signed in, turn on
+**Require sign-in when VYRON opens**. Then VYRON stays locked (nothing starts:
+no agents, providers or MCP servers) until you sign in.
 
 **Continue with Google** works without any server: VYRON talks to Google
 directly (system browser, loopback redirect, PKCE). It needs a free Google

@@ -136,21 +136,21 @@ app.whenReady().then(async () => {
   });
   backend.authInfo = () => auth.public();
   const send = (type, payload) => win && !win.isDestroyed() && win.webContents.send("event", type, payload);
-  const sendState = () => send("state", auth.signedIn && started ? backend.publicState() : lockedState(auth));
-  backend.on("state", (s) => auth.signedIn && send("state", s));
-  backend.on("log", (l) => auth.signedIn && send("log", l));
+  const startBackend = async () => { if (!started) { started = true; await backend.init(); } };
+  const sendState = () => send("state", !auth.locked && started ? backend.publicState() : lockedState(auth));
+  backend.on("state", (s) => !auth.locked && send("state", s));
+  backend.on("log", (l) => !auth.locked && send("log", l));
   auth.on("change", sendState);
-  auth.on("signedIn", async () => {
-    if (!started) { started = true; await backend.init(); }
-    sendState();
-  });
+  auth.on("signedIn", async () => { await startBackend(); sendState(); });
   auth.on("signedOut", async () => {
-    // Restart into the sign-in screen with everything stopped.
+    if (!auth.required) return sendState(); // sign-in is optional: keep working
+    // Sign-in is required: restart into the sign-in screen with everything stopped.
     quitting = true;
     try { await backend.shutdown(); } finally { app.relaunch(); app.exit(0); }
   });
   createWindow();
   await auth.restore();
+  if (!auth.locked) await startBackend();
   sendState();
 });
 

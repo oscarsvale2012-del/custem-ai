@@ -31,12 +31,13 @@ backend.authInfo = () => auth.public();
 let started = false;
 const clients = new Set();
 const send = (type, payload) => { const msg = `data: ${JSON.stringify({ type, payload })}\n\n`; for (const c of clients) c.write(msg); };
-const sendState = () => send("state", auth.signedIn && started ? backend.publicState() : lockedState(auth));
-backend.on("state", (s) => auth.signedIn && send("state", s));
-backend.on("log", (l) => auth.signedIn && send("log", l));
+const startBackend = async () => { if (!started) { started = true; await backend.init(); } };
+const sendState = () => send("state", !auth.locked && started ? backend.publicState() : lockedState(auth));
+backend.on("state", (s) => !auth.locked && send("state", s));
+backend.on("log", (l) => !auth.locked && send("log", l));
 auth.on("change", sendState);
-auth.on("signedIn", async () => { if (!started) { started = true; await backend.init(); } sendState(); });
-auth.on("signedOut", () => { console.log("signed out — restart the dev server"); sendState(); });
+auth.on("signedIn", async () => { await startBackend(); sendState(); });
+auth.on("signedOut", () => sendState());
 
 const MIME = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml", ".png": "image/png" };
 const RENDERER = path.join(__dirname, "..", "renderer");
@@ -46,7 +47,7 @@ http.createServer(async (req, res) => {
   if (url.pathname === "/events") {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
     clients.add(res);
-    res.write(`data: ${JSON.stringify({ type: "state", payload: auth.signedIn && started ? backend.publicState() : lockedState(auth) })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: "state", payload: !auth.locked && started ? backend.publicState() : lockedState(auth) })}\n\n`);
     req.on("close", () => clients.delete(res));
     return;
   }
@@ -69,5 +70,6 @@ http.createServer(async (req, res) => {
 }).listen(PORT, async () => {
   console.log(`VYRON dev server on http://localhost:${PORT} (data: ${dataDir})`);
   await auth.restore();
+  if (!auth.locked) await startBackend();
   sendState();
 });

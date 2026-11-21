@@ -96,22 +96,31 @@ class AuthManager extends EventEmitter {
   get signedIn() { return !!this.user; }
   get googleEnabled() { return !!(this.cfg?.googleClientId); }
   get emailEnabled() { return !!this.cfg?.apiKey; }
+  /** Sign-in is optional. It only blocks the app when the user turned it on. */
+  get required() { return this.configured && !!this.cfg?.requireSignIn; }
+  get locked() { return this.required && !this.signedIn; }
 
   public() {
     return {
+      required: this.required, locked: this.locked,
       configured: this.configured, signedIn: this.signedIn, googleEnabled: this.googleEnabled, emailEnabled: this.emailEnabled,
       bundled: !!this.bundled?.googleClientId,
       user: this.user, pendingVerify: this.pendingVerify ? { email: this.pendingVerify.email } : null,
       waitingForGoogle: !!this.googleWait, offline: this.offline,
       allowList: (this.cfg?.allowedEmails || []).length > 0,
-      canEditSetup: !this.configured || this.signedIn || !this.cfg?.everSignedIn,
+      canEditSetup: !this.locked || !this.cfg?.everSignedIn,
     };
   }
 
   /** Setup. Only fields that are passed are changed. Locked after the first sign-in unless signed in. */
   setConfig(input) {
-    if (this.configured && !this.signedIn && this.cfg.everSignedIn) throw new AuthError("Sign in first to change sign-in settings.");
+    if (this.locked && this.cfg.everSignedIn) throw new AuthError("Sign in first to change sign-in settings.");
     const next = { ...(this.cfg || {}) };
+    if ("requireSignIn" in input) {
+      // Only turn it on while signed in, so nobody locks themselves out.
+      if (input.requireSignIn && !this.signedIn) throw new AuthError("Sign in first, then you can require sign-in.");
+      next.requireSignIn = !!input.requireSignIn;
+    }
     if ("apiKey" in input) {
       const k = String(input.apiKey || "").trim();
       if (k && !/^AIza[0-9A-Za-z_-]{20,}$/.test(k)) throw new AuthError("That doesn't look like a Firebase Web API key (it starts with AIza).", "config");

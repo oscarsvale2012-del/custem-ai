@@ -1,6 +1,6 @@
 // The list of backend methods the renderer may call. Anything not listed
-// here cannot be reached from the UI. Until the user is signed in, only the
-// sign-in methods work; everything else is locked.
+// here cannot be reached from the UI. Sign-in is optional; only when the user
+// turned on "require sign-in" and is signed out is everything else locked.
 const METHODS = [
   "publicState", "saveSettings",
   "addProvider", "updateProvider", "removeProvider", "testProvider",
@@ -39,7 +39,7 @@ async function dispatch(ctx, method, args) {
     return AUTH[method](auth, ...args);
   }
   if (!METHODS.includes(method)) throw new Error("Unknown method " + method);
-  if (auth && !auth.signedIn) {
+  if (auth && auth.locked) {
     if (method === "publicState") return lockedState(auth);
     throw new Error("Sign in to VYRON first");
   }

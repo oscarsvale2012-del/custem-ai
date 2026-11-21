@@ -587,10 +587,19 @@ VIEWS.tasks = () => {
 VIEWS.settings = () => {
   const s = S.settings;
   const modes = [["ask_all", "Ask before every change", "Every file write and every non-read-only tool needs your approval."], ["ask_destructive", "Ask before risky actions (recommended)", "File edits are applied and backed up (undo any time). Deleting files and Studio/MCP actions that are not read-only ask first."], ["autonomous", "Autonomous", "Agents work on their own. Only deletes and tools marked destructive ask first."]];
-  const u = S.auth?.user;
-  return `${u ? `<div class="panel pad row" style="margin-bottom:16px;gap:14px"><div class="ava" style="border-radius:50%;overflow:hidden">${u.photo ? `<img src="${esc(u.photo)}" alt="" style="width:100%;height:100%;object-fit:cover">` : esc(initials(u.name))}</div>
-      <div class="grow"><div class="h3">${esc(u.name)}</div><div class="faint" style="font-size:12.5px">${esc(u.email)} · signed in with ${String(u.provider).startsWith("google") ? "Google" : "email"}${S.auth.offline ? " · offline" : ""}</div></div>
-      <button class="btn sm" data-act="editSignIn">Sign-in settings</button><button class="btn sm danger" data-act="authSignOut">Sign out</button></div>` : ""}
+  const A = S.auth;
+  const u = A?.user;
+  const account = !A ? "" : u
+    ? `<div class="panel pad" style="margin-bottom:16px"><div class="row" style="gap:14px"><div class="ava" style="border-radius:50%;overflow:hidden">${u.photo ? `<img src="${esc(u.photo)}" alt="" style="width:100%;height:100%;object-fit:cover">` : esc(initials(u.name))}</div>
+        <div class="grow"><div class="h3">${esc(u.name)}</div><div class="faint" style="font-size:12.5px">${esc(u.email)} · signed in with ${String(u.provider).startsWith("google") ? "Google" : "email"}${A.offline ? " · offline" : ""}</div></div>
+        <button class="btn sm" data-act="editSignIn">Sign-in settings</button><button class="btn sm danger" data-act="authSignOut">Sign out</button></div>
+        <hr class="sep"><div class="row"><div class="grow"><div style="font-weight:500">Require sign-in when VYRON opens</div><div class="faint" style="font-size:12.5px">Off: VYRON opens straight away. On: it stays locked until you sign in.</div></div><div class="toggle ${A.required ? "on" : ""}" data-act="toggleRequire"></div></div></div>`
+    : `<div class="panel pad row" style="margin-bottom:16px;gap:14px"><div class="ava" style="border-radius:50%">?</div>
+        <div class="grow"><div class="h3">Not signed in</div><div class="faint" style="font-size:12.5px">Signing in is optional — VYRON works without an account.</div></div>
+        ${A.waitingForGoogle ? `<span class="chip"><span class="spinner"></span>Finish signing in in your browser</span><button class="btn sm" data-act="authCancelGoogleSettings">Cancel</button>`
+          : A.googleEnabled ? `<button class="btn sm google" data-act="authGoogleSettings">${GOOGLE_G}Sign in with Google</button><button class="btn sm ghost" data-act="editSignIn">Settings</button>`
+          : `<button class="btn sm" data-act="editSignIn">Set up Google sign-in</button>`}</div>`;
+  return `${account}
   <div class="grid g2">
     <div class="panel pad"><div class="h3" style="margin-bottom:14px">Appearance</div>
       <div class="row" style="margin-bottom:14px"><span class="grow">Theme</span><div class="seg">${[["dark", "Dark"], ["light", "Light"]].map(([k, l]) => `<button class="${(s.theme || "dark") === k ? "on" : ""}" data-act="setting" data-key="theme" data-val="${k}">${l}</button>`).join("")}</div></div>
@@ -981,7 +990,10 @@ const ACT = {
   async authResend(el) { await authCall(el, "authResendVerify"); if (!ui.authErr) { ui.authInfo = "Email sent again. Check your spam folder too."; render(); } },
   async authCheck(el) { await authCall(el, "authCheckVerified"); },
   async authCancelVerify(el) { await authCall(el, "authCancelVerify"); },
-  async authSignOut() { if (confirm("Sign out of VYRON? Running agents are stopped.")) await B.call("authSignOut"); },
+  async authSignOut() { if (confirm(S.auth?.required ? "Sign out of VYRON? Running agents are stopped." : "Sign out of your Google account in VYRON?")) await B.call("authSignOut"); },
+  async toggleRequire() { await call("authSetup", { requireSignIn: !S.auth.required }); toast(S.auth.required ? "Sign-in is no longer required" : "VYRON now requires sign-in when it opens"); },
+  async authGoogleSettings() { toast("Finish signing in in your browser"); try { await call("authGoogle"); toast("Signed in"); } catch { /* toasted */ } },
+  async authCancelGoogleSettings() { await B.call("authCancelGoogle").catch(() => {}); },
   editSignIn: () => modal("Sign-in settings", setupForm(true) + `<div class="label" style="margin:6px 0 10px">Optional: email sign-in</div>` + firebaseForm(), `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="saveSignIn">Save</button>`, true),
   async saveSignIn() {
     const x = {};
@@ -990,7 +1002,7 @@ const ACT = {
     if (val("suAllow").trim()) x.allowedEmails = val("suAllow");
     if (val("suKey").trim()) x.apiKey = val("suKey");
     if (!Object.keys(x).length) return closeModal();
-    await call("authSetup", x); closeModal(); toast("Sign-in settings saved");
+    await call("authSetup", x); closeModal(); toast(S.auth?.signedIn ? "Sign-in settings saved" : "Google sign-in is ready — click Sign in with Google");
   },
 
   async linkRoblox(el) {

@@ -100,15 +100,16 @@ function fakeFirebase() {
   const mk = () => new AuthManager({ dataDir: TMP, encrypt: enc, decrypt: dec, openExternal: browser });
   const auth = mk();
   const backend = new Backend({ dataDir: TMP, encrypt: enc, decrypt: dec });
+  backend.authInfo = () => auth.public(); // as main.js does
   const ctx = { backend, auth };
 
-  console.log("Lock");
-  await test("before sign-in the app is locked", async () => {
+  console.log("Optional sign-in");
+  await test("by default no sign-in is needed: the app is open", async () => {
     const s = await dispatch(ctx, "publicState");
-    assert.equal(s.locked, true);
-    assert.equal(s.auth.configured, false);
-    await assert.rejects(dispatch(ctx, "addProvider", [{ type: "openai" }]), /Sign in to VYRON first/);
-    await assert.rejects(dispatch(ctx, "build", ["x"]), /Sign in/);
+    assert.equal(s.locked, undefined);
+    assert(Array.isArray(s.agents));
+    assert.equal(s.auth.required, false);
+    await dispatch(ctx, "saveSettings", [{ theme: "dark" }]);
   });
   await test("setup rejects something that isn't a Firebase key", async () => {
     await assert.rejects(dispatch(ctx, "authSetup", [{ apiKey: "hello" }]), /Firebase Web API key/);
@@ -118,6 +119,11 @@ function fakeFirebase() {
     assert.equal(auth.public().configured, true);
     assert.equal(auth.public().googleEnabled, true);
     assert(!fs.readFileSync(path.join(TMP, "vyron-auth.json"), "utf8").includes("GOCSPX-secret"));
+  });
+  await test("setting up sign-in doesn't lock the app; requiring it needs a sign-in first", async () => {
+    assert.equal(auth.public().locked, false);
+    assert.equal((await dispatch(ctx, "publicState")).locked, undefined);
+    await assert.rejects(dispatch(ctx, "authSetup", [{ requireSignIn: true }]), /Sign in first/);
   });
   await test("a typo in setup can be fixed before the first sign-in", async () => {
     await dispatch(ctx, "authSetup", [{ apiKey: KEY, googleClientId: "cid.apps.googleusercontent.com", allowedEmails: "me@test.com, guser@gmail.com" }]);
@@ -151,8 +157,16 @@ function fakeFirebase() {
     assert.equal(await again.restore(), true);
     assert.equal(again.user.email, "me@test.com");
   });
-  await test("sign out locks the app again", async () => {
+  await test("signed out without 'require sign-in' the app stays open", async () => {
     await dispatch(ctx, "authSignOut");
+    assert.equal((await dispatch(ctx, "publicState")).locked, undefined);
+    await dispatch(ctx, "authSignIn", [{ email: "me@test.com", password: "secret12" }]);
+  });
+  await test("with 'require sign-in' on, signing out locks the app", async () => {
+    await dispatch(ctx, "authSetup", [{ requireSignIn: true }]);
+    assert.equal(auth.public().required, true);
+    await dispatch(ctx, "authSignOut");
+    await assert.rejects(dispatch(ctx, "addProvider", [{ type: "openai" }]), /Sign in to VYRON first/);
     assert.equal((await dispatch(ctx, "publicState")).locked, true);
     assert.equal(await mk().restore(), false);
   });
