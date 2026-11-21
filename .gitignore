@@ -3,3 +3,5 @@ dist/
 .devdata/
 .testdata/
 .claude/
+.devdata-demo/
+.testdata-rev/

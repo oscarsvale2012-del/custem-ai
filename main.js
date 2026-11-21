@@ -1,5 +1,5 @@
 // AgentForge — Electron main process. Hosts the backend and the window.
-const { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, session } = require("electron");
 const path = require("path");
 const { Backend } = require("./src/backend");
 const { dispatch } = require("./src/api");
@@ -12,6 +12,39 @@ const decrypt = (s) => {
   if (s.startsWith("enc:")) return safeStorage.decryptString(Buffer.from(s.slice(4), "base64"));
   if (s.startsWith("plain:")) return Buffer.from(s.slice(6), "base64").toString();
   return s; // v0.1 stored plain values
+};
+
+/* ---------- Roblox account session ----------
+   The user signs in on roblox.com in its own window. The session lives in a
+   separate, persistent cookie store that is only used for roblox.com requests
+   and never reaches the interface. */
+const ROBLOX_PARTITION = "persist:roblox";
+const rbx = () => session.fromPartition(ROBLOX_PARTITION);
+const isRoblox = (u) => { try { const h = new URL(u).hostname; return new URL(u).protocol === "https:" && (h === "roblox.com" || h.endsWith(".roblox.com")); } catch { return false; } };
+const hasRobloxSession = async () => (await rbx().cookies.get({ domain: "roblox.com", name: ".ROBLOSECURITY" })).length > 0;
+
+const robloxHost = {
+  robloxFetch: (url) => {
+    if (!isRoblox(url)) throw new Error("Only roblox.com can be called with the Roblox session");
+    return rbx().fetch(url, { headers: { Accept: "application/json" } });
+  },
+  robloxLogin: () => new Promise((resolve) => {
+    const w = new BrowserWindow({
+      parent: win, modal: true, width: 520, height: 780, title: "Sign in to Roblox", autoHideMenuBar: true, backgroundColor: "#ffffff",
+      webPreferences: { partition: ROBLOX_PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true },
+    });
+    const done = async (url) => {
+      if (!/\/(login|newlogin|signup|account\/signupredir)/i.test(new URL(url).pathname) && (await hasRobloxSession())) w.close();
+    };
+    w.webContents.on("did-navigate", (_e, url) => done(url).catch(() => {}));
+    w.webContents.on("did-navigate-in-page", (_e, url) => done(url).catch(() => {}));
+    // Stay on roblox.com; anything else opens in the normal browser.
+    w.webContents.on("will-navigate", (e, url) => { if (!isRoblox(url)) { e.preventDefault(); shell.openExternal(url); } });
+    w.webContents.setWindowOpenHandler(({ url }) => { if (/^https:\/\//.test(url)) shell.openExternal(url); return { action: "deny" }; });
+    w.on("closed", () => resolve());
+    w.loadURL("https://www.roblox.com/login");
+  }),
+  robloxLogout: async () => { await rbx().clearStorageData(); },
 };
 
 function createWindow() {
@@ -57,7 +90,7 @@ ipcMain.handle("host", async (_e, cmd, arg) => {
 });
 
 app.whenReady().then(async () => {
-  backend = new Backend({ dataDir: app.getPath("userData"), encrypt, decrypt });
+  backend = new Backend({ dataDir: app.getPath("userData"), encrypt, decrypt, host: robloxHost });
   backend.on("state", (s) => win && !win.isDestroyed() && win.webContents.send("event", "state", s));
   backend.on("log", (l) => win && !win.isDestroyed() && win.webContents.send("event", "log", l));
   createWindow();

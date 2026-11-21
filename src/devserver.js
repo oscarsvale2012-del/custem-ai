@@ -9,7 +9,16 @@ const { dispatch } = require("./api");
 
 const PORT = Number(process.env.PORT || 5181);
 const dataDir = process.env.AF_DATA || path.join(__dirname, "..", ".devdata");
+let host = {};
+if (process.env.AF_DEMO_ROBLOX) {
+  // Fake Roblox account + analytics for checking the Revenue page (dev only).
+  const demo = require("../test/fake-roblox");
+  host = demo.fakeHost;
+  process.env.AF_ANALYTICS_BASE = "http://127.0.0.1:5198/universes";
+  demo.fakeAnalytics();
+}
 const backend = new Backend({
+  host,
   dataDir,
   encrypt: (s) => "plain:" + Buffer.from(s).toString("base64"),
   decrypt: (s) => (s.startsWith("plain:") ? Buffer.from(s.slice(6), "base64").toString() : s),

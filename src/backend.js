@@ -9,6 +9,8 @@ const { McpManager, PRESETS, slug } = require("./mcp");
 const { Workspace } = require("./workspace");
 const { lookupGame, parseStudios } = require("./roblox");
 const { ROLES, roleNames, systemPrompt, SEED_PROMPTS } = require("./team");
+const RA = require("./robloxAccount");
+const AN = require("./analytics");
 
 const ACTIVE = ["planning", "in_progress", "testing", "waiting_approval"];
 const DONE = ["completed", "failed", "cancelled"];
@@ -46,12 +48,113 @@ class Backend extends EventEmitter {
     for (const s of this.d.mcpServers) if (s.autoConnect) this.connectServer(s.id);
     this._studioTimer = setInterval(() => this.detectStudios(true).catch(() => {}), 15000);
     this._schedTimer = setInterval(() => this.schedule(), 3000);
+    this._revTimer = setInterval(() => this.refreshRevenue(false).catch(() => {}), 10 * 60 * 1000);
+    this.refreshRevenue(false).catch(() => {});
     this.changed();
+  }
+
+  /* ================= Roblox account & revenue ================= */
+  async linkRoblox() {
+    if (!this.host.robloxLogin) throw new Error("Linking a Roblox account works in the desktop app.");
+    await this.host.robloxLogin();
+    const me = await RA.whoAmI(this.host.robloxFetch);
+    if (!me) throw new Error("Roblox sign-in was not finished.");
+    me.avatarUrl = await RA.avatarUrl(me.userId);
+    me.linkedAt = now();
+    this.d.roblox.account = me;
+    this.d.roblox.summaryError = null;
+    this.log(`Roblox account @${me.name} linked`, "ok", "Roblox");
+    this.save();
+    await this.refreshRevenue(true);
+    return me;
+  }
+
+  async unlinkRoblox() {
+    await this.host.robloxLogout?.();
+    const name = this.d.roblox.account?.name;
+    this.d.roblox = { account: null, history: [], analytics: this.d.roblox.analytics || {}, summary: null, games: [] };
+    this.log(`Roblox account${name ? " @" + name : ""} unlinked and signed out`, "info", "Roblox");
+    this.save();
+  }
+
+  setRobloxApiKey(key) {
+    key = String(key || "").trim();
+    if (key.length < 20) throw new Error("That doesn't look like an Open Cloud API key");
+    this.d.secrets.robloxApiKey = key;
+    this.d.roblox.analytics = {};
+    this.log("Open Cloud API key saved (encrypted)", "ok", "Roblox");
+    this.save();
+    this.refreshRevenue(true).catch(() => {});
+  }
+
+  clearRobloxApiKey() {
+    delete this.d.secrets.robloxApiKey;
+    this.d.roblox.analytics = {};
+    this.save();
+  }
+
+  /** Universes to show analytics for: games of AgentForge projects + games the linked account owns. */
+  revenueGames() {
+    const map = new Map();
+    for (const p of this.d.projects) if (p.universeId) map.set(p.universeId, { universeId: p.universeId, name: p.game?.name || p.name, iconUrl: p.game?.iconUrl || null, projectId: p.id });
+    for (const g of this.d.roblox.games || []) if (!map.has(g.universeId)) map.set(g.universeId, { ...g, projectId: null });
+    return [...map.values()];
+  }
+
+  async refreshRevenue(force) {
+    if (this._revBusy) return;
+    const r = this.d.roblox;
+    const key = this.d.secrets.robloxApiKey;
+    if (!r.account && !key) return;
+    this._revBusy = true;
+    this.changed();
+    try {
+      if (r.account && this.host.robloxFetch) {
+        try {
+          r.summary = await RA.summary(this.host.robloxFetch, r.account.userId);
+          r.summaryError = null;
+          r.account.expired = false;
+          const day = new Date().toISOString().slice(0, 10);
+          r.history = (r.history || []).filter((h) => h.date !== day);
+          r.history.push({ date: day, balance: r.summary.balance, pending: r.summary.pending, sales: r.summary.day.sales, incoming: r.summary.day.incoming });
+          r.history = r.history.slice(-120);
+          r.games = await RA.ownedGames(r.account.userId);
+        } catch (e) {
+          r.summaryError = e.message;
+          if (e.kind === "auth") r.account.expired = true;
+          this.log("Robux summary: " + e.message, "warn", "Roblox");
+        }
+      }
+      if (key) {
+        r.analytics = r.analytics || {};
+        for (const g of this.revenueGames().slice(0, 8)) {
+          const old = r.analytics[g.universeId];
+          if (!force && old && now() - old.fetchedAt < 15 * 60 * 1000) continue;
+          r.analytics[g.universeId] = await AN.gameMetrics(key, g.universeId, 30);
+          this.changed();
+          if (r.analytics[g.universeId].fatal && /rejected/.test(r.analytics[g.universeId].fatal)) break;
+        }
+      }
+      r.refreshedAt = now();
+    } finally {
+      this._revBusy = false;
+      this.save();
+    }
+  }
+
+  revenuePublic() {
+    const r = this.d.roblox;
+    return {
+      account: r.account, summary: r.summary || null, summaryError: r.summaryError || null, history: r.history || [],
+      games: this.revenueGames(), analytics: r.analytics || {}, hasApiKey: !!this.d.secrets.robloxApiKey,
+      busy: !!this._revBusy, refreshedAt: r.refreshedAt || null, canLink: !!this.host.robloxLogin,
+    };
   }
 
   async shutdown() {
     clearInterval(this._studioTimer);
     clearInterval(this._schedTimer);
+    clearInterval(this._revTimer);
     for (const r of this.running.values()) r.ctrl.abort();
     for (const a of this.approvals.values()) a.resolve({ approved: false, note: "App closed" });
     await this.mcp.closeAll();
@@ -87,6 +190,7 @@ class Backend extends EventEmitter {
       activeProjectId: active?.id || null,
       studios: this.studios,
       studioError: this.studioError,
+      revenue: this.revenuePublic(),
       prompts: this.d.prompts,
       tasks: this.d.tasks.slice(-250).map((t) => ({ ...t, steps: t.steps.slice(-40) })),
       approvals: [...this.approvals.values()].map(({ resolve, ...a }) => a),

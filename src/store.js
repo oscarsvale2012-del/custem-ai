@@ -26,6 +26,8 @@ const DEFAULTS = () => ({
   prompts: [],
   tasks: [],
   conversations: {}, // agentId -> [{role, text, at, blocks?}]
+  secrets: {}, // name -> value (encrypted on disk), e.g. robloxApiKey
+  roblox: { account: null, history: [], analytics: {}, summary: null }, // non-secret Roblox data
 });
 
 class Store {
@@ -43,6 +45,8 @@ class Store {
       const raw = JSON.parse(fs.readFileSync(this.file, "utf8"));
       this.data = { ...DEFAULTS(), ...raw, settings: { ...DEFAULTS().settings, ...(raw.settings || {}) } };
       for (const p of this.data.providers) p.apiKey = this._dec(p.apiKey);
+      this.data.secrets = this._decMap(raw.secrets);
+      this.data.roblox = { ...DEFAULTS().roblox, ...(raw.roblox || {}) };
       for (const s of this.data.mcpServers) {
         s.env = this._decMap(s.env);
         s.headers = this._decMap(s.headers);
@@ -97,6 +101,7 @@ class Store {
       providers: d.providers.map((p) => ({ ...p, apiKey: this._enc(p.apiKey) })),
       mcpServers: d.mcpServers.map((s) => ({ ...s, env: this._encMap(s.env), headers: this._encMap(s.headers) })),
       tasks: d.tasks.slice(-400),
+      secrets: this._encMap(d.secrets),
     };
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const tmp = this.file + ".tmp";

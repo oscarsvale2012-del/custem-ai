@@ -1,7 +1,7 @@
 {
   "name": "agentforge",
   "productName": "AgentForge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "AI game development studio: many AI agents, MCP servers and Roblox Studio working together",
   "main": "main.js",
   "author": "AgentForge",
@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "dev:web": "node src/devserver.js",
-    "test": "node test/run.js",
+    "test": "node test/run.js && node test/revenue.js",
     "dist": "electron-builder --win --publish never"
   },
   "dependencies": {

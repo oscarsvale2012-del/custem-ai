@@ -52,17 +52,19 @@ const ICON = {
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>', trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
   edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>', folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/>', x: '<path d="M6 6l12 12M18 6 6 18"/>', play: '<path d="m6 4 14 8-14 8z"/>',
-  bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>', link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+  bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
+  revenue: '<path d="M12 2.5 20.2 7.2v9.6L12 21.5l-8.2-4.7V7.2z"/><path d="M12 7.5 16.1 9.8v4.4L12 16.5l-4.1-2.3V9.8z"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2M17 6l3 3M14.5 8.5l2 2"/>', link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
 };
 const ic = (n, cls = "") => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[n] || ""}</svg>`;
 
 const PAGES = [
   ["dashboard", "Dashboard"], ["workspace", "AI Workspace"], ["agents", "AI Agents"], ["mcp", "MCP Servers"],
-  ["roblox", "Roblox Studio"], ["projects", "Projects"], ["prompts", "Prompt Library"], ["tasks", "Task Manager"], ["settings", "Settings"],
+  ["roblox", "Roblox Studio"], ["projects", "Projects"], ["revenue", "Revenue"], ["prompts", "Prompt Library"], ["tasks", "Task Manager"], ["settings", "Settings"],
 ];
 const SUB = {
   dashboard: "Your AI team at a glance", workspace: "Talk to agents and send instructions", agents: "Providers, models and team roles",
-  mcp: "External tools for your agents", roblox: "Studio connection and project files", projects: "Your Roblox games",
+  mcp: "External tools for your agents", roblox: "Studio connection and project files", projects: "Your Roblox games", revenue: "Robux, pending earnings and game revenue",
   prompts: "Save, improve and reuse prompts", tasks: "Everything the agents are working on", settings: "Preferences, permissions and diagnostics",
 };
 const AGENT_ST = { working: ["Working", "ok"], idle: ["Idle", "idle"], disconnected: ["Not connected", "warn"], offline: ["Offline", ""], tokens: ["Out of tokens", "bad"] };
@@ -132,7 +134,9 @@ function draw() {
   const page = $("#page");
   const keep = preserve(page);
   const sticky = $("#thread") ? $("#thread").scrollHeight - $("#thread").scrollTop - $("#thread").clientHeight < 60 : true;
+  const pageScroll = page.scrollTop;
   page.innerHTML = (VIEWS[ui.route] || VIEWS.dashboard)();
+  page.scrollTop = pageScroll;
   const projChanged = ui.lastProj !== S.activeProjectId;
   ui.lastProj = S.activeProjectId;
   page.classList.toggle("settled", lastRoute === ui.route && !projChanged);
@@ -291,6 +295,7 @@ function activeProjectCard(p) {
       <div class="row wrap">
         <span class="chip ${p.studioConnected ? "ok" : ""}"><span class="dot ${p.studioConnected ? "connected" : "unknown"}"></span>${p.studioConnected ? "Studio connected" + (p.studio?.mode ? " · " + esc(p.studio.mode) : "") : "Studio not connected"}</span>
         <span class="chip ${p.rojoDir ? "" : "warn"}">${ic("folder")}${p.rojoDir ? "Rojo folder linked" : "No Rojo folder"}</span>
+        ${(() => { const rev = S.revenue.analytics[p.universeId]?.series?.revenue || []; const d = rev.length > 1 ? rev[rev.length - 2] : rev[0]; return d ? `<span class="chip" data-go="revenue" style="cursor:pointer">${rbx(d.value)} on ${esc(shortDate(d.time))}</span>` : ""; })()}
         ${agents.length ? `<span class="chip ok"><div class="avatars">${agents.map((a) => `<div class="av working" title="${esc(a.name)}">${esc(initials(a.name))}</div>`).join("")}</div>${agents.length} working</span>` : ""}
       </div>
       ${b ? `<div class="stack" style="gap:6px;margin-top:4px"><div class="row"><span class="ell grow" style="font-weight:500">${esc(b.title)}</span>${taskStatus(b.status)}</div>${bar(b.progress, ["in_progress", "planning", "testing"].includes(b.status) ? "live" : b.status === "failed" ? "bad" : "")}<div class="faint ell" style="font-size:12px">${esc(b.stage || "")}</div></div>` : p.currentTask ? `<div class="faint" style="font-size:12.5px">Now: ${esc(p.currentTask.title)}</div>` : ""}
@@ -445,6 +450,101 @@ VIEWS.projects = () => {
   ${p ? `<div class="sp"></div><div class="panel"><div class="panel-h"><h3>Change history — ${esc(p.game?.name || p.name)}</h3><span class="faint" style="font-size:12px">Every file change by an agent is backed up. Undo restores the previous version.</span></div>
     ${S.history.length ? S.history.map((h) => `<div class="list-row"><span class="faint" style="width:90px;font-size:12px">${ago(h.at)}</span><span class="tag">${esc(h.op === "delete" ? "delete" : h.lines.before ? "edit" : "create")}</span><span class="mono grow ell">${esc(h.path)}</span><span class="faint" style="font-size:12px">${esc(h.agent || "")}</span>${h.status === "undone" ? '<span class="chip">Undone</span>' : `<button class="btn sm" data-act="viewChange" data-id="${h.id}">View</button><button class="btn sm" data-act="undo" data-id="${h.id}">${ic("undo")}Undo</button>`}</div>`).join("")
       : empty("No changes yet", "Changes made by agents will show here.")}</div>` : ""}`;
+};
+
+/* ---------- revenue ---------- */
+const rbx = (n) => `<span class="rbx">${ic("revenue")}${Math.round(n || 0).toLocaleString()}</span>`;
+const shortDate = (iso) => new Date(iso).toLocaleDateString([], { month: "short", day: "numeric", timeZone: "UTC" });
+
+/** Single-series chart (bars or line). Hover shows date + value. */
+function chart(points, { kind = "bar", unit = "", fmt = (v) => Math.round(v).toLocaleString(), height = 150 } = {}) {
+  if (!points.length) return `<div class="empty" style="padding:18px">No data yet</div>`;
+  const W = 640, H = height, L = 40, R = 6, T = 10, Bt = 22;
+  const max = Math.max(1, ...points.map((p) => p.value));
+  const nice = (() => { const e = 10 ** Math.floor(Math.log10(max)); return Math.ceil(max / e) * e; })();
+  const x = (i) => L + (points.length === 1 ? (W - L - R) / 2 : (i * (W - L - R)) / (points.length - (kind === "bar" ? 0 : 1)));
+  const y = (v) => T + (H - T - Bt) * (1 - v / nice);
+  const grid = [0, 0.5, 1].map((f) => `<line x1="${L}" x2="${W - R}" y1="${y(nice * f)}" y2="${y(nice * f)}" class="grid"/><text x="${L - 6}" y="${y(nice * f) + 4}" text-anchor="end" class="axis">${esc(fmt(nice * f))}</text>`).join("");
+  const step = (W - L - R) / points.length;
+  let marks = "";
+  if (kind === "bar") {
+    const bw = Math.max(2, step - 2);
+    marks = points.map((p, i) => { const h = Math.max(p.value > 0 ? 2 : 0, (H - T - Bt) * (p.value / nice)); const bx = L + i * step + 1; const r = Math.min(4, bw / 2, h);
+      return `<g class="hit" data-tip="${esc(shortDate(p.time))}: ${esc(fmt(p.value))}${esc(unit)}"><rect x="${L + i * step}" y="${T}" width="${step}" height="${H - T - Bt}" fill="transparent"/>${h ? `<path class="bar" d="M${bx},${y(0)} v${-(h - r)} q0,${-r} ${r},${-r} h${bw - 2 * r} q${r},0 ${r},${r} v${h - r} z"/>` : ""}</g>`; }).join("");
+  } else {
+    const d = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join(" ");
+    marks = `<path class="line" d="${d}"/>` + points.map((p, i) => `<g class="hit" data-tip="${esc(shortDate(p.time))}: ${esc(fmt(p.value))}${esc(unit)}"><rect x="${x(i) - step / 2}" y="${T}" width="${step}" height="${H - T - Bt}" fill="transparent"/><circle class="pt" cx="${x(i)}" cy="${y(p.value)}" r="4"/></g>`).join("");
+  }
+  const lbl = (i) => `<text x="${kind === "bar" ? L + i * step + step / 2 : x(i)}" y="${H - 6}" text-anchor="${i === 0 ? "start" : "end"}" class="axis">${esc(shortDate(points[i].time))}</text>`;
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img">${grid}<line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" class="base"/>${marks}${lbl(0)}${points.length > 1 ? lbl(points.length - 1) : ""}</svg>`;
+}
+
+VIEWS.revenue = () => {
+  const R = S.revenue;
+  const a = R.account;
+  const sm = R.summary;
+  const tf = ui.revTf || "month";
+  const frame = sm?.[tf];
+  const head = `<div class="row"><div class="grow muted" style="font-size:12.5px">${R.refreshedAt ? "Updated " + ago(R.refreshedAt) + " · refreshes every 10 minutes" : ""}</div>${R.busy ? '<span class="chip"><span class="spinner"></span>Refreshing…</span>' : `<button class="btn sm" data-act="refreshRevenue" ${a || R.hasApiKey ? "" : "disabled"}>${ic("refresh")}Refresh</button>`}</div><div class="sp" style="height:12px"></div>`;
+
+  const account = !a ? `<div class="panel game-card"><div class="gicon md"><div class="fallback">${ic("revenue").replace("<svg", '<svg style="width:28px;height:28px"')}</div></div><div class="grow stack" style="gap:8px"><h2 style="font:600 19px var(--f-head)">Link your Roblox account</h2>
+      <div class="muted" style="font-size:13px;max-width:640px">See your Robux balance, pending Robux and earnings here. You sign in on <b>roblox.com</b> in a separate window — AgentForge never sees your password. The sign-in stays encrypted on this PC and is only used to talk to roblox.com. Unlink any time to sign out.</div>
+      <div class="row">${R.canLink ? `<button class="btn primary" data-act="linkRoblox">${ic("link")}Sign in with Roblox</button>` : '<span class="chip warn">Linking works in the desktop app</span>'}</div></div></div>`
+    : `<div class="panel game-card"><div class="gicon md">${a.avatarUrl ? `<img src="${esc(a.avatarUrl)}" alt="">` : `<div class="fallback">${esc(initials(a.displayName))}</div>`}</div>
+      <div class="grow stack" style="gap:6px;min-width:0"><div class="label">Linked Roblox account</div><h2 class="ell" style="font:600 20px var(--f-head)">${esc(a.displayName)} <span class="faint" style="font-size:14px;font-weight:500">@${esc(a.name)}</span></h2>
+        <div class="row wrap">${a.expired ? `<span class="chip bad">Sign-in expired</span><button class="btn sm primary" data-act="linkRoblox">Sign in again</button>` : '<span class="chip ok"><span class="dot connected"></span>Linked</span>'}<span class="faint" style="font-size:12px">User ID ${esc(a.userId)} · linked ${ago(a.linkedAt)}</span></div>
+        ${R.summaryError && !a.expired ? `<div class="faint" style="font-size:12.5px">${esc(R.summaryError)}</div>` : ""}</div>
+      <button class="btn sm ghost danger" data-act="unlinkRoblox">Unlink &amp; sign out</button></div>`;
+
+  const tiles = sm ? `<div class="grid g4">
+      <div class="panel stat"><div class="label">Robux balance</div><div class="n">${rbx(sm.balance)}</div><div class="d">Available now</div></div>
+      <div class="panel stat"><div class="label">Pending Robux</div><div class="n">${rbx(sm.pending)}</div><div class="d">On hold before it's paid out</div></div>
+      <div class="panel stat"><div class="label">Sales today</div><div class="n">${rbx(sm.day.sales)}</div><div class="d">${rbx(sm.week.sales)} this week</div></div>
+      <div class="panel stat"><div class="label">Incoming this month</div><div class="n">${rbx(sm.month.incoming)}</div><div class="d">${rbx(sm.month.outgoing)} spent this month</div></div></div><div class="sp"></div>` : "";
+
+  const lines = (out) => frame.lines.filter((l) => !!l.outgoing === out);
+  const breakdown = sm ? `<div class="grid" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
+    <div class="panel"><div class="panel-h"><h3>Summary</h3><div class="grow"></div><div class="seg">${[["day", "Day"], ["week", "Week"], ["month", "Month"], ["year", "Year"]].map(([k, l]) => `<button class="${tf === k ? "on" : ""}" data-act="revTf" data-id="${k}">${l}</button>`).join("")}</div></div>
+      <div class="list-row"><b class="grow" style="font-weight:600">Incoming Robux</b></div>
+      ${lines(false).map((l) => `<div class="list-row"><span class="grow muted">${esc(l.label)}</span>${rbx(l.value)}</div>`).join("") || '<div class="list-row"><span class="faint">Nothing in this period</span></div>'}
+      <div class="list-row"><b class="grow" style="font-weight:600">Total</b><b>${rbx(frame.incoming)}</b></div>
+      <div class="list-row"><b class="grow" style="font-weight:600">Outgoing Robux</b></div>
+      ${lines(true).map((l) => `<div class="list-row"><span class="grow muted">${esc(l.label)}</span>−${rbx(l.value)}</div>`).join("") || '<div class="list-row"><span class="faint">Nothing in this period</span></div>'}
+      <div class="list-row"><b class="grow" style="font-weight:600">Total</b><b>−${rbx(frame.outgoing)}</b></div></div>
+    <div class="panel"><div class="panel-h"><h3>Pending Robux over time</h3></div><div class="panel-b">${R.history.length > 1 ? chart(R.history.map((h) => ({ time: h.date + "T00:00:00Z", value: h.pending })), { kind: "line", unit: " R$" }) : `<div class="empty"><b>Building up</b>AgentForge records your pending Robux once a day while it runs, so this chart fills in over the coming days.</div>`}</div></div>
+  </div><div class="sp"></div>` : "";
+
+  const keyCard = !R.hasApiKey ? `<div class="panel pad stack"><div class="row"><span style="width:18px;height:18px">${ic("key")}</span><div class="h3 grow">Daily revenue per game (official Roblox Analytics)</div></div>
+      <div class="muted" style="font-size:13px;line-height:1.7">To see each game's daily revenue, active users, playtime and retention, add an Open Cloud API key:<br>
+      1. Open <b>create.roblox.com → Open Cloud → API Keys</b> and click <b>Create API Key</b>.<br>
+      2. Under Access Permissions add <b>universe.analytics</b> → <b>Read</b>, and select your experiences.<br>
+      3. Copy the key and paste it here. It is stored encrypted and never shown again.</div>
+      <div class="row"><input class="input" type="password" id="rbxKey" placeholder="Paste Open Cloud API key" autocomplete="off"><button class="btn primary" data-act="saveRbxKey">Save key</button></div></div>`
+    : "";
+  const games = R.games;
+  const keyErr = Object.values(R.analytics).find((m) => /rejected/.test(m.fatal || ""));
+  const gameCards = R.hasApiKey ? `<div class="row"><div class="h3 grow">Game revenue · last 30 days</div><button class="btn sm ghost" data-act="clearRbxKey">${ic("key")}${keyErr ? "Replace API key" : "Remove API key"}</button></div><div class="sp" style="height:12px"></div>
+    ${keyErr ? `<div class="panel pad row" style="border-color:rgba(245,143,143,.35);margin-bottom:14px"><span class="dot error"></span><div class="grow"><b>Roblox rejected the Open Cloud API key.</b><div class="muted" style="font-size:12.5px">Check that you copied the whole key and that it hasn't expired, then remove it and paste it again.</div></div></div>` : ""}
+    ${games.length ? `<div class="stack" style="gap:14px">${games.map((g) => {
+      const m = R.analytics[g.universeId];
+      const rev = m?.series?.revenue || [];
+      const total = rev.reduce((s, p) => s + p.value, 0);
+      const lastFull = rev.length > 1 ? rev[rev.length - 2] : rev[0];
+      const latest = (k) => { const s = m?.series?.[k] || []; return s.length ? s[s.length - (s.length > 1 ? 2 : 1)].value : null; };
+      return `<div class="panel"><div class="panel-h">${gameIcon({ id: g.universeId, name: g.name, game: { name: g.name, iconUrl: g.iconUrl } }, "sm")}<div class="grow" style="min-width:0"><h3 class="ell">${esc(g.name)}</h3><div class="faint" style="font-size:12px">Universe ${esc(g.universeId)}${g.projectId ? " · AgentForge project" : ""}</div></div>
+        ${m && !m.fatal ? `<div style="text-align:right"><div class="label">30-day revenue</div><div style="font:600 18px var(--f-head)">${rbx(total)}</div></div>` : ""}</div>
+        <div class="panel-b">${!m ? `<div class="row faint" style="font-size:12.5px">${R.busy && !keyErr ? '<span class="spinner"></span>Loading analytics…' : keyErr ? "Waiting for a working API key." : "Not loaded yet — click Refresh."}</div>`
+          : m.fatal ? `<div class="chip bad" style="height:auto;padding:8px 10px;white-space:normal;border-radius:10px">${esc(m.fatal)}</div>`
+          : `<div class="grid g4" style="gap:10px;margin-bottom:12px">
+              <div><div class="label">Revenue (last full day)</div><div style="font:600 16px var(--f-head);margin-top:4px">${lastFull ? rbx(lastFull.value) : "—"}</div><div class="faint" style="font-size:11.5px">${lastFull ? shortDate(lastFull.time) : ""}</div></div>
+              <div><div class="label">Daily active users</div><div style="font:600 16px var(--f-head);margin-top:4px">${latest("dau") != null ? Math.round(latest("dau")).toLocaleString() : "—"}</div></div>
+              <div><div class="label">Avg playtime / user</div><div style="font:600 16px var(--f-head);margin-top:4px">${latest("playtime") != null ? latest("playtime").toFixed(1) + " min" : "—"}</div></div>
+              <div><div class="label">Day 1 retention</div><div style="font:600 16px var(--f-head);margin-top:4px">${latest("d1") != null ? (latest("d1") * (latest("d1") <= 1 ? 100 : 1)).toFixed(1) + "%" : "—"}</div></div></div>
+            ${chart(rev, { kind: "bar", unit: " R$" })}
+            ${Object.keys(m.errors || {}).length ? `<div class="faint" style="font-size:11.5px;margin-top:8px">Some metrics unavailable: ${esc(Object.entries(m.errors).map(([k, v]) => k + " (" + v + ")").join(", "))}</div>` : ""}`}</div></div>`; }).join("")}</div>`
+      : `<div class="panel">${empty("No games to show", "Link your Roblox account, or add a project with a Place ID on the Projects page.")}</div>`}` : "";
+
+  return head + account + `<div class="sp"></div>` + tiles + breakdown + keyCard + gameCards;
 };
 
 /* ---------- prompts ---------- */
@@ -765,6 +865,16 @@ const ACT = {
   async saveImproved() { await call("savePrompt", { title: val("impIdea").slice(0, 80), category: val("impCat"), body: val("impText") }); toast("Saved to the library"); },
   async buildImproved() { await call("build", val("impText")); closeModal(); toast("Build started"); go("tasks"); },
 
+  async linkRoblox(el) {
+    el.disabled = true; el.innerHTML = '<span class="spinner"></span>Waiting for Roblox sign-in…';
+    try { const me = await call("linkRoblox"); toast(`Linked @${me.name}`); } catch { /* toasted */ } finally { render(); }
+  },
+  async unlinkRoblox() { if (confirm("Unlink your Roblox account and sign it out of AgentForge?")) { await call("unlinkRoblox"); toast("Roblox account unlinked"); } },
+  async refreshRevenue() { await call("refreshRevenue", true); },
+  revTf: (el) => { ui.revTf = el.dataset.id; render(); },
+  async saveRbxKey() { const k = val("rbxKey"); if (!k.trim()) return; await call("setRobloxApiKey", k); $("#rbxKey").value = ""; toast("API key saved — loading game analytics"); },
+  async clearRbxKey() { if (confirm("Remove the Open Cloud API key?")) await call("clearRobloxApiKey"); },
+
   taskFilter: (el) => { ui.taskFilter = el.dataset.id; render(); },
   newTask: () => taskModal(),
   async saveTask() { await call("createTask", { title: val("tkTitle"), description: val("tkDesc"), agentId: val("tkAgent") || null, role: val("tkRole") || null, priority: val("tkPrio"), deps: val("tkDep") ? [val("tkDep")] : [] }); closeModal(); toast("Task created"); },
@@ -799,6 +909,20 @@ document.addEventListener("keydown", (e) => {
   if (e.target.id === "quickBuild" && e.key === "Enter" && (e.ctrlKey || e.metaKey)) ACT.quickBuild();
 });
 $("#top").addEventListener("dblclick", (e) => { if (!e.target.closest("button")) B.host("toggleMaximize"); });
+
+/* chart tooltips */
+const tipEl = Object.assign(document.createElement("div"), { className: "ctip" });
+document.body.appendChild(tipEl);
+document.addEventListener("mousemove", (e) => {
+  const h = e.target.closest?.("[data-tip]");
+  $$(".hit.on").forEach((x) => x !== h && x.classList.remove("on"));
+  if (!h) { tipEl.style.opacity = 0; return; }
+  h.classList.add("on");
+  tipEl.textContent = h.dataset.tip;
+  tipEl.style.opacity = 1;
+  const x = Math.min(innerWidth - tipEl.offsetWidth - 8, e.clientX + 12);
+  tipEl.style.transform = `translate(${x}px,${e.clientY - 36}px)`;
+});
 
 /* ripple on buttons and nav */
 document.addEventListener("pointerdown", (e) => {

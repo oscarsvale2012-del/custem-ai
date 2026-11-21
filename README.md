@@ -29,6 +29,14 @@ reviews and tests it, and reports what changed.
   three permission modes, cancel and retry for every task.
 - **Game card** — the real Roblox icon, name, Universe/Place ID, Studio status,
   agents at work, build progress and last change for the active project.
+- **Revenue** — link your Roblox account by signing in on roblox.com inside the
+  app (AgentForge never sees your password; the session is stored encrypted and
+  only used for roblox.com). Shows Robux balance, pending Robux, sales today and
+  the Day/Week/Month/Year summary, and records pending Robux daily. With an
+  Open Cloud API key (`universe.analytics:read`) each game shows its official
+  daily revenue, active users, playtime and Day-1 retention for 30 days.
+  Note: Roblox has no official API for pending Robux, so that part uses the same
+  endpoints as the Roblox website and may change if Roblox changes them.
 - **Prompt library** — categories, search, favorites, copy, send to an agent,
   build from a prompt, and AI prompt improvement (optionally with web research of
   the Roblox docs, labelled Verified vs Suggestion).

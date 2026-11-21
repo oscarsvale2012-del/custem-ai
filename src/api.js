@@ -10,6 +10,7 @@ const METHODS = [
   "savePrompt", "deletePrompt", "toggleFavorite", "improvePrompt",
   "build", "createTask", "cancelTask", "retryTask", "clearFinishedTasks", "resolveApproval",
   "sendChat", "clearChat",
+  "linkRoblox", "unlinkRoblox", "setRobloxApiKey", "clearRobloxApiKey", "refreshRevenue",
 ];
 
 async function dispatch(backend, method, args) {
