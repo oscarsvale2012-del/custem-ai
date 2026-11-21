@@ -81,6 +81,28 @@ const robloxHost = {
   robloxLogout: async () => { await rbx().clearStorageData(); },
 };
 
+/* ---------- SVG → PNG for the Image Creator ----------
+   Renders in a hidden, offscreen window with JavaScript turned off. One at a time. */
+let renderChain = Promise.resolve();
+robloxHost.renderSvg = (svg, width, height) => {
+  const job = async () => {
+    const w = new BrowserWindow({ width, height, show: false, frame: false, transparent: true, webPreferences: { offscreen: true, javascript: false, sandbox: true, contextIsolation: true } });
+    try {
+      w.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+      w.webContents.on("will-navigate", (e) => e.preventDefault());
+      const sized = String(svg).replace(/<svg\b/i, `<svg width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"`);
+      const html = `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:"><body style="margin:0;overflow:hidden;background:transparent">${sized}</body>`;
+      await w.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
+      await new Promise((r) => setTimeout(r, 250));
+      const img = await w.webContents.capturePage({ x: 0, y: 0, width, height });
+      return img.resize({ width, height }).toPNG();
+    } finally { w.destroy(); }
+  };
+  const p = renderChain.then(job, job);
+  renderChain = p.catch(() => {});
+  return p;
+};
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1480,

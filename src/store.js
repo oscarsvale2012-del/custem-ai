@@ -27,6 +27,7 @@ const DEFAULTS = () => ({
   tasks: [],
   conversations: {}, // agentId -> [{role, text, at, blocks?}]
   secrets: {}, // name -> value (encrypted on disk), e.g. robloxApiKey
+  images: [], // images made by AIs: { id, projectId, name, kind, file, w, h, agent, at }
   roblox: { account: null, history: [], analytics: {}, summary: null }, // non-secret Roblox data
 });
 

@@ -8,7 +8,12 @@ const { makeProvider, ProviderError, PROVIDER_TYPES, CLAUDE_MODELS } = require("
 const { McpManager, PRESETS, slug } = require("./mcp");
 const { Workspace } = require("./workspace");
 const { lookupGame, parseStudios } = require("./roblox");
-const { ROLES, roleNames, systemPrompt, SEED_PROMPTS } = require("./team");
+const { ROLES, PERMS, GROUPS, roleNames, systemPrompt, effectivePerms, SEED_PROMPTS } = require("./team");
+const fs = require("fs");
+const path = require("path");
+
+const IMAGE_SIZES = { gamepass_icon: [512, 512], badge: [512, 512], thumbnail: [1920, 1080], logo: [1024, 1024], other: [1024, 1024] };
+const fileSlug = (s) => String(s || "image").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "image";
 const RA = require("./robloxAccount");
 const AN = require("./analytics");
 
@@ -183,7 +188,11 @@ class Backend extends EventEmitter {
       settings: s,
       providerTypes: Object.fromEntries(Object.entries(PROVIDER_TYPES).map(([k, v]) => [k, { label: v.label, needsKey: v.needsKey }])),
       roles: Object.fromEntries(Object.entries(ROLES).map(([k, v]) => [k, v.short])),
-      providers: this.d.providers.map((p) => ({ id: p.id, type: p.type, name: p.name, baseURL: p.baseURL, hasKey: !!p.apiKey, ...this.provInfo(p.id) })),
+      roleInfo: Object.fromEntries(Object.entries(ROLES).map(([k, v]) => [k, { short: v.short, group: v.group, perms: v.perms }])),
+      permInfo: PERMS,
+      roleGroups: GROUPS,
+      imageCount: (this.d.images || []).filter((i) => i.projectId === s.activeProjectId).length,
+      providers: this.d.providers.map((p) => ({ id: p.id, type: p.type, name: p.name, baseURL: p.baseURL, accountEmail: p.accountEmail || "", hasKey: !!p.apiKey, ...this.provInfo(p.id) })),
       agents: this.d.agents.map((a) => this.agentPublic(a)),
       mcpServers: this.d.mcpServers.map((m) => this.serverPublic(m)),
       projects: this.d.projects.map((p) => this.projectPublic(p)),
@@ -223,6 +232,12 @@ class Backend extends EventEmitter {
     const st = p ? this.provInfo(p.id) : null;
     return {
       ...a,
+      perms: effectivePerms(a),
+      permOverrides: a.perms || {},
+      accountEmail: a.accountEmail || p?.accountEmail || "",
+      ownEmail: !!a.accountEmail,
+      group: ROLES[a.role]?.group || "Engineering",
+      tasksDone: this.d.tasks.filter((t) => t.agentId === a.id && t.status === "completed" && t.kind !== "chat").length,
       status: this.agentStatus(a),
       providerName: p ? p.name : "(removed)",
       providerType: p?.type || null,
@@ -274,9 +289,9 @@ class Backend extends EventEmitter {
   }
 
   /* ================= providers ================= */
-  async addProvider({ type, name, baseURL, apiKey }) {
+  async addProvider({ type, name, baseURL, apiKey, accountEmail }) {
     if (!PROVIDER_TYPES[type]) throw new Error("Unknown provider type");
-    const p = { id: uid("prov"), type, name: (name || PROVIDER_TYPES[type].label).slice(0, 40), baseURL: (baseURL || "").trim(), apiKey: (apiKey || "").trim() };
+    const p = { id: uid("prov"), type, name: (name || PROVIDER_TYPES[type].label).slice(0, 40), baseURL: (baseURL || "").trim(), apiKey: (apiKey || "").trim(), accountEmail: cleanEmail(accountEmail) };
     this.d.providers.push(p);
     this.log(`Provider "${p.name}" added`, "info", "AI");
     this.save();
@@ -290,6 +305,7 @@ class Backend extends EventEmitter {
     if (!p) throw new Error("Provider not found");
     if (patch.name) p.name = String(patch.name).slice(0, 40);
     if ("baseURL" in patch) p.baseURL = String(patch.baseURL || "").trim();
+    if ("accountEmail" in patch) p.accountEmail = cleanEmail(patch.accountEmail);
     if (patch.apiKey) p.apiKey = String(patch.apiKey).trim();
     if (patch.clearKey) p.apiKey = "";
     this.save();
@@ -362,6 +378,8 @@ class Backend extends EventEmitter {
       enabled: true,
       instructions: String(a.instructions || "").slice(0, 4000),
       tools: { files: true, mcp: {} },
+      perms: {},
+      accountEmail: cleanEmail(a.accountEmail),
       createdAt: now(),
     };
     this.d.agents.push(agent);
@@ -379,6 +397,18 @@ class Backend extends EventEmitter {
     if (patch.budget) a.budget = Math.max(20000, Number(patch.budget));
     if ("instructions" in patch) a.instructions = String(patch.instructions || "").slice(0, 4000);
     if (patch.tools) a.tools = { files: patch.tools.files !== false, mcp: patch.tools.mcp || {} };
+    if ("accountEmail" in patch) a.accountEmail = cleanEmail(patch.accountEmail);
+    // Permission overrides: {perm: true|false} sets it, {perm: null} goes back to the role default.
+    if (patch.perms) {
+      a.perms = { ...(a.perms || {}) };
+      for (const [k, v] of Object.entries(patch.perms)) {
+        if (!PERMS[k]) continue;
+        if (v === null) delete a.perms[k];
+        else a.perms[k] = !!v;
+      }
+      if (a.tools?.files === false) a.tools.files = true; // replaced by read/write/delete permissions
+    }
+    if (patch.resetPerms) { a.perms = {}; if (a.tools) a.tools.files = true; }
     this.save();
     this.schedule();
   }
@@ -615,11 +645,11 @@ Write the prompt with these sections: Goal, Features, Systems (name each script/
 ${research ? "Use web search to check current Roblox documentation (create.roblox.com/docs) for the APIs involved. Mark facts you verified as 'Verified:' with the source URL, and your own ideas as 'Suggestion:'." : "Mark anything that is your own idea rather than something the user said as 'Suggestion:'."}
 ${project?.game ? `The game is "${project.game.name}".` : ""}
 Reply with the finished prompt only.`;
-    const tools = research && p.type === "anthropic" ? [{ server: { type: "web_search_20260209", name: "web_search", max_uses: 5 } }] : [];
+    const tools = research && p.type === "anthropic" ? [{ serverTool: { type: "web_search_20260209", name: "web_search", max_uses: 5 } }] : [];
     const messages = [{ role: "user", content: [{ type: "text", text }] }];
     let out = "";
     for (let i = 0; i < 4; i++) {
-      const res = await adapter.chat({ model: agent.model, system, messages, tools: tools.map((t) => t.server ? { ...t } : t), effort: "medium" });
+      const res = await adapter.chat({ model: agent.model, system, messages, tools, effort: "medium" });
       this.addUsage(agent, res.usage);
       out += res.blocks.filter((b) => b.type === "text").map((b) => b.text).join("");
       if (res.stop !== "pause") break;
@@ -660,7 +690,8 @@ Reply with the finished prompt only.`;
     request = String(request || "").trim();
     if (!request) throw new Error("Describe what you want to build");
     if (!this.activeProject()) throw new Error("Select or create a project first (Projects page)");
-    const t = this.newTask({ kind: "build", title: clip(request.split("\n")[0], 90), description: request, role: "Lead Developer", priority: opts.priority || "normal", agentPool: opts.agentIds?.length ? opts.agentIds : null, stage: "Waiting for the Lead Developer" });
+    const leader = this.d.agents.some((a) => a.enabled && a.role === "Co-Founder") ? "Co-Founder" : "Lead Developer";
+    const t = this.newTask({ kind: "build", title: clip(request.split("\n")[0], 90), description: request, role: leader, priority: opts.priority || "normal", agentPool: opts.agentIds?.length ? opts.agentIds : null, stage: `Waiting for the ${leader}` });
     this.log(`New build: ${t.title}`, "info", "Tasks");
     this.save();
     this.schedule();
@@ -714,11 +745,25 @@ Reply with the finished prompt only.`;
 
   isAvailable(a) { return a.enabled && this.agentStatus(a) === "idle"; }
 
+  /** Pick who does a task. Tasks for a role go only to AIs with that role (they
+   *  wait if those are busy). Only when nobody has the role does a leader take it. */
   chooseAgent(task) {
     const pool = task.agentPool ? this.d.agents.filter((a) => task.agentPool.includes(a.id)) : this.d.agents;
     const free = pool.filter((a) => this.isAvailable(a));
     if (task.agentId) return free.find((a) => a.id === task.agentId) || null;
-    return free.find((a) => a.role === task.role) || free.find((a) => a.role === "Lead Developer" && task.role !== "Lead Developer") || (task.role ? free[0] : free.find((a) => a.id === this.d.settings.defaultAgentId) || free[0]) || null;
+    if (!task.role) return free.find((a) => a.id === this.d.settings.defaultAgentId) || free[0] || null;
+    const holders = pool.filter((a) => a.enabled && a.role === task.role);
+    if (holders.length) return free.find((a) => a.role === task.role) || null;
+    const leaders = ["Co-Founder", "Lead Developer"].filter((r) => r !== task.role);
+    for (const r of leaders) { const a = free.find((x) => x.role === r); if (a) return a; }
+    if (task.kind === "build") return free[0] || null; // a build must always be planned by someone
+    return pool.some((a) => a.enabled && leaders.includes(a.role)) ? null : free[0] || null;
+  }
+
+  waitReason(task) {
+    if (task.agentId) return "Waiting for the chosen agent";
+    if (task.role && !this.d.agents.some((a) => a.enabled && a.role === task.role)) return `No AI has the ${task.role} role — waiting for a leader (add one on the Team page)`;
+    return task.role ? `Waiting for a free ${task.role}` : "Waiting for a free, connected agent";
   }
 
   schedule() {
@@ -736,7 +781,7 @@ Reply with the finished prompt only.`;
           continue;
         }
         const agent = this.chooseAgent(t);
-        if (!agent) { t.stage = t.agentId ? "Waiting for the chosen agent" : "Waiting for a free, connected agent"; continue; }
+        if (!agent) { t.stage = this.waitReason(t); continue; }
         this.startTask(t, agent);
       }
     } finally {
@@ -765,7 +810,10 @@ Reply with the finished prompt only.`;
     try {
       const planning = task.kind === "build";
       const tools = this.toolsFor(task, agent, { planning, onPlan: (p) => (plan = p), signal: ctrl.signal });
-      const system = systemPrompt({ agent, project, studio: this.studioFor(project), toolsNote: this.toolsNote(tools) });
+      const system = systemPrompt({
+        agent, project, studio: this.studioFor(project), toolsNote: this.toolsNote(tools), perms: effectivePerms(agent),
+        team: this.d.agents.filter((a) => a.enabled).map((a) => ({ name: a.name, role: a.role })),
+      });
       let messages;
       if (task.kind === "chat") {
         messages = this.chatMem.get(agent.id) || [];
@@ -824,8 +872,9 @@ Reply with the finished prompt only.`;
         "Plan it:",
         "1. Inspect the project first (files, and Studio if connected) and look for systems you can reuse.",
         "2. Work out which systems are needed and how they connect (module names, RemoteEvents, data).",
-        "3. Call submit_plan with focused tasks for the specialists. Each task must say exactly which files/instances to create or change and which interfaces to use, so agents working in parallel don't collide. Use depends_on when a task needs another one's result. Keep it to the tasks that are really needed (usually 3–8).",
-        "Do not write game code yourself in this step."
+        "3. Call submit_plan with focused tasks for the specialists. Give every task to the role whose job it is (scripts → Luau Developer, icons/thumbnails → Image Creator, 3D models → Model Maker, maps → Level Designer, research → Researcher, ideas → Idea Finder, and so on). Each task must say exactly which files/instances/images to create or change and which interfaces to use, so agents working in parallel don't collide. Use depends_on when a task needs another one's result. Keep it to the tasks that are really needed (usually 3–8).",
+        `Roles on this team right now: ${[...new Set(this.d.agents.filter((a) => a.enabled).map((a) => a.role))].join(", ") || "none"}. Prefer these roles; a role nobody has is done by a leader.`,
+        "Do not do the specialist work yourself in this step."
       );
     } else {
       if (parent) parts.push(`This task is part of a bigger request: "${clip(parent.description, 1500)}"`, parent.notes.length ? "Team notes so far:\n" + parent.notes.map((n) => `- ${n.agent}: ${n.text}`).join("\n") : "", "");
@@ -893,7 +942,7 @@ Reply with the finished prompt only.`;
     for (let step = 0; step < 50; step++) {
       if (signal.aborted) throw new ProviderError("aborted", "stopped");
       if (agent.used >= agent.budget) throw new ProviderError("budget", `${agent.name} used up its token budget`);
-      const res = await adapter.chat({ model: agent.model, system, messages, tools: tools.map(({ name, description, schema }) => ({ name, description, schema })), signal });
+      const res = await adapter.chat({ model: agent.model, system, messages, tools: tools.map(({ name, description, schema, serverTool }) => (serverTool ? { serverTool } : { name, description, schema })), signal });
       this.addUsage(agent, res.usage);
       messages.push({ role: "assistant", content: res.blocks, raw: res.raw, rawProvider: res.rawProvider });
       const text = res.blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
@@ -983,8 +1032,10 @@ Reply with the finished prompt only.`;
     const mode = this.d.settings.permissionMode;
     const ctx = () => ({ taskId: task?.id, agent: agent.name, task: task?.title });
     const obj = (props, req) => ({ type: "object", properties: props, required: req || Object.keys(props), additionalProperties: false });
+    const perms = effectivePerms(agent);
+    const provider = this.d.providers.find((p) => p.id === agent.providerId);
 
-    if (project?.rojoDir && agent.tools?.files !== false) {
+    if (project?.rojoDir && perms.read) {
       tools.push(
         { name: "list_project_files", description: "List files in the Rojo project folder (optionally a subfolder).", schema: obj({ dir: { type: "string", description: "Subfolder, e.g. 'src' or '.'" } }, []),
           run: async (i) => this.ws.list(project, i.dir || ".").map((f) => f.path).join("\n") || "(no files yet)" },
@@ -1074,10 +1125,63 @@ Reply with the finished prompt only.`;
       });
     }
 
+    // Web research (Claude's own web search, run by Anthropic)
+    if (perms.web && provider?.type === "anthropic") {
+      tools.push({ name: "web_search", serverTool: { type: "web_search_20260209", name: "web_search", max_uses: 8 }, description: "Search the web", schema: {}, run: async () => "" });
+    }
+
+    // Revenue & player numbers
+    if (perms.stats) {
+      tools.push({ name: "get_game_stats", description: "Get the game's Robux, revenue and player analytics (balance, pending Robux, sales, daily revenue, active users, playtime, retention).", schema: obj({}, []),
+        run: async () => this.gameStatsText(project) });
+    }
+
+    if (task && !planning) {
+      // Images: gamepass icons, thumbnails, badges, logos
+      if (perms.images) {
+        tools.push({
+          name: "create_image",
+          description: "Create a PNG image from SVG you write. Sizes: gamepass_icon 512x512, badge 512x512, logo 1024x1024, thumbnail 1920x1080 (other 1024x1024). The SVG must use that viewBox (e.g. viewBox=\"0 0 512 512\"), only inline shapes/gradients/filters/text (no external images or fonts). Saved to the project's images.",
+          schema: obj({ name: { type: "string", description: "Short name, e.g. 'VIP gamepass'" }, kind: { type: "string", enum: Object.keys(IMAGE_SIZES) }, svg: { type: "string" } }),
+          run: async (i) => this.saveImage({ project, agent, task, name: i.name, kind: i.kind, svg: i.svg }),
+        });
+        const imgProv = this.imageProvider();
+        if (imgProv) {
+          tools.push({
+            name: "generate_image",
+            description: "Generate a picture with an image model from a detailed text prompt (for rich thumbnails or illustrated icons). Describe subject, style, colors, composition. No text from other games' logos.",
+            schema: obj({ name: { type: "string" }, kind: { type: "string", enum: Object.keys(IMAGE_SIZES) }, prompt: { type: "string" } }),
+            run: async (i) => this.generateImage({ project, agent, task, provider: imgProv, name: i.name, kind: i.kind, prompt: i.prompt, signal }),
+          });
+        }
+      }
+      // Give tasks to other AIs
+      if (perms.delegate) {
+        let made = 0;
+        tools.push({
+          name: "assign_task",
+          description: "Give a task to another AI on the team by role (or by name). Use the role whose job it is. The task starts when that AI is free.",
+          schema: obj({ title: { type: "string" }, description: { type: "string", description: "Exactly what to do and what done looks like" }, role: { type: "string", enum: roleNames() }, agent_name: { type: "string", description: "Optional: a specific AI's name" }, priority: { type: "string", enum: ["low", "normal", "high"] } }, ["title", "description", "role", "priority"]),
+          run: async (i) => {
+            if (++made > 12) throw new Error("You already created 12 tasks in this task. Wait for results first.");
+            const target = i.agent_name ? this.d.agents.find((a) => a.name.toLowerCase() === String(i.agent_name).toLowerCase()) : null;
+            const parentId = task.parentId || (task.kind === "build" ? task.id : null);
+            const t = this.newTask({ title: clip(i.title, 90), description: i.description, role: ROLES[i.role] ? i.role : null, agentId: target?.id || null, priority: ["low", "normal", "high"].includes(i.priority) ? i.priority : "normal", parentId, projectId: task.projectId, agentPool: task.agentPool, assignedBy: agent.name });
+            this.log(`${agent.name} gave "${t.title}" to ${target ? target.name : "the " + t.role}`, "info", agent.name);
+            setTimeout(() => this.schedule(), 0);
+            const holders = this.d.agents.filter((a) => a.enabled && a.role === t.role).map((a) => a.name);
+            return `Task created for ${target ? target.name : t.role}${!target && !holders.length ? " (nobody has this role yet, so a leader will do it)" : holders.length ? ` (${holders.join(", ")})` : ""}.`;
+          },
+        });
+      }
+    }
+
     // MCP tools
     for (const s of this.d.mcpServers) {
       const info = this.mcp.info(s.id);
       if (info.status !== "connected") continue;
+      const isStudio = s.kind === "roblox-studio" || info.tools.some((t) => t.name === "list_roblox_studios");
+      if (isStudio ? !perms.studio : !perms.mcp) continue;
       const allow = agent.tools?.mcp?.[s.id] ?? "all";
       if (allow === "none") continue;
       for (const t of info.tools) {
@@ -1102,8 +1206,118 @@ Reply with the finished prompt only.`;
         });
       }
     }
-    return tools;
+    // Final permission check on file changes.
+    return tools.filter((t) => (t.name !== "write_file" || perms.write) && (t.name !== "delete_file" || perms.delete));
   }
+
+  /* ================= images ================= */
+  imagesDir(project) {
+    return project?.rojoDir && fs.existsSync(project.rojoDir) ? path.join(project.rojoDir, "assets", "images") : path.join(this.store.file, "..", "images", project?.id || "no-project");
+  }
+
+  recordImage({ project, agent, task, name, kind, file, w, h, source }) {
+    const rec = { id: uid("img"), projectId: project?.id || null, name: clip(String(name || "Image"), 80), kind, file, w, h, source, agent: agent?.name || "", task: task?.title || "", at: now() };
+    this.d.images = this.d.images || [];
+    this.d.images.push(rec);
+    if (task) task.changes.push({ id: rec.id, path: path.basename(file), op: "image" });
+    this.log(`${agent?.name || "You"} created ${kind.replace("_", " ")} "${rec.name}"`, "ok", agent?.name || "Images");
+    this.save();
+    return rec;
+  }
+
+  async saveImage({ project, agent, task, name, kind, svg }) {
+    if (!IMAGE_SIZES[kind]) kind = "other";
+    svg = String(svg || "");
+    if (!/^\s*(<\?xml[^>]*>\s*)?<svg[\s>]/i.test(svg)) throw new Error("svg must be an <svg> element");
+    if (/<script|href\s*=\s*["']?(https?:|data:|file:)|<foreignObject/i.test(svg)) throw new Error("No scripts, external links or foreignObject in the SVG");
+    const [w, h] = IMAGE_SIZES[kind];
+    const dir = this.imagesDir(project);
+    fs.mkdirSync(dir, { recursive: true });
+    const base = path.join(dir, `${fileSlug(name)}-${Date.now().toString(36)}`);
+    if (!this.host.renderSvg) {
+      fs.writeFileSync(base + ".svg", svg);
+      this.recordImage({ project, agent, task, name, kind, file: base + ".svg", w, h, source: "svg" });
+      return `Saved ${base}.svg (PNG rendering needs the desktop app).`;
+    }
+    const png = await this.host.renderSvg(svg, w, h);
+    fs.writeFileSync(base + ".png", png);
+    this.recordImage({ project, agent, task, name, kind, file: base + ".png", w, h, source: "svg" });
+    return `Saved ${base}.png (${w}×${h}). The user can see it on the Projects page. To use it in the game, upload it to Roblox (Studio's upload_image tool or Creator Hub).`;
+  }
+
+  /** An OpenAI provider (api.openai.com) can generate pictures. */
+  imageProvider() {
+    return this.d.providers.find((p) => p.type === "openai" && p.apiKey && /api\.openai\.com/.test(p.baseURL || "https://api.openai.com/v1") && this.provInfo(p.id).status === "connected") || null;
+  }
+
+  async generateImage({ project, agent, task, provider, name, kind, prompt, signal }) {
+    if (!IMAGE_SIZES[kind]) kind = "other";
+    const size = kind === "thumbnail" ? "1536x1024" : "1024x1024";
+    const base = (provider.baseURL || "https://api.openai.com/v1").replace(/\/+$/, "");
+    let r;
+    try {
+      r = await fetch(base + "/images/generations", { method: "POST", signal, headers: { "Content-Type": "application/json", Authorization: "Bearer " + provider.apiKey }, body: JSON.stringify({ model: "gpt-image-1", prompt: String(prompt).slice(0, 4000), size, n: 1 }) });
+    } catch { throw new Error("Cannot reach the image service"); }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error("Image service: " + (j.error?.message || r.status));
+    const b64 = j.data?.[0]?.b64_json;
+    if (!b64) throw new Error("The image service returned no image");
+    const dir = this.imagesDir(project);
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${fileSlug(name)}-${Date.now().toString(36)}.png`);
+    fs.writeFileSync(file, Buffer.from(b64, "base64"));
+    const [w, h] = size.split("x").map(Number);
+    this.recordImage({ project, agent, task, name, kind, file, w, h, source: "ai" });
+    return `Saved ${file} (${w}×${h}).`;
+  }
+
+  listImages(projectId) {
+    const pid = projectId || this.d.settings.activeProjectId;
+    return (this.d.images || []).filter((i) => i.projectId === pid).slice(-60).reverse().map((i) => {
+      let dataUrl = null;
+      try {
+        const buf = fs.readFileSync(i.file);
+        dataUrl = (i.file.endsWith(".svg") ? "data:image/svg+xml;base64," : "data:image/png;base64,") + buf.toString("base64");
+      } catch { /* file moved or deleted */ }
+      return { ...i, dataUrl };
+    });
+  }
+
+  deleteImage(id) {
+    const i = (this.d.images || []).find((x) => x.id === id);
+    if (!i) throw new Error("Image not found");
+    try { fs.unlinkSync(i.file); } catch { /* already gone */ }
+    this.d.images = this.d.images.filter((x) => x.id !== id);
+    this.save();
+  }
+
+  openImageFolder(projectId) { return this.imagesDir(this.project(projectId || this.d.settings.activeProjectId)); }
+
+  /* ================= stats for AIs ================= */
+  gameStatsText(project) {
+    const r = this.d.roblox || {};
+    const out = [];
+    if (r.summary) {
+      const s = r.summary;
+      out.push(`Robux balance ${s.balance}, pending ${s.pending}. Sales today ${s.day.sales}, this week ${s.week.sales}, this month ${s.month.sales}. Incoming this month ${s.month.incoming}.`);
+    }
+    const a = project?.universeId && r.analytics?.[project.universeId];
+    if (a?.series) {
+      const last = (k, n = 14) => (a.series[k] || []).slice(-n).map((p) => `${p.time.slice(5, 10)}:${Math.round(p.value * 100) / 100}`).join(" ");
+      out.push(`Daily revenue (Robux, last 14 days): ${last("revenue")}`);
+      out.push(`Daily active users: ${last("dau")}`);
+      out.push(`Avg playtime per user (min): ${last("playtime")}`);
+      out.push(`Day-1 retention: ${last("d1")}`);
+    }
+    if (project?.game) out.push(`Game: ${project.game.name}, visits ${project.game.visits}, playing now ${project.game.playing}.`);
+    return out.join("\n") || "No revenue or analytics yet. The user can link their Roblox account and add an Open Cloud key on the Revenue page.";
+  }
+}
+
+function cleanEmail(e) {
+  e = String(e || "").trim().slice(0, 120);
+  if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) throw new Error("That email address doesn't look right");
+  return e;
 }
 
 function parseArgs(a) {

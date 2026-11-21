@@ -9,3 +9,4 @@ dist/
 .testdata-auth-real/
 src/auth-config.json
 download/
+.testdata-team/

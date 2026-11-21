@@ -12,6 +12,7 @@ const METHODS = [
   "build", "createTask", "cancelTask", "retryTask", "clearFinishedTasks", "resolveApproval",
   "sendChat", "clearChat",
   "linkRoblox", "unlinkRoblox", "setRobloxApiKey", "clearRobloxApiKey", "refreshRevenue",
+  "listImages", "deleteImage", "openImageFolder",
 ];
 
 const AUTH = {

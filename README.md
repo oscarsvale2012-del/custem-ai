@@ -11,9 +11,21 @@ reviews and tests it, and reports what changed.
   OpenRouter, Groq, Ollama, LM Studio). Agents have a name, role, provider, model,
   token budget, extra instructions and their own tool access. Live status:
   working · idle · not connected · offline · out of tokens.
-- **Roles** — Lead Developer, Luau Developer, UI/UX Designer, Game Designer,
-  Debugger, Code Reviewer. Each has its own system prompt with Roblox standards
-  (server authority, correct services, DataStore safety) and UI design rules.
+- **Roles (19)** — Leadership: Co-Founder (runs everything and gives tasks to
+  every AI), Lead Developer, Producer · Creative: Idea Finder, Game Designer,
+  Level Designer · Art & Assets: UI/UX Designer, Image Creator, Model Maker,
+  Animator, Sound Designer · Engineering: Luau Developer, Debugger, Code
+  Reviewer, QA Tester · Business & Research: Researcher, Monetization
+  Strategist, Marketing Manager, Data Analyst. AIs only do what their role is
+  for: role instructions + role rules in every prompt, tools limited by
+  permissions, and tasks routed strictly to the AI that has the role.
+- **Team & Permissions** — every AI with its name, role, provider, model and
+  account email; nine permissions per AI (read, write, delete, Roblox Studio,
+  other MCP, web research, create images, give tasks, see revenue) that are
+  enforced on the tools it gets.
+- **Images** — the Image Creator makes gamepass icons (512×512), thumbnails
+  (1920×1080), badges and logos as PNGs (SVG rendered locally, or an image
+  model when an OpenAI key is connected), shown on the Projects page.
 - **Prompt → game** — the Lead Developer inspects the project and submits a plan;
   tasks run in parallel where their dependencies allow; a reviewer checks, tests
   (via Studio when connected) and writes the final report.

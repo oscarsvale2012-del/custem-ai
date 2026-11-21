@@ -32,6 +32,9 @@ function mockModel(port = 0) {
         out = tools === 0 ? call("write_file", { path: "src/ServerScriptService/CoinServer.server.luau", content: "local Coins = require(game.ReplicatedStorage.Coins)\n" }) : say("Made the server.");
       } else if (first.includes("Your task: Review")) {
         out = tools === 0 ? call("read_file", { path: "src/ReplicatedStorage/Coins.luau" }) : say("Review OK. Built coins module and server.\n\n```lua\nlocal Coins = require(game.ReplicatedStorage.Coins)\n```");
+      } else if (first.includes("Make icon please")) {
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><defs><radialGradient id="bg" cx="50%" cy="35%" r="70%"><stop offset="0" stop-color="#ffe27a"/><stop offset="1" stop-color="#ff8a00"/></radialGradient><linearGradient id="c" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#ffd84d"/></linearGradient></defs><rect x="16" y="16" width="480" height="480" rx="96" fill="url(#bg)"/><path d="M116 330 L150 170 L218 250 L256 140 L294 250 L362 170 L396 330 Z" fill="url(#c)" stroke="#7a3d00" stroke-width="14" stroke-linejoin="round"/><rect x="116" y="330" width="280" height="50" rx="14" fill="#fff3b0" stroke="#7a3d00" stroke-width="14"/><text x="256" y="455" font-family="Arial Black,Arial" font-size="64" font-weight="900" text-anchor="middle" fill="#fff" stroke="#7a3d00" stroke-width="10" paint-order="stroke">VIP</text></svg>';
+        out = tools === 0 ? call("create_image", { name: "VIP gamepass", kind: "gamepass_icon", svg }) : say("Made a VIP gamepass icon (512x512): gold crown on a warm gradient with a bold VIP label.");
       } else if (first.includes("MCP please")) {
         const t = toolNames.find((n) => n.endsWith("__wipe_place"));
         out = tools === 0 ? call(t, {}) : say("tool result seen");

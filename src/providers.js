@@ -68,7 +68,7 @@ function anthropicAdapter(cfg) {
         cache_control: { type: "ephemeral" },
         output_config: { effort },
       };
-      if (tools && tools.length) params.tools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.schema }));
+      if (tools && tools.length) params.tools = tools.map((t) => (t.serverTool ? t.serverTool : { name: t.name, description: t.description, input_schema: t.schema }));
       // Server-side refusal fallbacks (not available on Haiku).
       if (!model.startsWith("claude-haiku")) {
         params.betas = ["server-side-fallback-2026-07-01"];
@@ -145,7 +145,8 @@ function openaiAdapter(cfg) {
     },
     async chat({ model, system, messages, tools, signal, maxTokens = 16000 }) {
       const body = { model, messages: toWire(system, messages), max_tokens: maxTokens };
-      if (tools && tools.length) body.tools = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.schema } }));
+      const fnTools = (tools || []).filter((t) => !t.serverTool); // server tools are Claude-only
+      if (fnTools.length) body.tools = fnTools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.schema } }));
       const j = await call("/chat/completions", body, signal);
       const choice = j.choices?.[0];
       if (!choice) throw new ProviderError("other", "provider returned no answer");

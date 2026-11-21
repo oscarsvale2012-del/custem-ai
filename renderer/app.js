@@ -54,16 +54,19 @@ const ICON = {
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/>', x: '<path d="M6 6l12 12M18 6 6 18"/>', play: '<path d="m6 4 14 8-14 8z"/>',
   bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
   revenue: '<path d="M12 2.5 20.2 7.2v9.6L12 21.5l-8.2-4.7V7.2z"/><path d="M12 7.5 16.1 9.8v4.4L12 16.5l-4.1-2.3V9.8z"/>',
+  team: '<path d="M12 2.5 4.5 5.5v6c0 4.6 3.2 8.4 7.5 10 4.3-1.6 7.5-5.4 7.5-10v-6z"/><path d="m8.8 12 2.2 2.2 4.4-4.6"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m4 7 8 6 8-6"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2M17 6l3 3M14.5 8.5l2 2"/>', link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
 };
 const ic = (n, cls = "") => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[n] || ""}</svg>`;
 
 const PAGES = [
-  ["dashboard", "Dashboard"], ["workspace", "AI Workspace"], ["agents", "AI Agents"], ["mcp", "MCP Servers"],
+  ["dashboard", "Dashboard"], ["workspace", "AI Workspace"], ["agents", "AI Agents"], ["team", "Team & Permissions"], ["mcp", "MCP Servers"],
   ["roblox", "Roblox Studio"], ["projects", "Projects"], ["revenue", "Revenue"], ["prompts", "Prompt Library"], ["tasks", "Task Manager"], ["settings", "Settings"],
 ];
 const SUB = {
-  dashboard: "Your AI team at a glance", workspace: "Talk to agents and send instructions", agents: "Providers, models and team roles",
+  dashboard: "Your AI team at a glance", workspace: "Talk to agents and send instructions", agents: "Providers, models and team roles", team: "Every AI, its role, account and what it may do",
   mcp: "External tools for your agents", roblox: "Studio connection and project files", projects: "Your Roblox games", revenue: "Robux, pending earnings and game revenue",
   prompts: "Save, improve and reuse prompts", tasks: "Everything the agents are working on", settings: "Preferences, permissions and diagnostics",
 };
@@ -149,7 +152,7 @@ function draw() {
   $("#subtitle").textContent = SUB[ui.route] || "";
   $("#topActions").innerHTML = `<button class="btn sm ${S.approvals.length ? "" : "ghost"}" data-act="openApprovals" title="Approvals">${ic("bell")}${S.approvals.length ? `<b>${S.approvals.length}</b> waiting` : ""}</button>`;
   const dr = $("#drawerRoot"), dk = preserve(dr);
-  const drawerKey = ui.drawer + ":" + (ui.drawer === "task" ? ui.taskSel : "");
+  const drawerKey = ui.drawer + ":" + (ui.drawer === "task" ? ui.taskSel : ui.drawer === "agent" ? ui.agentSel : "");
   dr.innerHTML = drawDrawer();
   dr.classList.toggle("settled", dr.dataset.key === drawerKey);
   dr.dataset.key = drawerKey;
@@ -370,7 +373,8 @@ function agentCard(a) {
   return `<div class="panel agent st-${a.status}">
     <div class="row"><div class="ava">${esc(initials(a.name))}</div><div class="grow" style="min-width:0"><h4 class="ell">${esc(a.name)}</h4><div class="faint ell" style="font-size:12px">${esc(a.role)}</div></div>${statusChip(a.status)}</div>
     <div class="now">${agentNow(a)}</div>
-    <div class="kv" style="margin-bottom:10px"><span>Provider <b>${esc(a.providerName)}</b></span><span>Model <b>${esc(a.model)}</b></span></div>
+    <div class="kv" style="margin-bottom:6px"><span>Provider <b>${esc(a.providerName)}</b></span><span>Model <b>${esc(a.model)}</b></span></div>
+    <div style="margin-bottom:10px">${accountCell(a)}</div>
     <div class="faint" style="font-size:12px;margin-bottom:10px">${esc(S.roles[a.role] || "")}</div>
     <div class="row wrap" style="margin-bottom:12px"><span class="tag">${a.toolCount} tools</span>${a.tools?.files !== false ? '<span class="tag">project files</span>' : ""}${mcpNames.map((n) => `<span class="tag">${esc(n)}</span>`).join("")}</div>
     <div class="row" style="font-size:11.5px;margin-bottom:6px"><span class="faint grow">Tokens</span><span class="muted">${fmtN(a.used)} / ${fmtN(a.budget)}</span></div>
@@ -382,6 +386,69 @@ function agentCard(a) {
       <button class="btn sm ghost" data-act="agentAct" data-op="${a.enabled ? "disable" : "enable"}" data-id="${a.id}">${a.enabled ? "Switch off" : "Switch on"}</button>
       <button class="btn sm ghost danger icon" title="Remove" data-act="removeAgent" data-id="${a.id}">${ic("trash")}</button></div>
   </div>`;
+}
+
+/* ---------- Team & Permissions ---------- */
+const PERM_ORDER = ["read", "write", "delete", "studio", "mcp", "web", "images", "delegate", "stats"];
+const roleOptions = (sel) => S.roleGroups.map((g) => `<optgroup label="${esc(g)}">${Object.entries(S.roleInfo).filter(([, v]) => v.group === g).map(([k]) => `<option ${k === sel ? "selected" : ""}>${esc(k)}</option>`).join("")}</optgroup>`).join("");
+function permChips(a, small) {
+  return PERM_ORDER.map((k) => {
+    const on = a.perms[k], custom = k in (a.permOverrides || {});
+    return `<button class="perm ${on ? "on" : ""} ${custom ? "custom" : ""} ${small ? "sm" : ""}" data-act="togglePerm" data-id="${a.id}" data-perm="${k}" title="${esc(S.permInfo[k].label)}: ${esc(S.permInfo[k].desc)}${custom ? " (changed from the role default)" : ""}">${esc(S.permInfo[k].label)}</button>`;
+  }).join("");
+}
+function accountCell(a) {
+  return a.accountEmail ? `<span class="row" style="gap:6px;font-size:12.5px">${ic("mail", "mi")}<span class="ell">${esc(a.accountEmail)}</span></span>` : `<span class="faint" style="font-size:12.5px">No email set</span>`;
+}
+
+VIEWS.team = () => {
+  const groups = S.roleGroups;
+  const by = (g) => S.agents.filter((a) => a.group === g);
+  return `<div class="row wrap" style="gap:8px">${groups.map((g) => `<span class="chip">${esc(g)} · ${by(g).length}</span>`).join("")}<div class="grow"></div><button class="btn primary" data-act="addAgent" ${S.providers.length ? "" : "disabled"}>${ic("plus")}Add AI</button></div>
+  <div class="sp"></div>
+  <div class="panel"><div class="panel-h"><h3>Your AIs · ${S.agents.length}</h3><span class="faint" style="font-size:12px">Click a permission to switch it on or off. Changes apply to the AI's next step.</span></div>
+    ${S.agents.length ? S.agents.map((a) => `<div class="team-row">
+      <div class="row" style="gap:10px;min-width:0"><div class="ava" style="width:34px;height:34px;font-size:12px;border-radius:10px">${esc(initials(a.name))}</div>
+        <div style="min-width:0"><div class="row" style="gap:6px"><b class="ell">${esc(a.name)}</b><span class="dot ${a.status}" title="${AGENT_ST[a.status][0]}"></span></div>
+        <select class="select role-sel" data-change="agentRole" data-id="${a.id}">${roleOptions(a.role)}</select></div></div>
+      <div style="min-width:0"><div class="ell" style="font-size:12.5px">${esc(a.providerName)} · <span class="mono">${esc(a.model)}</span></div>${accountCell(a)}</div>
+      <div class="perm-wrap">${permChips(a, true)}</div>
+      <div class="row" style="justify-content:flex-end"><button class="btn sm" data-act="viewAgent" data-id="${a.id}">View</button></div>
+    </div>`).join("") : empty("No AIs yet", "Add an AI provider on the AI Agents page, then add AIs here.")}
+  </div>
+  <div class="sp"></div>
+  <div class="row"><div class="h3 grow">Roles</div><span class="faint" style="font-size:12px">Each role comes with its own instructions and default permissions. AIs only do the work their role is for.</span></div>
+  <div class="sp" style="height:12px"></div>
+  ${groups.map((g) => `<div class="label" style="margin:14px 0 10px">${esc(g)}</div><div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(270px,1fr))">${Object.entries(S.roleInfo).filter(([, v]) => v.group === g).map(([k, v]) => {
+    const holders = S.agents.filter((a) => a.role === k);
+    return `<div class="panel pad stack" style="gap:8px"><div class="row"><b class="grow" style="font:600 14px var(--f-head)">${esc(k)}</b>${holders.length ? `<span class="chip ok">${holders.map((h) => esc(h.name)).join(", ")}</span>` : '<span class="chip">Nobody</span>'}</div>
+      <div class="muted" style="font-size:12.5px;min-height:36px">${esc(v.short)}</div>
+      <div class="row wrap" style="gap:4px">${PERM_ORDER.filter((p) => v.perms[p]).map((p) => `<span class="tag">${esc(S.permInfo[p].label)}</span>`).join("")}</div>
+      <div><button class="btn sm" data-act="addAgentRole" data-id="${esc(k)}" ${S.providers.length ? "" : "disabled"}>${ic("plus")}Add a ${esc(k)}</button></div></div>`;
+  }).join("")}</div>`).join("")}`;
+};
+
+function agentDrawer(a) {
+  const tasks = S.tasks.filter((t) => t.agentId === a.id && t.kind !== "chat").slice(-8).reverse();
+  const pct = a.used / a.budget;
+  return `<div class="dscrim" data-act="closeDrawer"></div><div class="drawer"><div class="panel-h"><div class="ava" style="width:38px;height:38px">${esc(initials(a.name))}</div><div class="grow" style="min-width:0"><h3 class="ell">${esc(a.name)}</h3><div class="faint" style="font-size:12px">${esc(a.role)} · ${esc(a.group)}</div></div>${statusChip(a.status)}<button class="btn sm ghost icon" data-act="closeDrawer">${ic("x")}</button></div>
+    <div class="body stack" id="agentBody" style="gap:18px">
+      <div class="muted" style="font-size:13px">${esc(S.roles[a.role] || "")}</div>
+      <div class="kvgrid">
+        <div><div class="label">Name</div><div>${esc(a.name)}</div></div>
+        <div><div class="label">Role</div><select class="select" style="height:32px" data-change="agentRole" data-id="${a.id}">${roleOptions(a.role)}</select></div>
+        <div><div class="label">Provider</div><div>${esc(a.providerName)}</div></div>
+        <div><div class="label">Model</div><div class="mono">${esc(a.model)}</div></div>
+        <div style="grid-column:1/-1"><div class="label">Account email</div><div class="row" style="gap:8px">${accountCell(a)}<span class="faint" style="font-size:11.5px">${a.accountEmail ? (a.ownEmail ? "set on this AI" : "from its provider") : ""}</span></div></div>
+        <div><div class="label">Tasks done</div><div>${a.tasksDone}</div></div>
+        <div><div class="label">Tokens</div><div>${fmtN(a.used)} / ${fmtN(a.budget)}</div>${bar(pct, pct >= 1 ? "bad" : pct > 0.8 ? "warn" : "")}</div>
+      </div>
+      <div><div class="row" style="margin-bottom:8px"><div class="label grow">Permissions</div>${Object.keys(a.permOverrides || {}).length ? `<button class="btn sm ghost" data-act="resetPerms" data-id="${a.id}">Reset to role defaults</button>` : `<span class="faint" style="font-size:11.5px">Role defaults</span>`}</div>
+        ${PERM_ORDER.map((k) => `<div class="row perm-line"><div class="grow"><div style="font-weight:500">${esc(S.permInfo[k].label)}${k in (a.permOverrides || {}) ? ' <span class="tag">changed</span>' : ""}</div><div class="faint" style="font-size:12px">${esc(S.permInfo[k].desc)}</div></div><div class="toggle ${a.perms[k] ? "on" : ""}" data-act="togglePerm" data-id="${a.id}" data-perm="${k}"></div></div>`).join("")}</div>
+      <div><div class="label" style="margin-bottom:8px">Tools it can use now · ${a.toolCount}</div><div class="faint" style="font-size:12px">${a.toolCount ? "Based on its permissions, project and connected MCP servers." : "None yet — give it permissions, a project and connections."}</div></div>
+      <div><div class="label" style="margin-bottom:8px">Recent tasks</div>${tasks.length ? tasks.map((t) => `<div class="list-row click" style="padding:8px 0" data-act="openTask" data-id="${t.id}"><span class="grow ell">${esc(t.title)}</span>${taskStatus(t.status)}</div>`).join("") : '<div class="faint" style="font-size:12.5px">No tasks yet.</div>'}</div>
+      <div class="row"><button class="btn" data-act="editAgent" data-id="${a.id}">${ic("settings")}Configure</button><button class="btn" data-act="chatWith" data-id="${a.id}">${ic("workspace")}Chat</button><div class="grow"></div><button class="btn ghost" data-act="agentAct" data-op="${a.enabled ? "disable" : "enable"}" data-id="${a.id}">${a.enabled ? "Switch off" : "Switch on"}</button><button class="btn ghost danger" data-act="removeAgent" data-id="${a.id}">${ic("trash")}</button></div>
+    </div></div>`;
 }
 
 /* ---------- MCP ---------- */
@@ -439,6 +506,16 @@ VIEWS.roblox = () => {
 async function loadFiles(id) { try { ui.files = await call("listFiles", id); } catch { ui.files = []; } render(); }
 
 /* ---------- projects ---------- */
+function imagesPanel(p) {
+  const key = p.id + ":" + S.imageCount;
+  if (ui.imagesKey !== key) { ui.imagesKey = key; ui.images = null; call("listImages", p.id).then((r) => { ui.images = r; render(); }).catch(() => { ui.images = []; }); }
+  const imgs = ui.images;
+  return `<div class="sp"></div><div class="panel"><div class="panel-h"><h3>${ic("image", "mi")} Images — ${esc(p.game?.name || p.name)}</h3><span class="faint" style="font-size:12px">Gamepass icons, thumbnails and badges made by your Image Creator</span><div class="grow"></div>${desktop ? `<button class="btn sm" data-act="openImages">${ic("folder")}Open folder</button>` : ""}</div>
+    ${imgs === null ? '<div class="empty">Loading…</div>' : imgs.length ? `<div class="img-grid">${imgs.map((i) => `<div class="img-card"><div class="img-frame ${i.kind === "thumbnail" ? "wide" : ""}" data-act="viewImage" data-id="${i.id}">${i.dataUrl ? `<img src="${i.dataUrl}" alt="${esc(i.name)}">` : '<span class="faint">File missing</span>'}</div>
+        <div class="row" style="margin-top:8px"><div class="grow" style="min-width:0"><div class="ell" style="font-weight:500;font-size:13px">${esc(i.name)}</div><div class="faint" style="font-size:11.5px">${esc(i.kind.replace("_", " "))} · ${i.w}×${i.h} · ${esc(i.agent || "")}</div></div><button class="btn sm ghost danger icon" data-act="deleteImage" data-id="${i.id}">${ic("trash")}</button></div></div>`).join("")}</div>`
+      : empty("No images yet", "Add an AI with the Image Creator role and ask it for a gamepass icon or a thumbnail.")}</div>`;
+}
+
 VIEWS.projects = () => {
   const p = activeProject();
   return `<div class="row"><div class="grow"></div>${p ? `<button class="btn" data-act="snapshot">Save snapshot</button>` : ""}<button class="btn primary" data-act="addProject">${ic("plus")}Add project</button></div><div class="sp"></div>
@@ -452,7 +529,7 @@ VIEWS.projects = () => {
   </div>`).join("") || `<div class="panel">${empty("No projects yet", "Add your Roblox game to get started.")}</div>`}</div>
   ${p ? `<div class="sp"></div><div class="panel"><div class="panel-h"><h3>Change history — ${esc(p.game?.name || p.name)}</h3><span class="faint" style="font-size:12px">Every file change by an agent is backed up. Undo restores the previous version.</span></div>
     ${S.history.length ? S.history.map((h) => `<div class="list-row"><span class="faint" style="width:90px;font-size:12px">${ago(h.at)}</span><span class="tag">${esc(h.op === "delete" ? "delete" : h.lines.before ? "edit" : "create")}</span><span class="mono grow ell">${esc(h.path)}</span><span class="faint" style="font-size:12px">${esc(h.agent || "")}</span>${h.status === "undone" ? '<span class="chip">Undone</span>' : `<button class="btn sm" data-act="viewChange" data-id="${h.id}">View</button><button class="btn sm" data-act="undo" data-id="${h.id}">${ic("undo")}Undo</button>`}</div>`).join("")
-      : empty("No changes yet", "Changes made by agents will show here.")}</div>` : ""}`;
+      : empty("No changes yet", "Changes made by agents will show here.")}</div>${imagesPanel(p)}` : ""}`;
 };
 
 /* ---------- revenue ---------- */
@@ -625,6 +702,7 @@ VIEWS.settings = () => {
 
 /* ---------------- drawers ---------------- */
 function drawDrawer() {
+  if (ui.drawer === "agent") { const a = agentById(ui.agentSel); return a ? agentDrawer(a) : ""; }
   if (ui.drawer === "approvals") {
     return `<div class="dscrim" data-act="closeDrawer"></div><div class="drawer"><div class="panel-h"><h3>Approvals</h3><div class="grow"></div><button class="btn sm ghost icon" data-act="closeDrawer">${ic("x")}</button></div>
       <div class="body stack" id="aprBody">${S.approvals.length ? S.approvals.map(approvalCard).join("") : empty("Nothing waiting", "When an agent wants to do something that needs your OK, it shows up here.")}</div></div>`;
@@ -667,19 +745,24 @@ function providerModal(p) {
     ${p ? "" : `<label class="field"><span>Provider type</span><select class="select" id="pType">${Object.entries(S.providerTypes).map(([k, v]) => `<option value="${k}" ${k === type ? "selected" : ""}>${esc(v.label)}</option>`).join("")}</select></label>`}
     <label class="field"><span>Name</span><input class="input" id="pName" value="${esc(p?.name || "")}" placeholder="${type === "anthropic" ? "Claude" : "OpenAI"}"></label>
     <div id="pBaseWrap" style="${type === "openai" ? "" : "display:none"}"><label class="field"><span>Base URL</span><input class="input" id="pBase" value="${esc(p?.baseURL || "https://api.openai.com/v1")}" list="pBaseList"><datalist id="pBaseList">${OPENAI_PRESETS.map(([n, u]) => `<option value="${u}">${n}</option>`).join("")}</datalist><small>Local servers like Ollama or LM Studio don't need a key.</small></label></div>
-    <label class="field"><span>API key</span><input class="input" type="password" id="pKey" placeholder="${p?.hasKey ? "Saved — leave blank to keep it" : "Paste your API key"}" autocomplete="off"><small>${type === "anthropic" ? 'Get one at console.anthropic.com → API Keys.' : ""} Stored encrypted on this PC.</small></label>`,
+    <label class="field"><span>API key</span><input class="input" type="password" id="pKey" placeholder="${p?.hasKey ? "Saved — leave blank to keep it" : "Paste your API key"}" autocomplete="off"><small>${type === "anthropic" ? 'Get one at console.anthropic.com → API Keys.' : ""} Stored encrypted on this PC.</small></label>
+    <label class="field"><span>Account email <span class="faint">(which account this key belongs to)</span></span><input class="input" type="email" id="pEmail" value="${esc(p?.accountEmail || "")}" placeholder="you@gmail.com"><small>Shown on every AI that uses this provider, so you know which account it runs on.</small></label>`,
     `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="saveProvider" data-id="${p?.id || ""}">${p ? "Save & reconnect" : "Connect"}</button>`);
   $("#pType")?.addEventListener("change", (e) => { $("#pBaseWrap").style.display = e.target.value === "openai" ? "" : "none"; });
 }
 
-function agentModal(a) {
+const NAME_POOL = ["Orion", "Vega", "Lyra", "Nova", "Atlas", "Iris", "Echo", "Rune", "Sol", "Kai", "Mira", "Zed", "Juno", "Pax", "Ember", "Quill", "Onyx", "Sage", "Wren", "Axel"];
+function agentModal(a, presetRole) {
   const provs = S.providers;
   const pid = a?.providerId || provs.find((p) => p.status === "connected")?.id || provs[0]?.id;
   const models = (id) => (S.providers.find((p) => p.id === id)?.models || []);
-  modal(a ? "Configure " + esc(a.name) : "Add agent", `
-    <div class="grid g2" style="gap:12px"><label class="field"><span>Name</span><input class="input" id="aName" value="${esc(a?.name || "")}" placeholder="e.g. Orion"></label>
-    <label class="field"><span>Role</span><select class="select" id="aRole">${Object.keys(S.roles).map((r) => `<option ${a?.role === r ? "selected" : ""}>${esc(r)}</option>`).join("")}</select></label></div>
-    <div class="faint" id="aRoleDesc" style="font-size:12px;margin:-6px 0 14px">${esc(S.roles[a?.role || Object.keys(S.roles)[0]])}</div>
+  const role = a?.role || presetRole || "Luau Developer";
+  const suggestName = NAME_POOL.find((n) => !S.agents.some((x) => x.name === n)) || "";
+  modal(a ? "Configure " + esc(a.name) : presetRole ? "Add a " + esc(presetRole) : "Add AI", `
+    <div class="grid g2" style="gap:12px"><label class="field"><span>Name</span><input class="input" id="aName" value="${esc(a?.name || suggestName)}" placeholder="e.g. Orion"></label>
+    <label class="field"><span>Role</span><select class="select" id="aRole">${roleOptions(role)}</select></label></div>
+    <div class="faint" id="aRoleDesc" style="font-size:12px;margin:-6px 0 14px">${esc(S.roles[role])}</div>
+    <label class="field"><span>Account email <span class="faint">(which account this AI uses)</span></span><input class="input" id="aEmail" type="email" value="${esc(a?.ownEmail ? a.accountEmail : "")}" placeholder="${esc(S.providers.find((p) => p.id === pid)?.accountEmail || "Leave empty to use the provider's email")}"></label>
     <div class="grid g2" style="gap:12px"><label class="field"><span>Provider</span><select class="select" id="aProv">${provs.map((p) => `<option value="${p.id}" ${p.id === pid ? "selected" : ""}>${esc(p.name)}${p.status === "connected" ? "" : " (not connected)"}</option>`).join("")}</select></label>
     <label class="field"><span>Model</span><input class="input" id="aModel" list="aModels" value="${esc(a?.model || models(pid)[0] || "")}"><datalist id="aModels">${models(pid).map((m) => `<option value="${esc(m)}">`).join("")}</datalist></label></div>
     <label class="field"><span>Token budget</span><input class="input" id="aBudget" type="number" step="100000" min="20000" value="${a?.budget || 1000000}"><small>The agent stops and shows “Out of tokens” when it reaches this.</small></label>
@@ -887,8 +970,8 @@ const ACT = {
   async saveProvider(el) {
     const b = el; b.disabled = true; b.innerHTML = '<span class="spinner"></span>Connecting…';
     try {
-      if (el.dataset.id) await call("updateProvider", el.dataset.id, { name: val("pName"), baseURL: val("pBase"), apiKey: val("pKey") });
-      else await call("addProvider", { type: val("pType"), name: val("pName"), baseURL: val("pType") === "openai" ? val("pBase") : "", apiKey: val("pKey") });
+      if (el.dataset.id) await call("updateProvider", el.dataset.id, { name: val("pName"), baseURL: val("pBase"), apiKey: val("pKey"), accountEmail: val("pEmail") });
+      else await call("addProvider", { type: val("pType"), name: val("pName"), baseURL: val("pType") === "openai" ? val("pBase") : "", apiKey: val("pKey"), accountEmail: val("pEmail") });
       closeModal();
     } catch { b.disabled = false; b.textContent = "Try again"; }
   },
@@ -896,13 +979,27 @@ const ACT = {
   async removeProvider(el) { if (confirm("Remove this provider? Agents using it will show as not connected.")) await call("removeProvider", el.dataset.id); },
   async defaultTeam() { await call("createDefaultTeam", S.providers.find((p) => p.status === "connected")?.id || S.providers[0].id); },
   addAgent: () => agentModal(),
+  addAgentRole: (el) => agentModal(null, el.dataset.id),
   editAgent: (el) => agentModal(agentById(el.dataset.id)),
+  viewAgent: (el) => { ui.agentSel = el.dataset.id; ui.drawer = "agent"; render(); },
+  chatWith: (el) => { ui.wsSel = [el.dataset.id]; ui.wsFocus = el.dataset.id; ui.drawer = null; go("workspace"); },
+  async togglePerm(el) {
+    const a = agentById(el.dataset.id), k = el.dataset.perm;
+    const next = !a.perms[k];
+    const roleDefault = !!S.roleInfo[a.role]?.perms[k];
+    await call("updateAgent", a.id, { perms: { [k]: next === roleDefault ? null : next } });
+    toast(`${a.name}: ${S.permInfo[k].label} ${next ? "on" : "off"}`);
+  },
+  async resetPerms(el) { await call("updateAgent", el.dataset.id, { resetPerms: true }); toast("Permissions back to the role defaults"); },
+  async openImages() { const p = await call("openImageFolder", S.activeProjectId); if (p) B.host("openPath", p); },
+  async deleteImage(el) { if (confirm("Delete this image file?")) { await call("deleteImage", el.dataset.id); ui.images = null; render(); } },
+  viewImage: (el) => { const i = (ui.images || []).find((x) => x.id === el.dataset.id); if (i?.dataUrl) modal(esc(i.name), `<img src="${i.dataUrl}" alt="" style="width:100%;border-radius:12px;display:block;background:repeating-conic-gradient(#222 0 25%,#2c2c2c 0 50%) 50%/20px 20px"><div class="faint" style="font-size:12px;margin-top:10px">${esc(i.kind.replace("_", " "))} · ${i.w}×${i.h} · by ${esc(i.agent || "you")} · ${esc(i.file)}</div>`, `<button class="btn primary" data-act="closeModal">Close</button>`, true); },
   async saveAgent(el) {
     const mcp = {};
     $$("#modalRoot [data-mcp]").forEach((sel) => {
       mcp[sel.dataset.mcp] = sel.value === "custom" ? $$(`#modalRoot .mcp-pick[data-for="${sel.dataset.mcp}"] input:checked`).map((c) => c.value) : sel.value;
     });
-    const data = { name: val("aName") || "Agent", role: val("aRole"), providerId: val("aProv"), model: val("aModel"), budget: Number(val("aBudget")), instructions: val("aInstr"), tools: { files: $("#aFiles").classList.contains("on"), mcp } };
+    const data = { name: val("aName") || "Agent", role: val("aRole"), providerId: val("aProv"), model: val("aModel"), budget: Number(val("aBudget")), instructions: val("aInstr"), accountEmail: val("aEmail"), tools: { files: $("#aFiles").classList.contains("on"), mcp } };
     if (el.dataset.id) await call("updateAgent", el.dataset.id, data);
     else { const id = await call("addAgent", data); if (id) await call("updateAgent", id, { tools: data.tools }); }
     closeModal();
@@ -1040,6 +1137,7 @@ document.addEventListener("change", async (e) => {
   const el = e.target.closest("[data-change]");
   if (!el) return;
   if (el.dataset.change === "toolPolicy") await call("setToolPolicy", el.dataset.id, el.dataset.tool, el.value).catch(() => {});
+  if (el.dataset.change === "agentRole") { await call("updateAgent", el.dataset.id, { role: el.value }).catch(() => {}); toast(`Role changed to ${el.value}`); }
   if (el.dataset.change === "setting") await call("saveSettings", { [el.dataset.key]: el.dataset.key === "maxParallel" ? Number(el.value) : el.value || null }).catch(() => {});
 });
 document.addEventListener("input", (e) => { if (e.target.id === "promptSearch") { ui.promptQ = e.target.value; render(); } });
