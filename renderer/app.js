@@ -589,7 +589,7 @@ VIEWS.settings = () => {
   const modes = [["ask_all", "Ask before every change", "Every file write and every non-read-only tool needs your approval."], ["ask_destructive", "Ask before risky actions (recommended)", "File edits are applied and backed up (undo any time). Deleting files and Studio/MCP actions that are not read-only ask first."], ["autonomous", "Autonomous", "Agents work on their own. Only deletes and tools marked destructive ask first."]];
   const u = S.auth?.user;
   return `${u ? `<div class="panel pad row" style="margin-bottom:16px;gap:14px"><div class="ava" style="border-radius:50%;overflow:hidden">${u.photo ? `<img src="${esc(u.photo)}" alt="" style="width:100%;height:100%;object-fit:cover">` : esc(initials(u.name))}</div>
-      <div class="grow"><div class="h3">${esc(u.name)}</div><div class="faint" style="font-size:12.5px">${esc(u.email)} · signed in with ${u.provider === "google" ? "Google" : "email"}${S.auth.offline ? " · offline" : ""}</div></div>
+      <div class="grow"><div class="h3">${esc(u.name)}</div><div class="faint" style="font-size:12.5px">${esc(u.email)} · signed in with ${String(u.provider).startsWith("google") ? "Google" : "email"}${S.auth.offline ? " · offline" : ""}</div></div>
       <button class="btn sm" data-act="editSignIn">Sign-in settings</button><button class="btn sm danger" data-act="authSignOut">Sign out</button></div>` : ""}
   <div class="grid g2">
     <div class="panel pad"><div class="h3" style="margin-bottom:14px">Appearance</div>
@@ -763,21 +763,25 @@ async function showChange(id) {
 /* ---------------- sign-in (lock screen) ---------------- */
 const GOOGLE_G = '<svg viewBox="0 0 48 48" width="18" height="18"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>';
 
+/** Google sign-in setup: just a client ID (+ secret). */
 function setupForm(editing) {
   return `<div class="stack" style="gap:2px">
-    <label class="field"><span>Firebase Web API key</span><input class="input mono" id="suKey" placeholder="AIza…" autocomplete="off"><small>Firebase console → Project settings → General → Web API Key.</small></label>
-    <label class="field"><span>Google OAuth client ID <span class="faint">(for “Continue with Google”)</span></span><input class="input mono" id="suGid" placeholder="…apps.googleusercontent.com" autocomplete="off"></label>
-    <label class="field"><span>Google OAuth client secret</span><input class="input mono" type="password" id="suGsec" placeholder="${editing ? "Leave blank to keep the saved one" : "GOCSPX-…"}" autocomplete="off"></label>
-    <label class="field"><span>Only allow these emails <span class="faint">(optional, comma separated)</span></span><input class="input" id="suAllow" placeholder="you@gmail.com"><small>Leave empty to allow any account in your Firebase project. For private use, put your own email here.</small></label>
-    <details class="howto"><summary>How do I get these? (about 5 minutes, free)</summary>
+    <label class="field"><span>Google client ID</span><input class="input mono" id="suGid" placeholder="…apps.googleusercontent.com" autocomplete="off"></label>
+    <label class="field"><span>Google client secret</span><input class="input mono" type="password" id="suGsec" placeholder="${editing ? "Leave blank to keep the saved one" : "GOCSPX-…"}" autocomplete="off"></label>
+    <label class="field"><span>Only allow these emails <span class="faint">(optional)</span></span><input class="input" id="suAllow" placeholder="you@gmail.com"><small>Put your own Gmail here to keep VYRON private.</small></label>
+    <details class="howto"><summary>How do I get a Google client ID? (2 minutes, free)</summary>
       <ol>
-        <li>Go to <b>console.firebase.google.com</b> → <b>Add project</b> (any name, e.g. VYRON). Analytics can stay off.</li>
-        <li>In the project: <b>Build → Authentication → Get started</b>. Under <b>Sign-in method</b>, turn on <b>Email/Password</b> and <b>Google</b>.</li>
-        <li><b>Project settings</b> (gear) → <b>General</b> → copy the <b>Web API Key</b>. (If it's empty, add a Web app with the &lt;/&gt; button first.)</li>
-        <li>For Google: open <b>console.cloud.google.com</b> with the same project → <b>APIs &amp; Services → Credentials → Create credentials → OAuth client ID</b> → type <b>Desktop app</b>. Copy the client ID and secret.</li>
-        <li>Back in Firebase → Authentication → Sign-in method → Google → <b>Safelisted client IDs</b>: add that client ID. Save.</li>
+        <li>Open <b>console.cloud.google.com</b> and create a project (any name, e.g. VYRON).</li>
+        <li><b>APIs &amp; Services → OAuth consent screen</b>: choose <b>External</b>, fill in the app name and your email, and add yourself under <b>Test users</b>.</li>
+        <li><b>APIs &amp; Services → Credentials → Create credentials → OAuth client ID</b>, type <b>Desktop app</b>.</li>
+        <li>Copy the <b>Client ID</b> and <b>Client secret</b> into the boxes above.</li>
       </ol></details>
   </div>`;
+}
+
+/** Optional email + password sign-in through Firebase. */
+function firebaseForm() {
+  return `<label class="field"><span>Firebase Web API key</span><input class="input mono" id="suKey" placeholder="AIza…" autocomplete="off"><small>Firebase console → Authentication: turn on Email/Password (and Google). Project settings → General → Web API Key.</small></label>`;
 }
 
 function drawLock() {
@@ -786,10 +790,14 @@ function drawLock() {
   const keep = preserve(root);
   const msg = ui.authErr ? `<div class="auth-msg bad">${esc(ui.authErr)}</div>` : ui.authInfo ? `<div class="auth-msg">${esc(ui.authInfo)}</div>` : "";
   let body;
-  if (!A.configured || (ui.authMode === "setup" && A.canEditSetup)) {
-    body = `<h2>Set up sign-in</h2><p class="muted">VYRON uses Firebase Authentication for email and Google accounts. Do this once — after that you just sign in.</p>${msg}${setupForm(false)}
+  if (ui.authMode === "firebase" && A.canEditSetup) {
+    body = `<h2>Email sign-in</h2><p class="muted">Optional. Email + password accounts need a free Firebase project.</p>${msg}${firebaseForm()}
+      <button class="btn primary wide" data-act="authSetupFirebase" data-primary>Save</button>
+      <div class="auth-links"><a data-act="authMode" data-id="signin">Back</a></div>`;
+  } else if (!A.configured || (ui.authMode === "setup" && A.canEditSetup)) {
+    body = `<h2>Turn on Google sign-in</h2><p class="muted">One time only. Paste your Google client ID — after that it's one click.</p>${msg}${setupForm(false)}
       <button class="btn primary wide" data-act="authSetup" data-primary>Save and continue</button>
-      ${A.configured ? `<div class="auth-links"><a data-act="authMode" data-id="signin">Back to sign in</a></div>` : ""}`;
+      <div class="auth-links">${A.configured ? `<a data-act="authMode" data-id="signin">Back to sign in</a>` : "<span></span>"}<a data-act="authMode" data-id="firebase">Use email sign-in instead</a></div>`;
   } else if (A.waitingForGoogle) {
     body = `<h2>Continue in your browser</h2><p class="muted">A Google sign-in page opened in your web browser. Choose your account there, then come back here.</p>
       <div class="row" style="justify-content:center;margin:18px 0"><span class="spinner" style="width:22px;height:22px"></span></div>${msg}
@@ -800,8 +808,10 @@ function drawLock() {
       <div class="row" style="justify-content:space-between;margin-top:10px"><button class="btn ghost sm" data-act="authResend">Resend email</button><button class="btn ghost sm" data-act="authCancelVerify">Use another account</button></div>`;
   } else {
     const mode = ui.authMode || "signin";
-    const google = A.googleEnabled ? `<button class="btn wide google" data-act="authGoogle">${GOOGLE_G}Continue with Google</button><div class="or"><span>or</span></div>` : "";
-    if (mode === "reset") {
+    const google = A.googleEnabled ? `<button class="btn wide google" data-act="authGoogle" ${A.emailEnabled ? "" : "data-primary"}>${GOOGLE_G}Continue with Google</button>${A.emailEnabled ? '<div class="or"><span>or</span></div>' : ""}` : "";
+    if (!A.emailEnabled) {
+      body = `<h2>Sign in to VYRON</h2><p class="muted">Use your Google account.</p>${msg}${google}`;
+    } else if (mode === "reset") {
       body = `<h2>Reset password</h2><p class="muted">Enter your email and we'll send a link to choose a new password.</p>${msg}
         <label class="field"><span>Email</span><input class="input" id="auEmail" type="email" autocomplete="email"></label>
         <button class="btn primary wide" data-act="authReset" data-primary>Send reset link</button>
@@ -816,7 +826,7 @@ function drawLock() {
         <div class="auth-links">${up ? `<a data-act="authMode" data-id="signin">I already have an account</a>` : `<a data-act="authMode" data-id="signup">Create an account</a><a data-act="authMode" data-id="reset">Forgot password?</a>`}</div>`;
     }
   }
-  if (A.configured && A.canEditSetup && ui.authMode !== "setup" && !A.pendingVerify && !A.waitingForGoogle) body += `<div class="auth-links" style="justify-content:center;margin-top:8px"><a data-act="authMode" data-id="setup">Change sign-in setup</a></div>`;
+  if (A.configured && A.canEditSetup && !["setup", "firebase"].includes(ui.authMode) && !A.pendingVerify && !A.waitingForGoogle) body += `<div class="auth-links" style="justify-content:center;margin-top:12px"><a data-act="authMode" data-id="setup">Change sign-in setup</a></div>`;
   root.innerHTML = `<div class="lock-bar"><div class="winctl">
       <button data-host="minimize" title="Minimize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
       <button data-host="close" class="x" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div></div>
@@ -951,8 +961,13 @@ const ACT = {
 
   authMode: (el) => { ui.authMode = el.dataset.id; ui.authErr = ""; ui.authInfo = ""; render(); },
   async authSetup(el) {
-    const r = await authCall(el, "authSetup", { apiKey: val("suKey"), googleClientId: val("suGid"), googleClientSecret: val("suGsec"), allowedEmails: val("suAllow") });
-    if (r !== undefined || !ui.authErr) { ui.authInfo = "Sign-in is set up. Create your account or sign in."; ui.authMode = "signin"; }
+    await authCall(el, "authSetup", { googleClientId: val("suGid"), googleClientSecret: val("suGsec"), allowedEmails: val("suAllow") });
+    if (!ui.authErr) { ui.authInfo = "Google sign-in is on. Click Continue with Google."; ui.authMode = "signin"; }
+    render();
+  },
+  async authSetupFirebase(el) {
+    await authCall(el, "authSetup", { apiKey: val("suKey") });
+    if (!ui.authErr) { ui.authInfo = "Email sign-in is on. Create an account or sign in."; ui.authMode = "signin"; }
     render();
   },
   async authSignIn(el) { await authCall(el, "authSignIn", { email: val("auEmail"), password: val("auPass") }); },
@@ -967,8 +982,16 @@ const ACT = {
   async authCheck(el) { await authCall(el, "authCheckVerified"); },
   async authCancelVerify(el) { await authCall(el, "authCancelVerify"); },
   async authSignOut() { if (confirm("Sign out of VYRON? Running agents are stopped.")) await B.call("authSignOut"); },
-  editSignIn: () => modal("Sign-in settings", setupForm(true), `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="saveSignIn">Save</button>`, true),
-  async saveSignIn() { await call("authSetup", { apiKey: val("suKey"), googleClientId: val("suGid"), googleClientSecret: val("suGsec"), allowedEmails: val("suAllow") }); closeModal(); toast("Sign-in settings saved"); },
+  editSignIn: () => modal("Sign-in settings", setupForm(true) + `<div class="label" style="margin:6px 0 10px">Optional: email sign-in</div>` + firebaseForm(), `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="saveSignIn">Save</button>`, true),
+  async saveSignIn() {
+    const x = {};
+    if (val("suGid").trim()) x.googleClientId = val("suGid");
+    if (val("suGsec").trim()) x.googleClientSecret = val("suGsec");
+    if (val("suAllow").trim()) x.allowedEmails = val("suAllow");
+    if (val("suKey").trim()) x.apiKey = val("suKey");
+    if (!Object.keys(x).length) return closeModal();
+    await call("authSetup", x); closeModal(); toast("Sign-in settings saved");
+  },
 
   async linkRoblox(el) {
     el.disabled = true; el.innerHTML = '<span class="spinner"></span>Waiting for Roblox sign-in…';

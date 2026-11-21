@@ -74,7 +74,13 @@ class AuthManager extends EventEmitter {
       if (raw.cfg) this.cfg = { ...raw.cfg, googleClientSecret: raw.cfg.googleClientSecret ? this.decrypt(raw.cfg.googleClientSecret) : "" };
       if (raw.session?.refreshToken) this.session = { ...raw.session, refreshToken: this.decrypt(raw.session.refreshToken) };
     } catch { /* first run */ }
-    if (!this.cfg && this.bundled?.apiKey) this.cfg = { ...this.bundled };
+    // A client ID built into the installer fills in whatever isn't set locally.
+    if (this.bundled) {
+      const c = { ...(this.cfg || {}) };
+      for (const k of ["googleClientId", "googleClientSecret", "apiKey"]) if (!c[k] && this.bundled[k]) c[k] = this.bundled[k];
+      if (!(c.allowedEmails || []).length && (this.bundled.allowedEmails || []).length) c.allowedEmails = this.bundled.allowedEmails;
+      if (c.googleClientId || c.apiKey) this.cfg = c;
+    }
   }
 
   save() {
@@ -86,13 +92,15 @@ class AuthManager extends EventEmitter {
     fs.writeFileSync(this.file, JSON.stringify(out, null, 2));
   }
 
-  get configured() { return !!this.cfg?.apiKey; }
+  get configured() { return !!(this.cfg?.apiKey || this.cfg?.googleClientId); }
   get signedIn() { return !!this.user; }
   get googleEnabled() { return !!(this.cfg?.googleClientId); }
+  get emailEnabled() { return !!this.cfg?.apiKey; }
 
   public() {
     return {
-      configured: this.configured, signedIn: this.signedIn, googleEnabled: this.googleEnabled,
+      configured: this.configured, signedIn: this.signedIn, googleEnabled: this.googleEnabled, emailEnabled: this.emailEnabled,
+      bundled: !!this.bundled?.googleClientId,
       user: this.user, pendingVerify: this.pendingVerify ? { email: this.pendingVerify.email } : null,
       waitingForGoogle: !!this.googleWait, offline: this.offline,
       allowList: (this.cfg?.allowedEmails || []).length > 0,
@@ -100,24 +108,33 @@ class AuthManager extends EventEmitter {
     };
   }
 
-  /** First-time setup. Only allowed when not configured yet, or when signed in. */
-  setConfig({ apiKey, googleClientId, googleClientSecret, allowedEmails }) {
+  /** Setup. Only fields that are passed are changed. Locked after the first sign-in unless signed in. */
+  setConfig(input) {
     if (this.configured && !this.signedIn && this.cfg.everSignedIn) throw new AuthError("Sign in first to change sign-in settings.");
-    apiKey = String(apiKey || "").trim();
-    if (!/^AIza[0-9A-Za-z_-]{20,}$/.test(apiKey)) throw new AuthError("That doesn't look like a Firebase Web API key (it starts with AIza).", "config");
-    const emails = (Array.isArray(allowedEmails) ? allowedEmails : String(allowedEmails || "").split(/[\s,;]+/)).map((e) => e.trim().toLowerCase()).filter(Boolean);
-    this.cfg = {
-      apiKey,
-      googleClientId: String(googleClientId || "").trim(),
-      googleClientSecret: String(googleClientSecret || "").trim() || this.cfg?.googleClientSecret || "",
-      allowedEmails: emails,
-      everSignedIn: !!this.cfg?.everSignedIn,
-    };
+    const next = { ...(this.cfg || {}) };
+    if ("apiKey" in input) {
+      const k = String(input.apiKey || "").trim();
+      if (k && !/^AIza[0-9A-Za-z_-]{20,}$/.test(k)) throw new AuthError("That doesn't look like a Firebase Web API key (it starts with AIza).", "config");
+      next.apiKey = k;
+    }
+    if ("googleClientId" in input) {
+      const id = String(input.googleClientId || "").trim();
+      if (id && !/\.apps\.googleusercontent\.com$/.test(id)) throw new AuthError("A Google client ID ends with .apps.googleusercontent.com", "config");
+      next.googleClientId = id;
+    }
+    if (input.googleClientSecret) next.googleClientSecret = String(input.googleClientSecret).trim();
+    if ("allowedEmails" in input) {
+      const a = input.allowedEmails;
+      next.allowedEmails = (Array.isArray(a) ? a : String(a || "").split(/[\s,;]+/)).map((e) => e.trim().toLowerCase()).filter(Boolean);
+    }
+    if (!next.apiKey && !next.googleClientId) throw new AuthError("Add a Google client ID (or a Firebase key for email sign-in).", "config");
+    next.everSignedIn = !!this.cfg?.everSignedIn;
+    this.cfg = next;
     this.save();
     this.emit("change");
   }
 
-  _key() { if (!this.configured) throw new AuthError("Sign-in is not set up yet.", "config"); return this.cfg.apiKey; }
+  _key() { if (!this.emailEnabled) throw new AuthError("Email sign-in isn't set up. Use Continue with Google.", "config"); return this.cfg.apiKey; }
 
   _allowed(email) {
     const list = this.cfg.allowedEmails || [];
@@ -141,6 +158,14 @@ class AuthManager extends EventEmitter {
   async restore() {
     if (!this.configured || !this.session?.refreshToken) return false;
     try {
+      if (this.session.provider === "google") {
+        // Direct Google sign-in: refresh with Google to make sure access wasn't revoked.
+        if (!this.googleEnabled) throw new AuthError("Google sign-in is not set up.");
+        const t = await post(GOOGLE_TOKEN(), { client_id: this.cfg.googleClientId, client_secret: this.cfg.googleClientSecret || "", refresh_token: this.session.refreshToken, grant_type: "refresh_token" }, true);
+        const c = this._claims(t.id_token);
+        await this._finish({ refreshToken: t.refresh_token || this.session.refreshToken, uid: c.sub, email: c.email, name: c.name, photo: c.picture, provider: "google", verified: true });
+        return true;
+      }
       const t = await post(`${SECURETOKEN()}/token?key=${this._key()}`, { grant_type: "refresh_token", refresh_token: this.session.refreshToken }, true);
       const look = await post(`${IDTK()}/accounts:lookup?key=${this._key()}`, { idToken: t.id_token });
       const u = look.users?.[0];
@@ -166,6 +191,7 @@ class AuthManager extends EventEmitter {
   }
 
   async signUp({ email, password }) {
+    this._key();
     email = String(email || "").trim();
     this._allowed(email);
     const r = await post(`${IDTK()}/accounts:signUp?key=${this._key()}`, { email, password, returnSecureToken: true });
@@ -176,6 +202,7 @@ class AuthManager extends EventEmitter {
   }
 
   async signIn({ email, password }) {
+    this._key();
     email = String(email || "").trim();
     this._allowed(email);
     const r = await post(`${IDTK()}/accounts:signInWithPassword?key=${this._key()}`, { email, password, returnSecureToken: true });
@@ -213,9 +240,21 @@ class AuthManager extends EventEmitter {
     await post(`${IDTK()}/accounts:sendOobCode?key=${this._key()}`, { requestType: "PASSWORD_RESET", email });
   }
 
+  /** Reads the claims of an ID token received directly from Google's token
+   *  endpoint over TLS (OpenID Connect allows skipping the signature check in
+   *  that case) and checks issuer, audience, expiry and email. */
+  _claims(idToken) {
+    let c;
+    try { c = JSON.parse(Buffer.from(String(idToken).split(".")[1], "base64url").toString()); } catch { throw new AuthError("Google returned an invalid sign-in token."); }
+    if (!["accounts.google.com", "https://accounts.google.com"].includes(c.iss)) throw new AuthError("Sign-in token is not from Google.");
+    if (c.aud !== this.cfg.googleClientId) throw new AuthError("Sign-in token was issued for another app.");
+    if (c.exp && c.exp * 1000 < Date.now() - 5 * 60 * 1000) throw new AuthError("Sign-in token expired. Try again.");
+    if (!c.email || c.email_verified === false) throw new AuthError("Your Google account has no verified email.");
+    return c;
+  }
+
   /** Google: system browser + loopback redirect with PKCE. */
   async signInWithGoogle() {
-    this._key();
     if (!this.googleEnabled) throw new AuthError("Google sign-in is not set up. Add a Google OAuth client ID in sign-in setup.", "config");
     if (this.googleWait) this.googleWait.cancel();
     const verifier = crypto.randomBytes(32).toString("base64url");
@@ -239,7 +278,9 @@ class AuthManager extends EventEmitter {
         this.redirectUri = `http://127.0.0.1:${srv.address().port}`;
         const url = `${GOOGLE_AUTH()}?` + new URLSearchParams({
           client_id: this.cfg.googleClientId, redirect_uri: this.redirectUri, response_type: "code", scope: "openid email profile",
-          code_challenge: challenge, code_challenge_method: "S256", state, prompt: "select_account",
+          code_challenge: challenge, code_challenge_method: "S256", state,
+          // Without Firebase we need a refresh token to remember the sign-in.
+          ...(this.emailEnabled ? { prompt: "select_account" } : { prompt: "consent select_account", access_type: "offline" }),
         });
         this.lastGoogleUrl = url;
         this.emit("change");
@@ -252,15 +293,24 @@ class AuthManager extends EventEmitter {
       redirect_uri: this.redirectUri, grant_type: "authorization_code",
     }, true);
     if (!tok.id_token) throw new AuthError("Google did not return an identity token.");
+    if (!this.emailEnabled) {
+      // Direct Google sign-in (no Firebase).
+      const c = this._claims(tok.id_token);
+      return this._finish({ refreshToken: tok.refresh_token || "", uid: c.sub, email: c.email, name: c.name, photo: c.picture, provider: "google", verified: true });
+    }
     const r = await post(`${IDTK()}/accounts:signInWithIdp?key=${this._key()}`, {
       postBody: `id_token=${tok.id_token}&providerId=google.com`, requestUri: "http://localhost", returnSecureToken: true, returnIdpCredential: true,
     });
-    return this._finish({ refreshToken: r.refreshToken, uid: r.localId, email: r.email, name: r.displayName || r.fullName, photo: r.photoUrl, provider: "google", verified: true });
+    return this._finish({ refreshToken: r.refreshToken, uid: r.localId, email: r.email, name: r.displayName || r.fullName, photo: r.photoUrl, provider: "google-firebase", verified: true });
   }
 
   cancelGoogle() { this.googleWait?.cancel(); }
 
   signOut() {
+    // Best effort: revoke the Google grant so the token can't be reused.
+    if (this.session?.provider === "google" && this.session.refreshToken) {
+      fetch(process.env.AF_GOOGLE_REVOKE_URL || "https://oauth2.googleapis.com/revoke", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "token=" + encodeURIComponent(this.session.refreshToken) }).catch(() => {});
+    }
     this.session = null;
     this.user = null;
     this.pendingVerify = null;

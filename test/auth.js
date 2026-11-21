@@ -15,6 +15,8 @@ async function test(name, fn) {
 const KEY = "AIzaTESTKEYtestkey0123456789abcd";
 const users = new Map(); // email -> { uid, password, verified, name }
 let n = 0;
+let revoked = false;
+let nextDirectEmail = "direct@gmail.com";
 const userByUid = (uid) => [...users.values()].find((u) => u.uid === uid);
 
 function fakeFirebase() {
@@ -57,7 +59,16 @@ function fakeFirebase() {
           const x = userByUid(String(b.refresh_token).slice(3));
           return x ? json(200, { id_token: "id-" + x.uid, refresh_token: "rt-" + x.uid, user_id: x.uid }) : fail("INVALID_REFRESH_TOKEN");
         }
-        case "/g/token": return b.code === "good-code" && b.code_verifier ? json(200, { id_token: "google-id-guser@gmail.com" }) : json(400, { error: "invalid_grant" });
+        case "/g/token": {
+          if (String(b.client_id).startsWith("direct")) {
+            // Direct Google sign-in: real-shaped ID token (header.payload.signature).
+            const jwt = (email, aud = b.client_id) => "h." + Buffer.from(JSON.stringify({ iss: "https://accounts.google.com", aud, sub: "g-123", email, email_verified: true, name: "Direct User", picture: "https://example.com/d.png", exp: Math.floor(Date.now() / 1000) + 3600 })).toString("base64url") + ".s";
+            if (b.grant_type === "refresh_token") return b.refresh_token === "g-refresh" && !revoked ? json(200, { id_token: jwt("direct@gmail.com") }) : json(400, { error: "invalid_grant" });
+            return b.code === "good-code" && b.code_verifier ? json(200, { id_token: jwt(nextDirectEmail), refresh_token: "g-refresh" }) : json(400, { error: "invalid_grant" });
+          }
+          return b.code === "good-code" && b.code_verifier ? json(200, { id_token: "google-id-guser@gmail.com" }) : json(400, { error: "invalid_grant" });
+        }
+        case "/g/revoke": revoked = true; return json(200, {});
         default: res.writeHead(404).end();
       }
     });
@@ -71,6 +82,7 @@ function fakeFirebase() {
   Object.assign(process.env, {
     AF_IDTK_BASE: `http://127.0.0.1:${P}/v1`, AF_SECURETOKEN_BASE: `http://127.0.0.1:${P}/st`,
     AF_GOOGLE_TOKEN_URL: `http://127.0.0.1:${P}/g/token`, AF_GOOGLE_AUTH_URL: `http://127.0.0.1:${P}/g/auth`,
+    AF_GOOGLE_REVOKE_URL: `http://127.0.0.1:${P}/g/revoke`,
   });
   const { AuthManager } = require("../src/auth");
   const { dispatch } = require("../src/api");
@@ -164,7 +176,7 @@ function fakeFirebase() {
   await test("Continue with Google: browser → loopback → Firebase → unlocked", async () => {
     const u = await dispatch(ctx, "authGoogle");
     assert.equal(u.email, "guser@gmail.com");
-    assert.equal(u.provider, "google");
+    assert.equal(u.provider, "google-firebase");
     assert.equal(auth.signedIn, true);
     assert.equal(auth.public().waitingForGoogle, false);
   });
@@ -174,6 +186,58 @@ function fakeFirebase() {
     try { const a = mk(); assert.equal(await a.restore(), true); assert.equal(a.public().offline, true); }
     finally { process.env.AF_SECURETOKEN_BASE = saved; }
   });
+
+  console.log("Google only (no Firebase)");
+  const TMPD = TMP + "-direct";
+  fs.rmSync(TMPD, { recursive: true, force: true });
+  const mkD = () => new AuthManager({ dataDir: TMPD, encrypt: enc, decrypt: dec, openExternal: browser });
+  const d = mkD();
+  const dctx = { backend, auth: d };
+  await test("setup needs only a Google client ID", async () => {
+    await assert.rejects(dispatch(dctx, "authSetup", [{ googleClientId: "not-a-client-id" }]), /apps\.googleusercontent\.com/);
+    await dispatch(dctx, "authSetup", [{ googleClientId: "direct-cid.apps.googleusercontent.com", googleClientSecret: "GOCSPX-d", allowedEmails: "direct@gmail.com" }]);
+    const p = d.public();
+    assert(p.configured && p.googleEnabled && !p.emailEnabled);
+    await assert.rejects(dispatch(dctx, "authSignIn", [{ email: "a@b.com", password: "secret12" }]), /Continue with Google/);
+  });
+  await test("Continue with Google signs in directly and unlocks", async () => {
+    const u = await dispatch(dctx, "authGoogle");
+    assert.equal(u.email, "direct@gmail.com");
+    assert.equal(u.provider, "google");
+    assert.equal((await dispatch(dctx, "publicState")).locked, undefined);
+  });
+  await test("next start restores the Google sign-in", async () => {
+    assert(!fs.readFileSync(path.join(TMPD, "vyron-auth.json"), "utf8").includes("g-refresh"), "refresh token not encrypted");
+    const again = mkD();
+    assert.equal(await again.restore(), true);
+    assert.equal(again.user.email, "direct@gmail.com");
+  });
+  await test("a Google account that isn't allowed is refused", async () => {
+    await dispatch(dctx, "authSignOut");
+    nextDirectEmail = "someone-else@gmail.com";
+    await assert.rejects(dispatch(dctx, "authGoogle"), /not allowed/);
+    nextDirectEmail = "direct@gmail.com";
+    assert.equal(d.signedIn, false);
+  });
+  await test("a token issued for another app is rejected", async () => {
+    const bad = "h." + Buffer.from(JSON.stringify({ iss: "https://accounts.google.com", aud: "other.apps.googleusercontent.com", email: "x@gmail.com", email_verified: true, exp: 9e9 })).toString("base64url") + ".s";
+    assert.throws(() => d._claims(bad), /another app/);
+  });
+  await test("sign out revokes the Google grant; restore then fails", async () => {
+    await dispatch(dctx, "authGoogle");
+    await dispatch(dctx, "authSignOut");
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(revoked, true);
+    assert.equal(await mkD().restore(), false);
+  });
+  await test("a client ID built into the installer works with no setup", async () => {
+    const tmpB = TMP + "-bundled";
+    const b = new AuthManager({ dataDir: tmpB, encrypt: enc, decrypt: dec, bundledConfig: { googleClientId: "direct-b.apps.googleusercontent.com", googleClientSecret: "s" } });
+    const p = b.public();
+    assert(p.configured && p.googleEnabled && p.bundled);
+    fs.rmSync(tmpB, { recursive: true, force: true });
+  });
+  fs.rmSync(TMPD, { recursive: true, force: true });
 
   console.log("Real Firebase");
   await test("real Firebase rejects an invalid API key with a clear message", async () => {

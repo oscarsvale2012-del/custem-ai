@@ -54,16 +54,22 @@ reviews and tests it, and reports what changed.
 
 ## Sign-in
 
-VYRON is locked until you sign in with **email + password** or **Google**
-(Firebase Authentication). Nothing starts — no agents, providers or MCP
-servers — before sign-in. New email accounts must verify their address.
+VYRON is locked until you sign in. Nothing starts — no agents, providers or
+MCP servers — before sign-in.
 
-First start asks for your Firebase setup once (the app shows the steps):
-a Firebase project with Email/Password and Google turned on, its Web API key,
-and a Google OAuth client ID + secret of type *Desktop app* (safelisted in
-Firebase's Google provider). Put your email in **Only allow these emails** to
-keep the app private. Google sign-in opens your normal browser, as Google
-requires. Tokens and the client secret are stored encrypted.
+**Continue with Google** works without any server: VYRON talks to Google
+directly (system browser, loopback redirect, PKCE). It needs a free Google
+OAuth client ID of type *Desktop app* (console.cloud.google.com → APIs &
+Services → Credentials). Either paste it on first start, or add repository
+secrets `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and optionally
+`ALLOWED_EMAILS` — the GitHub build then bakes it into the installer and
+users just click the button.
+
+Email + password sign-in is optional and uses Firebase Authentication (add a
+Firebase Web API key under "Use email sign-in instead").
+
+Put your email in **Only allow these emails** to keep the app private.
+Tokens and the client secret are stored encrypted.
 
 ## Install VYRON on Windows
 
