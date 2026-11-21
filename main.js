@@ -5,10 +5,12 @@ const fs = require("fs");
 const { Backend } = require("./src/backend");
 const { dispatch, lockedState } = require("./src/api");
 const { AuthManager, loadBundledConfig } = require("./src/auth");
+const { ControlServer } = require("./src/control");
 
 let win;
 let backend;
 let auth;
+let control;
 let started = false;
 let quitting = false;
 
@@ -128,7 +130,7 @@ function createWindow() {
 
 ipcMain.handle("call", async (_e, method, args) => {
   try {
-    return { ok: true, value: await dispatch({ backend, auth }, method, args) };
+    return { ok: true, value: await dispatch({ backend, auth, control }, method, args) };
   } catch (err) {
     return { ok: false, error: String(err?.message || err) };
   }
@@ -158,7 +160,14 @@ app.whenReady().then(async () => {
   });
   backend.authInfo = () => auth.public();
   const send = (type, payload) => win && !win.isDestroyed() && win.webContents.send("event", type, payload);
-  const startBackend = async () => { if (!started) { started = true; await backend.init(); } };
+  control = new ControlServer({ dataDir, getCtx: () => ({ backend, auth, control }), log: (t, l, s) => backend.log(t, l, s), version: app.getVersion() });
+  backend.controlInfo = () => control.status();
+  const startBackend = async () => {
+    if (started) return;
+    started = true;
+    await backend.init();
+    if (control.cfg.enabled) await control.start();
+  };
   const sendState = () => send("state", !auth.locked && started ? backend.publicState() : lockedState(auth));
   backend.on("state", (s) => !auth.locked && send("state", s));
   backend.on("log", (l) => !auth.locked && send("log", l));
@@ -180,6 +189,6 @@ app.on("before-quit", async (e) => {
   if (quitting || !backend) return;
   e.preventDefault();
   quitting = true;
-  try { await backend?.shutdown(); } finally { app.exit(0); }
+  try { await control?.stop(); await backend?.shutdown(); } finally { app.exit(0); }
 });
 app.on("window-all-closed", () => app.quit());

@@ -1,7 +1,7 @@
 {
   "name": "vyron",
   "productName": "VYRON",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "VYRON - AI game studio: many AI agents, MCP servers and Roblox Studio working together",
   "main": "main.js",
   "author": "VYRON",
@@ -9,13 +9,14 @@
   "scripts": {
     "start": "electron .",
     "dev:web": "node src/devserver.js",
-    "test": "node test/run.js && node test/revenue.js && node test/auth.js && node test/team.js",
+    "test": "node test/run.js && node test/revenue.js && node test/auth.js && node test/team.js && node test/control.js",
     "icon": "electron build/render-icon.js",
     "dist": "electron-builder --win --publish never"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.136.0",
-    "@modelcontextprotocol/sdk": "^1.12.0"
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "electron": "^33.2.0",

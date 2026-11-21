@@ -49,6 +49,12 @@ reviews and tests it, and reports what changed.
   daily revenue, active users, playtime and Day-1 retention for 30 days.
   Note: Roblox has no official API for pending Robux, so that part uses the same
   endpoints as the Roblox website and may change if Roblox changes them.
+- **Control VYRON from Claude** — Settings → "Control VYRON from Claude"
+  starts a local MCP server (`http://127.0.0.1:47211/mcp`, plus a JSON API at
+  `/rpc/<tool>`). Only this PC can connect, with a secret key stored in
+  `%APPDATA%\VYRON\vyron-control.json`. Tools: status, list roles/AIs/projects/
+  tasks, add or change AIs, start builds, give tasks, wait for results, chat
+  with AIs, activity, images. It cannot approve risky actions or see API keys.
 - **Prompt library** — categories, search, favorites, copy, send to an agent,
   build from a prompt, and AI prompt improvement (optionally with web research of
   the Roblox docs, labelled Verified vs Suggestion).

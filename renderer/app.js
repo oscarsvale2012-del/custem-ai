@@ -389,6 +389,7 @@ function agentCard(a) {
 }
 
 /* ---------- Team & Permissions ---------- */
+const aOrAn = (w) => (/^[aeiou]/i.test(w) ? "an" : "a");
 const PERM_ORDER = ["read", "write", "delete", "studio", "mcp", "web", "images", "delegate", "stats"];
 const roleOptions = (sel) => S.roleGroups.map((g) => `<optgroup label="${esc(g)}">${Object.entries(S.roleInfo).filter(([, v]) => v.group === g).map(([k]) => `<option ${k === sel ? "selected" : ""}>${esc(k)}</option>`).join("")}</optgroup>`).join("");
 function permChips(a, small) {
@@ -424,7 +425,7 @@ VIEWS.team = () => {
     return `<div class="panel pad stack" style="gap:8px"><div class="row"><b class="grow" style="font:600 14px var(--f-head)">${esc(k)}</b>${holders.length ? `<span class="chip ok">${holders.map((h) => esc(h.name)).join(", ")}</span>` : '<span class="chip">Nobody</span>'}</div>
       <div class="muted" style="font-size:12.5px;min-height:36px">${esc(v.short)}</div>
       <div class="row wrap" style="gap:4px">${PERM_ORDER.filter((p) => v.perms[p]).map((p) => `<span class="tag">${esc(S.permInfo[p].label)}</span>`).join("")}</div>
-      <div><button class="btn sm" data-act="addAgentRole" data-id="${esc(k)}" ${S.providers.length ? "" : "disabled"}>${ic("plus")}Add a ${esc(k)}</button></div></div>`;
+      <div><button class="btn sm" data-act="addAgentRole" data-id="${esc(k)}" ${S.providers.length ? "" : "disabled"}>${ic("plus")}Add ${aOrAn(k)} ${esc(k)}</button></div></div>`;
   }).join("")}</div>`).join("")}`;
 };
 
@@ -676,7 +677,13 @@ VIEWS.settings = () => {
         ${A.waitingForGoogle ? `<span class="chip"><span class="spinner"></span>Finish signing in in your browser</span><button class="btn sm" data-act="authCancelGoogleSettings">Cancel</button>`
           : A.googleEnabled ? `<button class="btn sm google" data-act="authGoogleSettings">${GOOGLE_G}Sign in with Google</button><button class="btn sm ghost" data-act="editSignIn">Settings</button>`
           : `<button class="btn sm" data-act="editSignIn">Set up Google sign-in</button>`}</div>`;
-  return `${account}
+  const C = S.control;
+  const controlPanel = !C ? "" : `<div class="panel pad" style="margin-bottom:16px"><div class="row" style="gap:14px"><img src="icon.svg" alt="" style="width:34px;height:34px">
+      <div class="grow"><div class="h3">Control VYRON from Claude</div><div class="faint" style="font-size:12.5px">Lets Claude on this PC (Claude Code / the Claude app) see your AIs and tasks, start builds, give tasks and chat with your AIs. It can't approve risky actions or see API keys — that stays with you.</div></div>
+      <div class="toggle ${C.enabled ? "on" : ""}" data-act="controlToggle"></div></div>
+      ${C.enabled ? `<hr class="sep"><div class="row wrap" style="gap:10px"><span class="chip ${C.running ? "ok" : "bad"}"><span class="dot ${C.running ? "connected" : "error"}"></span>${C.running ? "On · " + esc(C.url) : esc(C.error || "Not running")}</span>
+        <span class="faint" style="font-size:12px">Only this PC can connect, with a secret key saved in VYRON's data folder.</span><div class="grow"></div><button class="btn sm" data-act="controlNewKey">New key</button></div>` : ""}</div>`;
+  return `${account}${controlPanel}
   <div class="grid g2">
     <div class="panel pad"><div class="h3" style="margin-bottom:14px">Appearance</div>
       <div class="row" style="margin-bottom:14px"><span class="grow">Theme</span><div class="seg">${[["dark", "Dark"], ["light", "Light"]].map(([k, l]) => `<button class="${(s.theme || "dark") === k ? "on" : ""}" data-act="setting" data-key="theme" data-val="${k}">${l}</button>`).join("")}</div></div>
@@ -758,7 +765,7 @@ function agentModal(a, presetRole) {
   const models = (id) => (S.providers.find((p) => p.id === id)?.models || []);
   const role = a?.role || presetRole || "Luau Developer";
   const suggestName = NAME_POOL.find((n) => !S.agents.some((x) => x.name === n)) || "";
-  modal(a ? "Configure " + esc(a.name) : presetRole ? "Add a " + esc(presetRole) : "Add AI", `
+  modal(a ? "Configure " + esc(a.name) : presetRole ? `Add ${aOrAn(presetRole)} ` + esc(presetRole) : "Add AI", `
     <div class="grid g2" style="gap:12px"><label class="field"><span>Name</span><input class="input" id="aName" value="${esc(a?.name || suggestName)}" placeholder="e.g. Orion"></label>
     <label class="field"><span>Role</span><select class="select" id="aRole">${roleOptions(role)}</select></label></div>
     <div class="faint" id="aRoleDesc" style="font-size:12px;margin:-6px 0 14px">${esc(S.roles[role])}</div>
@@ -1088,6 +1095,8 @@ const ACT = {
   async authCheck(el) { await authCall(el, "authCheckVerified"); },
   async authCancelVerify(el) { await authCall(el, "authCancelVerify"); },
   async authSignOut() { if (confirm(S.auth?.required ? "Sign out of VYRON? Running agents are stopped." : "Sign out of your Google account in VYRON?")) await B.call("authSignOut"); },
+  async controlToggle() { const r = await call("controlSetEnabled", !S.control.enabled); toast(r.enabled ? (r.running ? "Claude can now control VYRON" : "Could not start: " + r.error) : "Claude control is off"); },
+  async controlNewKey() { if (confirm("Make a new control key? Claude has to reconnect.")) { await call("controlNewKey"); toast("New key made"); } },
   async toggleRequire() { await call("authSetup", { requireSignIn: !S.auth.required }); toast(S.auth.required ? "Sign-in is no longer required" : "VYRON now requires sign-in when it opens"); },
   async authGoogleSettings() { toast("Finish signing in in your browser"); try { await call("authGoogle"); toast("Signed in"); } catch { /* toasted */ } },
   async authCancelGoogleSettings() { await B.call("authCancelGoogle").catch(() => {}); },
