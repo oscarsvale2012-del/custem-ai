@@ -1,0 +1,32 @@
+{
+  "name": "agentforge",
+  "productName": "AgentForge",
+  "version": "0.2.0",
+  "description": "AI game development studio: many AI agents, MCP servers and Roblox Studio working together",
+  "main": "main.js",
+  "author": "AgentForge",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev:web": "node src/devserver.js",
+    "test": "node test/run.js",
+    "dist": "electron-builder --win --publish never"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.136.0",
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.agentforge.launcher",
+    "productName": "AgentForge",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "preload.js", "src/**/*", "renderer/**/*", "package.json", "!src/devserver.js"],
+    "win": { "target": ["nsis", "portable"] },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true },
+    "portable": { "artifactName": "AgentForge-Portable-${version}.exe" }
+  }
+}
