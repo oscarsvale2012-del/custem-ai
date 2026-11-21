@@ -1,8 +1,8 @@
 ﻿{
   "name": "vyron",
   "productName": "VYRON",
-  "version": "0.5.0",
-  "description": "VYRON â€” AI game studio: many AI agents, MCP servers and Roblox Studio working together",
+  "version": "0.5.1",
+  "description": "VYRON - AI game studio: many AI agents, MCP servers and Roblox Studio working together",
   "main": "main.js",
   "author": "VYRON",
   "license": "MIT",

@@ -8,3 +8,4 @@ dist/
 .testdata-auth/
 .testdata-auth-real/
 src/auth-config.json
+download/
