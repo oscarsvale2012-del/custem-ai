@@ -227,6 +227,10 @@ class ControlServer {
       const r = this.setDesktop(true);
       return { connected: r.connected, files: r.files, next: "Tell the user to quit Claude desktop (tray icon → Quit) and open it again at the end." };
     });
+    tool("vyron_open_blender", "Open Blender (5.1 or newer) with the MCP add-on turned on, so it connects to VYRON and Claude by itself. Waits up to 45 seconds and says if it worked.", {}, async () => {
+      await this.state();
+      return this.call("openBlender");
+    });
     tool("vyron_check_connections", "Re-check Roblox Studio and Blender right now.", {}, async () => {
       await this.state();
       await this.call("connectStudio").catch(() => {});

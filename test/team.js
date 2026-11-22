@@ -55,7 +55,7 @@ function fakeSpawn(exe, args, opts) {
   await be.init(); await control.start();
   be.setActiveProject(await be.addProject({ name: "Test", rojoDir: path.join(TMP, "game") }));
   const ctx = { backend: be, auth: null, control };
-  await dispatch(ctx, "saveSettings", [{ claudeParallel: 10 }]);
+  await dispatch(ctx, "saveSettings", [{ claudeParallel: 10, autoOpenBlender: false }]); // tests never start the real Blender
   const idle = async () => { for (let i = 0; i < 200 && be.claude.busy; i++) await wait(20); };
   const team = () => be.publicState().teams[0];
   const taskOf = (r) => be.claude.tasks.find((x) => x.id === team().roles[r].taskId);
@@ -298,6 +298,27 @@ function fakeSpawn(exe, args, opts) {
     assert.equal(A.blender, true);
     assert(A.blenders.some((b) => b.version === "5.2.4"));
     be._apps = null;
+  });
+  await test("Open Blender: starts Blender 5.1+ with the MCP add-on on and online mode, then waits for it", async () => {
+    const pc = path.join(TMP, "pcC"), exeDir = path.join(pc, "home", "Downloads", "blender-5.2.4-x64", "blender-5.2.4-x64");
+    fs.mkdirSync(exeDir, { recursive: true }); fs.writeFileSync(path.join(exeDir, "blender.exe"), "");
+    const addonDir = path.join(pc, "ad", "Blender Foundation", "Blender", "5.2", "extensions", "user_default", "mcp");
+    const env = { USERPROFILE: path.join(pc, "home"), APPDATA: path.join(pc, "ad"), LOCALAPPDATA: path.join(pc, "la") };
+    const realFind = be.findBlenders.bind(be), realAddon = be.blenderAddon.bind(be), realCheck = be.checkBlender.bind(be);
+    be.findBlenders = () => realFind(env); be.blenderAddon = (v) => realAddon(v, env);
+    let started = null, open = false;
+    be.spawnImpl = (exe, args) => { started = { exe, args }; setTimeout(() => (open = true), 50); return { unref() {} }; };
+    be.checkBlender = async () => (be.blenderInfo = { found: true, open });
+    const realList = be.listWindows.bind(be); be.listWindows = async () => (open ? [{ title: "Blender" }] : []);
+    try {
+      await assert.rejects(be.openBlender({ wait: 1 }), /MCP add-on isn't installed in Blender 5.2.4/);
+      fs.mkdirSync(addonDir, { recursive: true }); fs.writeFileSync(path.join(addonDir, "__init__.py"), "");
+      const r = await be.openBlender({ wait: 10 });
+      assert(r.ok, r.message);
+      assert.deepEqual(started.args, ["--online-mode", "--addons", "bl_ext.user_default.mcp"]);
+      assert(/blender-5\.2\.4-x64[\\/]blender\.exe$/.test(started.exe));
+      assert((await be.openBlender()).already, "doesn't open a second Blender");
+    } finally { be.findBlenders = realFind; be.blenderAddon = realAddon; be.checkBlender = realCheck; be.listWindows = realList; delete be.spawnImpl; }
   });
   await test("the setup prompt's tools work through the connector", async () => {
     const st = await tool("vyron_setup_status", {});

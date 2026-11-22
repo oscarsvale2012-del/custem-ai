@@ -138,7 +138,7 @@ class Backend extends EventEmitter {
   }
 
   saveSettings(patch) {
-    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook", "uiSounds", "uiHover", "uiPack", "blender", "autoApprove", "usageStyle"]) if (k in patch) this.d.settings[k] = patch[k];
+    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook", "uiSounds", "uiHover", "uiPack", "blender", "autoApprove", "usageStyle", "autoOpenBlender"]) if (k in patch) this.d.settings[k] = patch[k];
     const S = this.d.settings;
     if (!["vyron", "windows", "off"].includes(S.notifyStyle)) S.notifyStyle = "vyron";
     S.keepRunning = S.keepRunning !== false;
@@ -375,6 +375,7 @@ class Backend extends EventEmitter {
     this.save();
   }
   teamStartRole(team, r) {
+    if (r === "builder" && blenderServer()) this.ensureBlender();
     if (team.roles[r].taskId && this.claude.tasks.some((x) => x.id === team.roles[r].taskId)) return;
     const taskId = this.claude.newTask(`${R.ROLES[r].name}: ${team.plan?.title || "game"}`, { role: r, teamId: team.id });
     team.roles[r].taskId = taskId;
@@ -530,6 +531,47 @@ class Backend extends EventEmitter {
     for (const base of ["Downloads", "Desktop", "Documents"].map((d) => path.join(home, d))) for (const a of ls(base).filter((x) => /blender/i.test(x))) { add(path.join(base, a)); for (const b of ls(path.join(base, a))) add(path.join(base, a, b)); }
     return out;
   }
+  /** Where the MCP add-on is installed for a Blender version: returns the add-on module, e.g. bl_ext.user_default.mcp. */
+  blenderAddon(version, env = process.env) {
+    if (!version) return null;
+    const mm = version.split(".").slice(0, 2).join(".");
+    const ext = path.join(env.APPDATA || "", "Blender Foundation", "Blender", mm, "extensions");
+    let repos = []; try { repos = fs.readdirSync(ext); } catch { /* none */ }
+    for (const r of repos) if (fs.existsSync(path.join(ext, r, "mcp", "__init__.py"))) return `bl_ext.${r}.mcp`;
+    return null;
+  }
+  /**
+   * Open Blender (5.1+) with the MCP add-on turned on and online access allowed for this session,
+   * so the add-on starts its server by itself, then wait until VYRON can reach it.
+   */
+  async openBlender({ wait = 45 } = {}) {
+    const cur = await this.checkBlender().catch(() => null);
+    if (cur?.open) return { ok: true, already: true, message: "Blender is already open and connected." };
+    const good = this.findBlenders().filter((b) => this.blenderOk(b.version)).sort((a, b) => String(b.version).localeCompare(String(a.version), undefined, { numeric: true }));
+    if (!good.length) throw new Error("No Blender 5.1 or newer on this PC. Get it free at https://www.blender.org/download/");
+    const pick = good.find((b) => this.blenderAddon(b.version)) || good[0];
+    const addon = this.blenderAddon(pick.version);
+    if (!addon) throw new Error(`The MCP add-on isn't installed in Blender ${pick.version}. In Blender: Edit → Preferences → Get Extensions → search "MCP" → Install (see https://www.blender.org/lab/mcp-server/), then try again.`);
+    const running = await this.listWindows("blender.exe");
+    if (running.length) return { ok: false, running: true, message: "Blender is already open but its MCP isn't connected. In Blender: Edit → Preferences → Add-ons → MCP → press Start (and allow online access). Or close Blender and press Open Blender." };
+    const args = ["--online-mode", "--addons", addon];
+    (this.spawnImpl || require("child_process").spawn)(pick.exe, args, { detached: true, stdio: "ignore", cwd: path.dirname(pick.exe) }).unref?.();
+    this.log(`Opening Blender ${pick.version} with MCP on`, "info", "Blender");
+    const end = now() + wait * 1000;
+    while (now() < end) {
+      await new Promise((r) => setTimeout(r, 2500));
+      const b = await this.checkBlender().catch(() => null);
+      if (b?.open) { this.log("Blender connected", "ok", "Blender"); return { ok: true, version: pick.version, message: `Blender ${pick.version} is open and connected.` }; }
+    }
+    return { ok: false, version: pick.version, message: `Blender ${pick.version} was started but isn't connected yet. If Blender shows the MCP add-on's settings, press "Start", or check Edit → Preferences → Add-ons → MCP.` };
+  }
+  /** Before a Builder or "Make a 3D model" works: open Blender if it's closed (setting, on by default). */
+  ensureBlender() {
+    if (this.d.settings.autoOpenBlender === false || this.blenderInfo?.open || this._openingBlender) return;
+    this._openingBlender = true;
+    this.openBlender().catch((e) => this.log("Couldn't open Blender: " + e.message, "warn", "Blender")).finally(() => (this._openingBlender = false));
+  }
+
   blenderOk(v) { if (!v) return true; const [a, b] = v.split(".").map(Number); return a > 5 || (a === 5 && b >= 1); }
 
   /** Which apps are installed on this PC (official download links for the missing ones). */
@@ -634,6 +676,7 @@ class Backend extends EventEmitter {
     text = String(text || "").trim();
     if (!text) throw new Error("Describe the model first");
     if (!blenderServer()) throw new Error("Blender's MCP server isn't installed yet (Claude desktop → Settings → Extensions → Blender).");
+    this.ensureBlender();
     const id = this.claude.newTask("Model: " + clip(text, 48), { role: "builder" });
     this.claudeSend(`Make this 3D model in Blender: ${text}
 

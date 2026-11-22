@@ -23,6 +23,7 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:47211/rpc/vyron_setup_stat
 Useful tools (POST to \`/rpc/<tool>\`):
 - \`vyron_setup_status\` — the checklist: what is connected and how to fix the rest.
 - \`vyron_check_connections\` — re-checks Roblox Studio and Blender right now.
+- \`vyron_open_blender\` — opens Blender with the MCP add-on running and connects it.
 - \`vyron_connect_claude_desktop\` — adds VYRON to the Claude desktop app's settings.
 If the connector doesn't answer: open VYRON, go to Settings → "Claude controls VYRON", make sure it's switched on, and try again.
 
@@ -54,7 +55,8 @@ If the connector doesn't answer: open VYRON, go to Settings → "Claude controls
    - Check Blender is installed (e.g. \`C:\\Program Files\\Blender Foundation\\\`). If it isn't, tell me to install it from blender.org and stop this step.
    - The Claude desktop app needs the **Blender** extension: Claude desktop → Settings → Extensions → search "Blender" → install / turn on.
    - Blender (5.1 or newer) needs the **MCP add-on**: open Blender → Edit → Preferences → **Get Extensions**, search **MCP**, install it and make sure it's enabled (see https://www.blender.org/lab/mcp-server/). Follow the add-on's own instructions on that page if anything looks different.
-   - Keep Blender open, then call \`vyron_check_connections\` until Blender shows as open.
+   - Call \`vyron_open_blender\`: VYRON starts Blender with the MCP add-on on and connects it by itself (it waits up to 45 seconds). If it says the add-on isn't installed, install it as above and call it again. If Blender asks about online access, allow it — the add-on needs it to talk to Claude.
+   - Check with \`vyron_check_connections\` that Blender shows as open.
 
 5. **Final check.** Call \`vyron_setup_status\` again and give me a short report:
    - ✅ what is connected now,
@@ -103,7 +105,8 @@ function setupItem(it) {
     if (it.id === "claude") act = S.claude.found ? `<button class="btn sm primary" data-act="claudeLogin">Sign in to Claude</button>` : `<button class="btn sm" data-act="openUrl" data-id="https://claude.ai/download">Get Claude</button>`;
     if (it.id === "desktop") act = `<button class="btn sm primary" data-act="controlDesktop" data-val="on">Connect</button>`;
     if (it.id === "code") act = `<button class="btn sm primary" data-act="obPrompt">Copy setup prompt</button>`;
-    if (it.id === "studio" || it.id === "blender") act = `<button class="btn sm" data-act="obRecheck">${ic("refresh")}Check again</button>`;
+    if (it.id === "studio") act = `<button class="btn sm" data-act="obRecheck">${ic("refresh")}Check again</button>`;
+    if (it.id === "blender") act = `<button class="btn sm primary" data-act="openBlender">${ic("cube")}Open Blender</button>`;
     if (it.id === "roblox") act = `<button class="btn sm primary" data-act="linkRoblox">Sign in with Roblox</button>`;
     if (it.id === "discord") act = `<div class="row" style="gap:6px"><input class="input" id="obDiscord" placeholder="https://discord.com/api/webhooks/…" style="height:32px;width:240px"><button class="btn sm primary" data-act="obDiscord">Connect</button>${it.skipped ? "" : `<button class="btn sm ghost" data-act="obSkipDiscord">Skip</button>`}</div>`;
   }
