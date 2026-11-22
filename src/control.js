@@ -227,6 +227,10 @@ class ControlServer {
       const r = this.setDesktop(true);
       return { connected: r.connected, files: r.files, next: "Tell the user to quit Claude desktop (tray icon → Quit) and open it again at the end." };
     });
+    tool("vyron_enable_blender_mcp", "Turn on the MCP server in Blender for good: allows online access, enables the MCP add-on, switches on its Auto Start and saves Blender's preferences (runs Blender invisibly). If it says the add-on isn't installed, install it in Blender first.", {}, async () => {
+      await this.state();
+      return this.call("enableBlenderMcp");
+    });
     tool("vyron_open_blender", "Open Blender (5.1 or newer) with the MCP add-on turned on, so it connects to VYRON and Claude by itself. Waits up to 45 seconds and says if it worked.", {}, async () => {
       await this.state();
       return this.call("openBlender");

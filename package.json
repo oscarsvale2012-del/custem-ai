@@ -1,7 +1,7 @@
 {
   "name": "vyron",
   "productName": "VYRON",
-  "version": "1.8.3",
+  "version": "1.8.4",
   "description": "VYRON - desktop companion for Claude: build Roblox games with Claude, game ideas and DevEx kroner",
   "main": "main.js",
   "author": "VYRON",
@@ -60,7 +60,8 @@
       "artifactName": "VYRON-${version}-Portable.exe"
     },
     "asarUnpack": [
-      "src/mcp-bridge.js"
+      "src/mcp-bridge.js",
+      "src/blender-enable-mcp.py"
     ]
   }
 }

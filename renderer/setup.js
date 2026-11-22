@@ -23,6 +23,7 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:47211/rpc/vyron_setup_stat
 Useful tools (POST to \`/rpc/<tool>\`):
 - \`vyron_setup_status\` — the checklist: what is connected and how to fix the rest.
 - \`vyron_check_connections\` — re-checks Roblox Studio and Blender right now.
+- \`vyron_enable_blender_mcp\` — turns on Blender's MCP server for good (online access, add-on, Auto Start, saved).
 - \`vyron_open_blender\` — opens Blender with the MCP add-on running and connects it.
 - \`vyron_connect_claude_desktop\` — adds VYRON to the Claude desktop app's settings.
 If the connector doesn't answer: open VYRON, go to Settings → "Claude controls VYRON", make sure it's switched on, and try again.
@@ -55,6 +56,9 @@ If the connector doesn't answer: open VYRON, go to Settings → "Claude controls
    - Check Blender is installed (e.g. \`C:\\Program Files\\Blender Foundation\\\`). If it isn't, tell me to install it from blender.org and stop this step.
    - The Claude desktop app needs the **Blender** extension: Claude desktop → Settings → Extensions → search "Blender" → install / turn on.
    - Blender (5.1 or newer) needs the **MCP add-on**: open Blender → Edit → Preferences → **Get Extensions**, search **MCP**, install it and make sure it's enabled (see https://www.blender.org/lab/mcp-server/). Follow the add-on's own instructions on that page if anything looks different.
+   - **Turn on Blender's MCP server for me.** Call \`vyron_enable_blender_mcp\`. It allows online access, enables the MCP add-on, switches on its **Auto Start** and saves Blender's preferences, so the server starts by itself every time Blender opens.
+   - If it says the **add-on isn't installed**, install it yourself by controlling the PC: open Blender 5.1+ → **Edit → Preferences → Get Extensions** (if Blender asks to allow online access, allow it) → search **MCP** → **Install**. If it isn't listed there, get it from https://www.blender.org/lab/mcp-server/ and use **Install from Disk** (the ▾ menu at the top right of Get Extensions). Then close Blender and call \`vyron_enable_blender_mcp\` again.
+   - If it fails another way, do it by hand in Blender: **Edit → Preferences → System → Network → Allow Online Access** on; **Add-ons → MCP** enabled, **Auto Start** ticked, press **Start**; then **Save Preferences** (☰ menu bottom left).
    - Call \`vyron_open_blender\`: VYRON starts Blender with the MCP add-on on and connects it by itself (it waits up to 45 seconds). If it says the add-on isn't installed, install it as above and call it again. If Blender asks about online access, allow it — the add-on needs it to talk to Claude.
    - Check with \`vyron_check_connections\` that Blender shows as open.
 

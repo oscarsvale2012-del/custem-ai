@@ -403,7 +403,7 @@ VIEWS.claude = () => {
 
 function blenderPanel() {
   const b = S.blender || {};
-  return `<div class="panel"><div class="panel-h"><h3>Blender</h3><div class="grow"></div><span class="chip ${b.open ? "ok" : ""}"><span class="dot ${b.open ? "connected" : b.found ? "unknown" : "error"}"></span>${b.open ? "Connected" : b.found ? "Not open" : "Not installed"}</span>${b.open ? "" : `<button class="btn sm" data-act="openBlender" ${b.found ? "" : "disabled"}>${ic("cube")}Open Blender</button>`}<button class="btn sm ghost icon" data-act="checkBlender" title="Check again">${ic("refresh")}</button></div>
+  return `<div class="panel"><div class="panel-h"><h3>Blender</h3><div class="grow"></div><span class="chip ${b.open ? "ok" : ""}"><span class="dot ${b.open ? "connected" : b.found ? "unknown" : "error"}"></span>${b.open ? "Connected" : b.found ? "Not open" : "Not installed"}</span>${b.open ? "" : `<button class="btn sm ghost" data-act="enableBlenderMcp" title="Turn on the MCP server in Blender for good">Turn on MCP</button><button class="btn sm" data-act="openBlender" ${b.found ? "" : "disabled"}>${ic("cube")}Open Blender</button>`}<button class="btn sm ghost icon" data-act="checkBlender" title="Check again">${ic("refresh")}</button></div>
     <div class="panel-b stack">
       <div class="muted" style="font-size:12.5px">${b.open ? "Claude can make and change 3D models in Blender" + (b.file ? " (" + esc(b.file.split(/[\\/]/).pop()) + ")" : "") + "." : esc(b.error || "Checking…")}</div>
       <div class="row" style="gap:8px"><input class="input grow" id="mkModel" placeholder="Make a 3D model… e.g. a cartoon treasure chest with gold trim"><button class="btn primary" data-act="makeModel" ${b.found ? "" : "disabled"}>${ic("bolt")}Make it</button></div>
@@ -922,6 +922,7 @@ const ACT = {
   async teamRole(el) { await call("teamSetRole", el.dataset.id, el.dataset.role, el.dataset.on === "true"); },
   async teamDiscard(el) { if (confirm("Remove this plan? Its team's running tasks are stopped.")) await call("teamDiscard", el.dataset.id); },
   openTask: (el) => { ui.taskId = el.dataset.id; go("claude"); },
+  async enableBlenderMcp(el) { if (el) { el.disabled = true; el.innerHTML = '<span class="spinner"></span>Turning on…'; } try { const r = await call("enableBlenderMcp"); toast(r.message, r.ok ? "" : "error"); } finally { render(); } },
   async openBlender(el) { if (el) { el.disabled = true; el.innerHTML = '<span class="spinner"></span>Opening Blender…'; } try { const r = await call("openBlender"); toast(r.message, r.ok ? "" : "error"); } finally { render(); } },
   async checkBlender() { const b = await call("checkBlender"); toast(b.open ? "Blender is connected" : b.error || "Blender isn't open", b.open ? "" : "error"); },
   async makeModel() { const t = val("mkModel"); if (!t.trim()) return toast("Describe the model first", "error"); ui.taskId = await call("makeModel", t); $("#mkModel").value = ""; go("claude"); },

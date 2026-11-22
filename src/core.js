@@ -552,6 +552,7 @@ class Backend extends EventEmitter {
     const pick = good.find((b) => this.blenderAddon(b.version)) || good[0];
     const addon = this.blenderAddon(pick.version);
     if (!addon) throw new Error(`The MCP add-on isn't installed in Blender ${pick.version}. In Blender: Edit → Preferences → Get Extensions → search "MCP" → Install (see https://www.blender.org/lab/mcp-server/), then try again.`);
+    if (!this.d.blenderMcpEnabled) await this.enableBlenderMcp().catch(() => null);
     const running = await this.listWindows("blender.exe");
     if (running.length) return { ok: false, running: true, message: "Blender is already open but its MCP isn't connected. In Blender: Edit → Preferences → Add-ons → MCP → press Start (and allow online access). Or close Blender and press Open Blender." };
     const args = ["--online-mode", "--addons", addon];
@@ -565,6 +566,30 @@ class Backend extends EventEmitter {
     }
     return { ok: false, version: pick.version, message: `Blender ${pick.version} was started but isn't connected yet. If Blender shows the MCP add-on's settings, press "Start", or check Edit → Preferences → Add-ons → MCP.` };
   }
+  /**
+   * Turn on Blender's MCP server for good: allow online access, enable the add-on, switch on its Auto Start,
+   * save Blender's preferences. Runs Blender invisibly in the background (src/blender-enable-mcp.py).
+   */
+  async enableBlenderMcp() {
+    const good = this.findBlenders().filter((b) => this.blenderOk(b.version)).sort((a, b) => String(b.version).localeCompare(String(a.version), undefined, { numeric: true }));
+    if (!good.length) throw new Error("No Blender 5.1 or newer on this PC. Get it free at https://www.blender.org/download/");
+    const pick = good.find((b) => this.blenderAddon(b.version));
+    if (!pick) return { ok: false, needsInstall: true, version: good[0].version, message: `The MCP add-on isn't installed in Blender ${good[0].version} yet. Install it in Blender: Edit → Preferences → Get Extensions → search "MCP" → Install (or from https://www.blender.org/lab/mcp-server/), then run this again.` };
+    const module = this.blenderAddon(pick.version);
+    let script = path.join(__dirname, "blender-enable-mcp.py");
+    if (script.includes(".asar" + path.sep)) script = script.replace(".asar" + path.sep, ".asar.unpacked" + path.sep);
+    const out = await new Promise((resolve) => {
+      (this.execFileImpl || require("child_process").execFile)(pick.exe, ["-b", "--python", script, "--", module], { windowsHide: true, timeout: 120000, cwd: path.dirname(pick.exe) }, (err, stdout) => resolve(String(stdout || "") + (err && !stdout ? String(err.message) : "")));
+    });
+    const line = out.split(/\r?\n/).find((l) => l.startsWith("VYRON_RESULT "));
+    let r; try { r = JSON.parse(line.slice(13)); } catch { r = { ok: false, error: "Blender didn't answer (" + clip(out.trim().split(/\r?\n/).pop() || "no output", 200) + ")" }; }
+    if (!r.ok) return { ok: false, version: pick.version, message: "Couldn't turn on the MCP server in Blender: " + r.error };
+    this.log(`Blender ${pick.version}: MCP add-on on, Auto Start on, online access allowed`, "ok", "Blender");
+    this.d.blenderMcpEnabled = { version: pick.version, at: now() };
+    this.save();
+    return { ok: true, version: pick.version, module, message: `Turned on the MCP server in Blender ${pick.version} for good (add-on enabled, Auto Start on, online access allowed). Blender starts it by itself from now on.${(await this.listWindows("blender.exe")).length ? " Blender is open right now — close and reopen it (or press Open Blender) so it picks this up." : ""}` };
+  }
+
   /** Before a Builder or "Make a 3D model" works: open Blender if it's closed (setting, on by default). */
   ensureBlender() {
     if (this.d.settings.autoOpenBlender === false || this.blenderInfo?.open || this._openingBlender) return;

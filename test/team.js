@@ -320,6 +320,27 @@ function fakeSpawn(exe, args, opts) {
       assert((await be.openBlender()).already, "doesn't open a second Blender");
     } finally { be.findBlenders = realFind; be.blenderAddon = realAddon; be.checkBlender = realCheck; be.listWindows = realList; delete be.spawnImpl; }
   });
+  await test("Turn on MCP: runs Blender in the background with VYRON's script and reads the result", async () => {
+    const pc = path.join(TMP, "pcD"), exeDir = path.join(pc, "PF", "Blender Foundation", "Blender 5.2");
+    fs.mkdirSync(exeDir, { recursive: true }); fs.writeFileSync(path.join(exeDir, "blender.exe"), "");
+    const env = { ProgramFiles: path.join(pc, "PF"), USERPROFILE: path.join(pc, "home"), APPDATA: path.join(pc, "ad"), LOCALAPPDATA: path.join(pc, "la") };
+    const realFind = be.findBlenders.bind(be), realAddon = be.blenderAddon.bind(be);
+    be.findBlenders = () => realFind(env); be.blenderAddon = (v) => realAddon(v, env);
+    let ran = null;
+    be.execFileImpl = (exe, args, opts, cb) => { ran = { exe, args }; cb(null, "Blender 5.2\nVYRON_RESULT " + JSON.stringify({ ok: true, module: args[4], online_access: true, autostart: true }) + "\n"); };
+    try {
+      const miss = await be.enableBlenderMcp();
+      assert(miss.needsInstall && /Get Extensions/.test(miss.message), "add-on missing → install steps");
+      const add = path.join(pc, "ad", "Blender Foundation", "Blender", "5.2", "extensions", "user_default", "mcp");
+      fs.mkdirSync(add, { recursive: true }); fs.writeFileSync(path.join(add, "__init__.py"), "");
+      const r = await be.enableBlenderMcp();
+      assert(r.ok, r.message);
+      assert.equal(ran.args[0], "-b"); assert(/blender-enable-mcp\.py$/.test(ran.args[2])); assert.equal(ran.args[4], "bl_ext.user_default.mcp");
+      assert(fs.existsSync(ran.args[2]), "the script ships with VYRON");
+      be.execFileImpl = (exe, args, opts, cb) => cb(null, "VYRON_RESULT " + JSON.stringify({ ok: false, error: "boom" }));
+      assert(/boom/.test((await be.enableBlenderMcp()).message));
+    } finally { be.findBlenders = realFind; be.blenderAddon = realAddon; delete be.execFileImpl; }
+  });
   await test("the setup prompt's tools work through the connector", async () => {
     const st = await tool("vyron_setup_status", {});
     assert.equal(st.total, 6, "Discord is optional");
