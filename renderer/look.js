@@ -239,7 +239,7 @@ const SOUND_EVENTS = [
 ];
 
 let AC = null;
-function playSound(id, volume = 0.7) {
+function playSound(id, volume = 0.7, pitch = 1) {
   const s = SOUNDS.find((x) => x.id === id);
   if (!s || volume <= 0) return;
   try {
@@ -249,8 +249,8 @@ function playSound(id, volume = 0.7) {
     const t0 = AC.currentTime + 0.02;
     for (const [f, at, len, wave, v, to] of s.tones) {
       const o = AC.createOscillator(), g = AC.createGain();
-      o.type = wave; o.frequency.setValueAtTime(f, t0 + at);
-      if (to) o.frequency.exponentialRampToValueAtTime(to, t0 + at + len);
+      o.type = wave; o.frequency.setValueAtTime(f * pitch, t0 + at);
+      if (to) o.frequency.exponentialRampToValueAtTime(to * pitch, t0 + at + len);
       g.gain.setValueAtTime(0.0001, t0 + at); g.gain.exponentialRampToValueAtTime(v, t0 + at + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + len);
       o.connect(g).connect(out); o.start(t0 + at); o.stop(t0 + at + len + 0.05);
     }

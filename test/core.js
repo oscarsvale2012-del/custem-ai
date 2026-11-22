@@ -251,8 +251,9 @@ const reply = (input) => [
     assert.equal(st.notifyStyle, "vyron"); assert.equal(st.volume, 1); assert.deepEqual(st.soundMap, { done: "coin" });
     assert.equal(st.themeId, "galaxy"); assert.equal(st.themeLook.bg, "#0e0a1c"); assert.equal(st.themeLook.accent, null); assert.equal(st.keepRunning, false);
     assert.equal(st.uiSounds, true); assert.equal(st.uiPack, "soft"); // on by default
-    await dispatch(ctx, "saveSettings", [{ uiSounds: false, uiHover: false, uiPack: "space" }]);
-    assert.equal(st.uiSounds, false); assert.equal(st.uiHover, false); assert.equal(st.uiPack, "space");
+    assert.equal(st.uiHover, false); // hover sounds off by default
+    await dispatch(ctx, "saveSettings", [{ uiSounds: false, uiHover: true, uiPack: "space" }]);
+    assert.equal(st.uiSounds, false); assert.equal(st.uiHover, true); assert.equal(st.uiPack, "space");
     await dispatch(ctx, "saveSettings", [{ uiPack: "<bad>" }]);
     assert.equal(st.uiPack, "soft");
     await dispatch(ctx, "saveSettings", [{ notifyStyle: "off", keepRunning: true }]);

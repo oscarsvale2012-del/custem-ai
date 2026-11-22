@@ -122,7 +122,7 @@ class Backend extends EventEmitter {
     S.keepRunning = S.keepRunning !== false;
     S.sounds = S.sounds !== false;
     S.uiSounds = S.uiSounds !== false;
-    S.uiHover = S.uiHover !== false;
+    S.uiHover = S.uiHover === true; // off unless turned on
     if (!["soft", "crisp", "space", "retro", "bubble"].includes(S.uiPack)) S.uiPack = "soft";
     S.volume = Math.min(1, Math.max(0, Number(S.volume ?? 0.7)));
     S.soundMap = Object.fromEntries(Object.entries(S.soundMap && typeof S.soundMap === "object" ? S.soundMap : {}).filter(([k, v]) => /^[a-z]{2,12}$/.test(k) && /^[a-z0-9-]{1,30}$/.test(v)).slice(0, 10));
