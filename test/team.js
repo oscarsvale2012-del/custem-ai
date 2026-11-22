@@ -281,6 +281,24 @@ function fakeSpawn(exe, args, opts) {
     assert.equal(be.setupStatus().items.find((i) => i.id === "blender").download, "https://www.blender.org/lab/mcp-server/", "Blender installed but no MCP → add-on link");
     be._apps = null;
   });
+  await test("Blender version: 4.5 is too old for MCP, a portable 5.x in Downloads works", () => {
+    const pc = path.join(TMP, "pcB");
+    const mk = (p) => { fs.mkdirSync(p, { recursive: true }); fs.writeFileSync(path.join(p, "blender.exe"), ""); };
+    mk(path.join(pc, "PF", "Blender Foundation", "Blender 4.5"));
+    const env = { ProgramFiles: path.join(pc, "PF"), USERPROFILE: path.join(pc, "home"), LOCALAPPDATA: path.join(pc, "la"), APPDATA: path.join(pc, "ad") };
+    be._apps = null;
+    let A = be.installedApps(env);
+    assert.equal(A.blender, false); assert.equal(A.blenderOld, "4.5");
+    be._apps = { ...A, at: Date.now() };
+    const it = be.setupStatus().items.find((i) => i.id === "blender");
+    assert(it.installed === false && it.tooOld === "4.5" && it.download === "https://www.blender.org/download/" && /5\.1 or newer/.test(it.how));
+    mk(path.join(pc, "home", "Downloads", "blender-5.2.4-windows-x64", "blender-5.2.4-windows-x64"));
+    be._apps = null;
+    A = be.installedApps(env);
+    assert.equal(A.blender, true);
+    assert(A.blenders.some((b) => b.version === "5.2.4"));
+    be._apps = null;
+  });
   await test("the setup prompt's tools work through the connector", async () => {
     const st = await tool("vyron_setup_status", {});
     assert.equal(st.total, 6, "Discord is optional");

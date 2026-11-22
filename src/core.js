@@ -517,14 +517,32 @@ class Backend extends EventEmitter {
   clearReviews() { this.d.reviews = this.d.reviews.filter((r) => r.status === "pending"); this.save(); }
 
   /* ================= first-run setup ================= */
+  /** Every blender.exe on this PC (installed or portable zip), with its version from the folder name. */
+  findBlenders(env = process.env) {
+    const ls = (d) => { try { return fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name); } catch { return []; } };
+    const home = env.USERPROFILE || "", la = env.LOCALAPPDATA || "";
+    const out = [];
+    const add = (dir) => { const exe = path.join(dir, "blender.exe"); if (fs.existsSync(exe)) { const m = dir.match(/blender[ -]?(\d+)\.(\d+)(?:\.(\d+))?/i); out.push({ exe, version: m ? `${m[1]}.${m[2]}${m[3] ? "." + m[3] : ""}` : null }); } };
+    for (const pf of [env.ProgramFiles, env["ProgramFiles(x86)"]].filter(Boolean)) for (const v of ls(path.join(pf, "Blender Foundation"))) add(path.join(pf, "Blender Foundation", v));
+    if (la) for (const v of ls(path.join(la, "Programs")).filter((x) => /blender/i.test(x))) add(path.join(la, "Programs", v));
+    for (const steam of [env["ProgramFiles(x86)"], env.ProgramFiles].filter(Boolean)) add(path.join(steam, "Steam", "steamapps", "common", "Blender"));
+    // portable zips (folder inside a folder, like blender-5.2.4-…/blender-5.2.4-…/blender.exe)
+    for (const base of ["Downloads", "Desktop", "Documents"].map((d) => path.join(home, d))) for (const a of ls(base).filter((x) => /blender/i.test(x))) { add(path.join(base, a)); for (const b of ls(path.join(base, a))) add(path.join(base, a, b)); }
+    return out;
+  }
+  blenderOk(v) { if (!v) return true; const [a, b] = v.split(".").map(Number); return a > 5 || (a === 5 && b >= 1); }
+
   /** Which apps are installed on this PC (official download links for the missing ones). */
   installedApps(env = process.env) {
     if (this._apps && now() - this._apps.at < 30000) return this._apps;
     const ls = (d) => { try { return fs.readdirSync(d); } catch { return []; } };
     const la = env.LOCALAPPDATA || "", pf = [env.ProgramFiles, env["ProgramFiles(x86)"], la && path.join(la, "Programs")].filter(Boolean);
     const studio = !!la && (fs.existsSync(path.join(la, "Roblox", "mcp.bat")) || ls(path.join(la, "Roblox", "Versions")).some((v) => fs.existsSync(path.join(la, "Roblox", "Versions", v, "RobloxStudioBeta.exe"))));
-    const blender = pf.some((p) => ls(path.join(p, "Blender Foundation")).some((v) => fs.existsSync(path.join(p, "Blender Foundation", v, "blender.exe")))) || ls(path.join(env.APPDATA || "", "Blender Foundation", "Blender")).length > 0;
-    this._apps = { at: now(), claude: !!this.claude.exe, studio, blender, blenderMcp: !!blenderServer() };
+    const blenders = this.findBlenders(env);
+    const good = blenders.filter((x) => this.blenderOk(x.version));
+    const blender = good.length > 0;
+    const blenderOld = !blender && blenders.length > 0 ? blenders.map((x) => x.version).filter(Boolean).sort().pop() || "old" : null;
+    this._apps = { at: now(), claude: !!this.claude.exe, studio, blender, blenderOld, blenders: blenders.map((x) => ({ version: x.version, exe: x.exe })), blenderMcp: !!blenderServer() };
     return this._apps;
   }
 
@@ -540,7 +558,7 @@ class Backend extends EventEmitter {
       { id: "desktop", name: "Claude desktop", installed: A.claude, ...dl("Claude desktop", "https://claude.ai/download"), ok: !!(X?.desktop?.connected), active: fresh("desktop"), how: "Press Connect, then quit and reopen the Claude desktop app." },
       { id: "code", name: "Claude Code / web", installed: A.claude, ...dl("Claude desktop", "https://claude.ai/download"), ok: fresh("code"), how: "Paste the setup prompt into the Claude desktop app's Code tab — it connects to VYRON while it sets everything up." },
       { id: "studio", name: "Roblox Studio", installed: A.studio, ...dl("Roblox Studio", "https://create.roblox.com/landing"), ok: studioOn && this.studios.length > 0, how: studioOn ? "Open your place in Roblox Studio." : "Open Roblox Studio and turn on its AI / MCP connection (Assistant settings)." },
-      { id: "blender", name: "Blender", installed: A.blender && A.blenderMcp, ...(A.blender ? dl("Blender MCP add-on", "https://www.blender.org/lab/mcp-server/") : dl("Blender", "https://www.blender.org/download/")), ok: !!b.open, how: b.found ? "Open Blender and turn on its MCP add-on." : "Install Blender's MCP: Claude desktop → Settings → Extensions → Blender, plus the Blender add-on (blender.org/lab/mcp-server)." },
+      { id: "blender", name: "Blender", installed: A.blender && A.blenderMcp, ...(A.blender ? dl("Blender MCP add-on", "https://www.blender.org/lab/mcp-server/") : dl("Blender (free)", "https://www.blender.org/download/")), ...(A.blenderOld ? { tooOld: A.blenderOld } : {}), ok: !!b.open, how: !A.blender ? (A.blenderOld ? `Your Blender ${A.blenderOld} is too old for the MCP add-on — it needs Blender 5.1 or newer (free).` : "Blender isn't installed. Get the free Blender 5.1 or newer.") : b.found ? "Open Blender 5.1+ and turn on its MCP add-on (Edit → Preferences → Get Extensions → search “MCP” → Install, then enable it)." : "Install Blender's MCP: Claude desktop → Settings → Extensions → Blender, plus the MCP add-on in Blender (Edit → Preferences → Get Extensions → search “MCP”)." },
       { id: "roblox", name: "Roblox account", ok: !!this.d.roblox.account, how: "Sign in with Roblox (you type your own password on roblox.com)." },
       { id: "discord", name: "Discord", optional: true, skipped: !!this.d.discordSkipped, ok: !!this.d.secrets.discordWebhook, how: "Paste a Discord channel webhook link (Channel settings → Integrations → Webhooks → New Webhook → Copy URL)." },
     ];

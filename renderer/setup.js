@@ -30,12 +30,12 @@ If the connector doesn't answer: open VYRON, go to Settings → "Claude controls
 0. **Check what's installed.** Look for these on this PC (don't install anything yet):
    - Claude desktop app — you're running in it, so it's installed.
    - Roblox Studio — \`%LOCALAPPDATA%\\Roblox\\Versions\\*\\RobloxStudioBeta.exe\` (or \`%LOCALAPPDATA%\\Roblox\\mcp.bat\`).
-   - Blender — \`C:\\Program Files\\Blender Foundation\\*\\blender.exe\`.
+   - Blender **5.1 or newer** (the MCP add-on needs 5.1+) — \`C:\\Program Files\\Blender Foundation\\*\\blender.exe\`, or a portable copy (a folder like \`blender-5.x…\` in Downloads). Check the version; an older Blender (e.g. 4.5) doesn't work.
    - Blender MCP for Claude — the "Blender" extension in Claude desktop (Settings → Extensions).
    \`vyron_setup_status\` also reports this under \`apps\`.
    If something is missing, **send me the official download link** and wait until I tell you it's installed:
    - Roblox Studio: https://create.roblox.com/landing
-   - Blender: https://www.blender.org/download/
+   - Blender (free, always the newest version — 5.1 or newer is needed): https://www.blender.org/download/
    - Blender MCP add-on and instructions: https://www.blender.org/lab/mcp-server/
    - Claude desktop: https://claude.ai/download
    Only download or run an installer yourself if I clearly say yes, and only from these official links.
@@ -53,7 +53,7 @@ If the connector doesn't answer: open VYRON, go to Settings → "Claude controls
 4. **Blender.**
    - Check Blender is installed (e.g. \`C:\\Program Files\\Blender Foundation\\\`). If it isn't, tell me to install it from blender.org and stop this step.
    - The Claude desktop app needs the **Blender** extension: Claude desktop → Settings → Extensions → search "Blender" → install / turn on.
-   - Blender needs the **Blender MCP add-on** (from https://www.blender.org/lab/mcp-server/): open Blender → Edit → Preferences → Add-ons / Extensions, make sure the MCP add-on is installed and turned on, and start it if it has a start/connect button. Follow the add-on's own instructions on that page if anything looks different.
+   - Blender (5.1 or newer) needs the **MCP add-on**: open Blender → Edit → Preferences → **Get Extensions**, search **MCP**, install it and make sure it's enabled (see https://www.blender.org/lab/mcp-server/). Follow the add-on's own instructions on that page if anything looks different.
    - Keep Blender open, then call \`vyron_check_connections\` until Blender shows as open.
 
 5. **Final check.** Call \`vyron_setup_status\` again and give me a short report:
@@ -107,7 +107,7 @@ function setupItem(it) {
     if (it.id === "roblox") act = `<button class="btn sm primary" data-act="linkRoblox">Sign in with Roblox</button>`;
     if (it.id === "discord") act = `<div class="row" style="gap:6px"><input class="input" id="obDiscord" placeholder="https://discord.com/api/webhooks/…" style="height:32px;width:240px"><button class="btn sm primary" data-act="obDiscord">Connect</button>${it.skipped ? "" : `<button class="btn sm ghost" data-act="obSkipDiscord">Skip</button>`}</div>`;
   }
-  return `<div class="ob-item ${it.ok ? "ok" : ""} ${it.skipped && !it.ok ? "skipped" : ""}"><span class="ob-ic">${ic(SETUP_ICON[it.id])}</span><div class="grow" style="min-width:0"><div class="row" style="gap:8px"><b>${esc(it.name)}</b>${st}</div>${it.ok ? "" : `<div class="faint" style="font-size:12px">${it.installed === false ? `${esc(it.downloadName)} isn't installed on this PC yet — download it from the official site, then come back.` : esc(it.how)}</div>`}</div>${act}</div>`;
+  return `<div class="ob-item ${it.ok ? "ok" : ""} ${it.skipped && !it.ok ? "skipped" : ""}"><span class="ob-ic">${ic(SETUP_ICON[it.id])}</span><div class="grow" style="min-width:0"><div class="row" style="gap:8px"><b>${esc(it.name)}</b>${st}</div>${it.ok ? "" : `<div class="faint" style="font-size:12px">${it.installed === false ? (it.tooOld ? `Blender ${esc(it.tooOld)} is too old for the MCP add-on — get Blender 5.1 or newer (it's free), then come back.` : `${esc(it.downloadName)} isn't installed on this PC yet — download it from the official site (free), then come back.`) : esc(it.how)}</div>`}</div>${act}</div>`;
 }
 
 function updateSetupList() {
