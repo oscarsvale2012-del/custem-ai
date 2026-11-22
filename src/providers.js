@@ -92,6 +92,7 @@ function anthropicAdapter(cfg) {
 }
 
 /* ---------------- OpenAI-compatible (OpenAI, OpenRouter, Groq, Ollama, LM Studio…) ---------------- */
+const NO_TOOLS = new Set(); // "baseURL|model" pairs that can only chat
 function openaiAdapter(cfg) {
   const base = (cfg.baseURL || "https://api.openai.com/v1").replace(/\/+$/, "");
   const headers = () => ({ "Content-Type": "application/json", ...(cfg.apiKey ? { Authorization: "Bearer " + cfg.apiKey } : {}) });
@@ -146,8 +147,17 @@ function openaiAdapter(cfg) {
     async chat({ model, system, messages, tools, signal, maxTokens = 16000 }) {
       const body = { model, messages: toWire(system, messages), max_tokens: maxTokens };
       const fnTools = (tools || []).filter((t) => !t.serverTool); // server tools are Claude-only
-      if (fnTools.length) body.tools = fnTools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.schema } }));
-      const j = await call("/chat/completions", body, signal);
+      const key = base + "|" + model;
+      if (fnTools.length && !NO_TOOLS.has(key)) body.tools = fnTools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.schema } }));
+      let j;
+      try { j = await call("/chat/completions", body, signal); }
+      catch (e) {
+        // Some local models can only chat (no tools). Remember that and retry without tools.
+        if (!body.tools || !/does not support tools|tool.*not supported|tools? (is|are) not supported/i.test(e.message)) throw e;
+        NO_TOOLS.add(key);
+        delete body.tools;
+        j = await call("/chat/completions", body, signal);
+      }
       const choice = j.choices?.[0];
       if (!choice) throw new ProviderError("other", "provider returned no answer");
       const blocks = [];

@@ -83,6 +83,29 @@ const robloxHost = {
   robloxLogout: async () => { await rbx().clearStorageData(); },
 };
 
+/* ---------- Website AIs (ChatGPT, Gemini, Claude…) ----------
+   Plain windows for using your own accounts by hand. VYRON does not read or
+   control these pages. Each site keeps its own sign-in. */
+const WEB_AIS = {
+  chatgpt: { name: "ChatGPT", url: "https://chatgpt.com/" },
+  gemini: { name: "Gemini", url: "https://gemini.google.com/" },
+  claude: { name: "Claude", url: "https://claude.ai/" },
+  copilot: { name: "Copilot", url: "https://copilot.microsoft.com/" },
+  perplexity: { name: "Perplexity", url: "https://www.perplexity.ai/" },
+  deepseek: { name: "DeepSeek", url: "https://chat.deepseek.com/" },
+};
+const webWindows = {};
+function openWebAI(id) {
+  const w0 = webWindows[id];
+  if (w0 && !w0.isDestroyed()) { w0.show(); w0.focus(); return; }
+  const partition = "persist:web-" + id;
+  const w = new BrowserWindow({ width: 1180, height: 860, title: WEB_AIS[id].name + " — VYRON", autoHideMenuBar: true, icon: path.join(__dirname, "renderer", "icon.png"), webPreferences: { partition, contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  // Sign-in pop-ups stay in the same window session; other links open in your browser.
+  w.webContents.setWindowOpenHandler(({ url }) => /^https:\/\//.test(url) ? { action: "allow", overrideBrowserWindowOptions: { autoHideMenuBar: true, webPreferences: { partition, contextIsolation: true, nodeIntegration: false, sandbox: true } } } : { action: "deny" });
+  w.loadURL(WEB_AIS[id].url);
+  webWindows[id] = w;
+}
+
 /* ---------- SVG → PNG for the Image Creator ----------
    Renders in a hidden, offscreen window with JavaScript turned off. One at a time. */
 let renderChain = Promise.resolve();
@@ -145,6 +168,9 @@ ipcMain.handle("host", async (_e, cmd, arg) => {
   if (cmd === "toggleMaximize") (win.isMaximized() ? win.unmaximize() : win.maximize());
   if (cmd === "close") win.close();
   if (cmd === "isDesktop") return true;
+  if (cmd === "openWeb" && WEB_AIS[arg]) return openWebAI(arg);
+  if (cmd === "openWebExternal" && WEB_AIS[arg]) return shell.openExternal(WEB_AIS[arg].url);
+  if (cmd === "openUrl" && /^https:\/\/(ollama\.com|lmstudio\.ai|jan\.ai|gpt4all\.io|github\.com|aistudio\.google\.com|console\.groq\.com|openrouter\.ai|platform\.openai\.com|console\.anthropic\.com|platform\.deepseek\.com|console\.mistral\.ai)\//.test(String(arg))) return shell.openExternal(arg);
   return null;
 });
 

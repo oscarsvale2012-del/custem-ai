@@ -13,6 +13,7 @@ const METHODS = [
   "sendChat", "clearChat",
   "linkRoblox", "unlinkRoblox", "setRobloxApiKey", "clearRobloxApiKey", "refreshRevenue",
   "listImages", "deleteImage", "openImageFolder",
+  "scanLocal", "startOllama", "pullModel", "deleteModel", "connectLocal", "addLocalAgent", "setImageBackend",
 ];
 
 const AUTH = {

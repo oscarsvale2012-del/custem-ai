@@ -14,6 +14,7 @@ const path = require("path");
 
 const IMAGE_SIZES = { gamepass_icon: [512, 512], badge: [512, 512], thumbnail: [1920, 1080], logo: [1024, 1024], other: [1024, 1024] };
 const fileSlug = (s) => String(s || "image").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "image";
+const LOCAL = require("./local");
 const RA = require("./robloxAccount");
 const AN = require("./analytics");
 
@@ -55,6 +56,7 @@ class Backend extends EventEmitter {
     this._schedTimer = setInterval(() => this.schedule(), 3000);
     this._revTimer = setInterval(() => this.refreshRevenue(false).catch(() => {}), 10 * 60 * 1000);
     this.refreshRevenue(false).catch(() => {});
+    this.scanLocal().catch(() => {});
     this.changed();
   }
 
@@ -192,7 +194,8 @@ class Backend extends EventEmitter {
       permInfo: PERMS,
       roleGroups: GROUPS,
       imageCount: (this.d.images || []).filter((i) => i.projectId === s.activeProjectId).length,
-      providers: this.d.providers.map((p) => ({ id: p.id, type: p.type, name: p.name, baseURL: p.baseURL, accountEmail: p.accountEmail || "", hasKey: !!p.apiKey, ...this.provInfo(p.id) })),
+      providers: this.d.providers.map((p) => ({ id: p.id, type: p.type, name: p.name, baseURL: p.baseURL, accountEmail: p.accountEmail || "", hasKey: !!p.apiKey, local: !!p.local, ...this.provInfo(p.id) })),
+      local: this.localPublic(),
       agents: this.d.agents.map((a) => this.agentPublic(a)),
       mcpServers: this.d.mcpServers.map((m) => this.serverPublic(m)),
       projects: this.d.projects.map((p) => this.projectPublic(p)),
@@ -290,15 +293,93 @@ class Backend extends EventEmitter {
   }
 
   /* ================= providers ================= */
-  async addProvider({ type, name, baseURL, apiKey, accountEmail }) {
+  async addProvider({ type, name, baseURL, apiKey, accountEmail, local, noTeam }) {
     if (!PROVIDER_TYPES[type]) throw new Error("Unknown provider type");
-    const p = { id: uid("prov"), type, name: (name || PROVIDER_TYPES[type].label).slice(0, 40), baseURL: (baseURL || "").trim(), apiKey: (apiKey || "").trim(), accountEmail: cleanEmail(accountEmail) };
+    const p = { id: uid("prov"), type, name: (name || PROVIDER_TYPES[type].label).slice(0, 40), baseURL: (baseURL || "").trim(), apiKey: (apiKey || "").trim(), accountEmail: cleanEmail(accountEmail), local: !!local };
     this.d.providers.push(p);
     this.log(`Provider "${p.name}" added`, "info", "AI");
     this.save();
     await this.testProvider(p.id);
-    if (!this.d.agents.length && this.provInfo(p.id).status === "connected") this.createDefaultTeam(p.id);
+    if (!noTeam && !this.d.agents.length && this.provInfo(p.id).status === "connected") this.createDefaultTeam(p.id);
     return p.id;
+  }
+
+  /* ================= free local AIs ================= */
+  localPublic() {
+    return { ...(this.local || { servers: [], image: null, scannedAt: null }), pulls: this.pulls || {}, recommended: LOCAL.RECOMMENDED, ollamaInstalled: !!LOCAL.ollamaExe(), imageBackend: this.d.settings.imageBackend || null };
+  }
+
+  async scanLocal() {
+    this.local = await LOCAL.scan();
+    // keep connected local providers' status fresh
+    for (const p of this.d.providers.filter((x) => x.local)) this.testProvider(p.id).catch(() => {});
+    this.changed();
+    return this.localPublic();
+  }
+
+  async startOllama() {
+    LOCAL.startOllama();
+    this.log("Starting Ollama…", "info", "Local AI");
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      await this.scanLocal();
+      if (this.local.servers.find((s) => s.id === "ollama")?.running) { this.log("Ollama is running", "ok", "Local AI"); return true; }
+    }
+    throw new Error("Ollama didn't start. Open the Ollama app from the Start menu.");
+  }
+
+  /** Download an Ollama model. Progress shows in the state; finishes in the background. */
+  pullModel(model) {
+    model = String(model || "").trim();
+    if (!/^[a-z0-9][a-z0-9._:\/-]{0,80}$/i.test(model)) throw new Error("That isn't a valid model name");
+    this.pulls = this.pulls || {};
+    if (this.pulls[model] && !this.pulls[model].error && !this.pulls[model].done) return;
+    this.pulls[model] = { status: "Starting download", pct: 0 };
+    this.changed();
+    let last = 0;
+    LOCAL.pullModel(model, (p) => {
+      this.pulls[model] = { status: p.status, pct: p.pct ?? this.pulls[model].pct };
+      if (Date.now() - last > 400) { last = Date.now(); this.changed(); }
+    }).then(async () => {
+      this.pulls[model] = { status: "Downloaded", pct: 100, done: true };
+      this.log(`Downloaded ${model}`, "ok", "Local AI");
+      await this.scanLocal();
+    }).catch((e) => {
+      this.pulls[model] = { status: e.message, error: true };
+      this.log(`Download of ${model} failed: ${e.message}`, "error", "Local AI");
+      this.changed();
+    });
+  }
+
+  async deleteModel(model) {
+    await LOCAL.deleteModel(model);
+    this.log(`Deleted ${model}`, "info", "Local AI");
+    if (this.pulls) delete this.pulls[model];
+    return this.scanLocal();
+  }
+
+  /** Make (or reuse) a provider for a running local AI app. */
+  async connectLocal(serverId) {
+    const s = (this.local?.servers || []).find((x) => x.id === serverId);
+    if (!s || !s.running) throw new Error("That local AI app isn't running. Start it, then press Scan.");
+    const existing = this.d.providers.find((p) => p.local && p.baseURL === s.baseURL);
+    if (existing) { await this.testProvider(existing.id); return existing.id; }
+    return this.addProvider({ type: "openai", name: `${s.name} (on this PC)`, baseURL: s.baseURL, local: true, noTeam: true });
+  }
+
+  /** Add an AI to the team that runs on a local model. */
+  async addLocalAgent({ serverId, model, role, name }) {
+    const providerId = await this.connectLocal(serverId);
+    const id = this.addAgent({ name: name || model.split(":")[0], role, providerId, model, budget: 50000000 });
+    this.log(`${name || model} (${role}) now runs on ${model}, free on this PC`, "ok", "Local AI");
+    return id;
+  }
+
+  setImageBackend(url) {
+    if (url && !/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(url)) throw new Error("Only local image servers on this PC can be used");
+    this.d.settings.imageBackend = url || null;
+    this.log(url ? "Image Creator now uses Forge on this PC" : "Forge disconnected", "info", "Local AI");
+    this.save();
   }
 
   async updateProvider(id, patch) {
@@ -1246,13 +1327,25 @@ Reply with the finished prompt only.`;
     return `Saved ${base}.png (${w}×${h}). The user can see it on the Projects page. To use it in the game, upload it to Roblox (Studio's upload_image tool or Creator Hub).`;
   }
 
-  /** An OpenAI provider (api.openai.com) can generate pictures. */
+  /** What can generate pictures: local Forge first (free), else an OpenAI key. */
   imageProvider() {
-    return this.d.providers.find((p) => p.type === "openai" && p.apiKey && /api\.openai\.com/.test(p.baseURL || "https://api.openai.com/v1") && this.provInfo(p.id).status === "connected") || null;
+    if (this.d.settings.imageBackend) return { kind: "forge", url: this.d.settings.imageBackend };
+    const p = this.d.providers.find((x) => x.type === "openai" && x.apiKey && /api\.openai\.com/.test(x.baseURL || "https://api.openai.com/v1") && this.provInfo(x.id).status === "connected");
+    return p ? { kind: "openai", p } : null;
   }
 
-  async generateImage({ project, agent, task, provider, name, kind, prompt, signal }) {
+  async generateImage({ project, agent, task, provider: ip, name, kind, prompt, signal }) {
     if (!IMAGE_SIZES[kind]) kind = "other";
+    if (ip.kind === "forge") {
+      const { png, width, height } = await LOCAL.forgeImage(ip.url, { prompt, kind });
+      const dir = this.imagesDir(project);
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `${fileSlug(name)}-${Date.now().toString(36)}.png`);
+      fs.writeFileSync(file, png);
+      this.recordImage({ project, agent, task, name, kind, file, w: width, h: height, source: "forge" });
+      return `Saved ${file} (${width}×${height}, made with Forge on this PC).`;
+    }
+    const provider = ip.p;
     const size = kind === "thumbnail" ? "1536x1024" : "1024x1024";
     const base = (provider.baseURL || "https://api.openai.com/v1").replace(/\/+$/, "");
     let r;

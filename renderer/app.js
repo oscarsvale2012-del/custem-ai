@@ -55,6 +55,10 @@ const ICON = {
   bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
   revenue: '<path d="M12 2.5 20.2 7.2v9.6L12 21.5l-8.2-4.7V7.2z"/><path d="M12 7.5 16.1 9.8v4.4L12 16.5l-4.1-2.3V9.8z"/>',
   team: '<path d="M12 2.5 4.5 5.5v6c0 4.6 3.2 8.4 7.5 10 4.3-1.6 7.5-5.4 7.5-10v-6z"/><path d="m8.8 12 2.2 2.2 4.4-4.6"/>',
+  connect: '<path d="M7 7h10M7 12h10M7 17h6"/><circle cx="4" cy="7" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="17" r="1"/><path d="m16 15 2 2 4-4"/>',
+  chip: '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  download: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
   mail: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m4 7 8 6 8-6"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2M17 6l3 3M14.5 8.5l2 2"/>', link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
@@ -62,11 +66,11 @@ const ICON = {
 const ic = (n, cls = "") => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[n] || ""}</svg>`;
 
 const PAGES = [
-  ["dashboard", "Dashboard"], ["workspace", "AI Workspace"], ["agents", "AI Agents"], ["team", "Team & Permissions"], ["mcp", "MCP Servers"],
+  ["dashboard", "Dashboard"], ["workspace", "AI Workspace"], ["connect", "Connect AIs"], ["agents", "AI Agents"], ["team", "Team & Permissions"], ["mcp", "MCP Servers"],
   ["roblox", "Roblox Studio"], ["projects", "Projects"], ["revenue", "Revenue"], ["prompts", "Prompt Library"], ["tasks", "Task Manager"], ["settings", "Settings"],
 ];
 const SUB = {
-  dashboard: "Your AI team at a glance", workspace: "Talk to agents and send instructions", agents: "Providers, models and team roles", team: "Every AI, its role, account and what it may do",
+  dashboard: "Your AI team at a glance", workspace: "Talk to agents and send instructions", connect: "Free AIs on your PC, online AIs and AI websites", agents: "Providers, models and team roles", team: "Every AI, its role, account and what it may do",
   mcp: "External tools for your agents", roblox: "Studio connection and project files", projects: "Your Roblox games", revenue: "Robux, pending earnings and game revenue",
   prompts: "Save, improve and reuse prompts", tasks: "Everything the agents are working on", settings: "Preferences, permissions and diagnostics",
 };
@@ -319,17 +323,27 @@ VIEWS.workspace = () => {
   const conv = S.conversations[focus.id] || [];
   const busy = S.tasks.some((t) => t.kind === "chat" && t.agentId === focus.id && ["pending", "in_progress", "waiting_approval"].includes(t.status));
   const apr = S.approvals.filter((a) => ui.wsSel.includes(a.agentId));
+  const compare = ui.wsCompare && ui.wsSel.length > 1;
+  const compareView = () => `<div class="compare">${ui.wsSel.map((id) => {
+    const a = agentById(id); if (!a) return "";
+    const c = S.conversations[id] || [];
+    const lastUser = [...c].reverse().find((m) => m.role === "user");
+    const reply = lastUser ? c.slice(c.indexOf(lastUser) + 1).find((m) => m.role !== "user") : null;
+    const busy = S.tasks.some((t) => t.kind === "chat" && t.agentId === id && ["pending", "in_progress", "waiting_approval"].includes(t.status));
+    return `<div class="cmp-col"><div class="row" style="gap:8px;margin-bottom:8px"><b>${esc(a.name)}</b><span class="faint ell" style="font-size:11.5px">${esc(a.model)}</span><div class="grow"></div><span class="dot ${a.status}"></span></div>
+      <div class="md" style="font-size:13px">${reply ? (reply.role === "error" ? `<span style="color:var(--bad)">${esc(reply.text)}</span>` : md(reply.text)) : busy ? '<span class="typing"><i></i><i></i><i></i></span>' : '<span class="faint">No answer yet</span>'}</div></div>`;
+  }).join("")}</div>`;
   return `<div class="ws" style="height:calc(100vh - 102px)">
-    <div class="panel ws-agents"><div class="panel-h"><h3>Agents</h3><div class="grow"></div><span class="faint" style="font-size:12px">${ui.wsSel.length} selected</span></div>
+    <div class="panel ws-agents"><div class="panel-h"><h3>Agents</h3><div class="grow"></div><button class="btn sm" data-act="askAll" title="Select every connected AI and show answers side by side">Ask all</button></div>
       <div style="padding:8px">${S.agents.map((a) => `<div class="pick ${a.id === ui.wsFocus ? "on" : ""}" data-act="wsFocus" data-id="${a.id}"><span class="check ${ui.wsSel.includes(a.id) ? "on" : ""}" data-act="wsToggle" data-id="${a.id}"></span><div class="grow" style="min-width:0"><div class="ell" style="font-weight:500">${esc(a.name)}</div><div class="faint ell" style="font-size:11.5px">${esc(a.role)}</div></div><span class="dot ${a.status}" title="${AGENT_ST[a.status][0]}"></span></div>`).join("")}</div>
     </div>
     <div class="panel chat">
-      <div class="panel-h"><div class="ava" style="width:30px;height:30px;font-size:11px;border-radius:9px">${esc(initials(focus.name))}</div><div><h3>${esc(focus.name)}</h3><div class="faint" style="font-size:12px">${esc(focus.role)} · ${esc(focus.model)}</div></div><div class="grow"></div>${statusChip(focus.status)}<button class="btn sm ghost" data-act="clearChat" data-id="${focus.id}">Clear</button></div>
-      <div class="thread" id="thread">
+      <div class="panel-h"><div class="ava" style="width:30px;height:30px;font-size:11px;border-radius:9px">${esc(initials(focus.name))}</div><div><h3>${esc(focus.name)}</h3><div class="faint" style="font-size:12px">${esc(focus.role)} · ${esc(focus.model)}</div></div><div class="grow"></div>${ui.wsSel.length > 1 ? `<button class="btn sm ${compare ? "" : "ghost"}" data-act="toggleCompare">${compare ? "One chat" : "Side by side"}</button>` : ""}${statusChip(focus.status)}<button class="btn sm ghost" data-act="clearChat" data-id="${focus.id}">Clear</button></div>
+      ${compare ? `<div class="thread" id="thread">${compareView()}</div>` : `<div class="thread" id="thread">
         ${conv.length ? conv.map((m) => msgView(m, focus)).join("") : `<div class="empty" style="margin:auto"><b>Start a conversation with ${esc(focus.name)}</b>Ask questions, give instructions or request changes. The agent can read and edit your project and use its MCP tools.</div>`}
         ${busy ? `<div class="msg assistant"><div class="who">${esc(focus.name)}</div><span class="typing"><i></i><i></i><i></i></span> <span class="faint" style="font-size:12px">${esc(S.tasks.find((t) => t.kind === "chat" && t.agentId === focus.id && t.status !== "completed")?.stage || "")}</span></div>` : ""}
         ${apr.map(approvalCard).join("")}
-      </div>
+      </div>`}
       <div class="composer">
         <textarea id="chatInput" placeholder="Message ${ui.wsSel.length > 1 ? ui.wsSel.length + " agents" : esc(focus.name)}…  (Enter to send, Shift+Enter for a new line)"></textarea>
         <div class="row"><span class="faint" style="font-size:12px">${ui.wsSel.length > 1 ? "Sends to: " + ui.wsSel.map((id) => esc(agentById(id).name)).join(", ") : ""}</span><div class="grow"></div>
@@ -386,6 +400,87 @@ function agentCard(a) {
       <button class="btn sm ghost" data-act="agentAct" data-op="${a.enabled ? "disable" : "enable"}" data-id="${a.id}">${a.enabled ? "Switch off" : "Switch on"}</button>
       <button class="btn sm ghost danger icon" title="Remove" data-act="removeAgent" data-id="${a.id}">${ic("trash")}</button></div>
   </div>`;
+}
+
+/* ---------- Connect AIs ---------- */
+const ONLINE = [
+  { id: "gemini", name: "Google Gemini", type: "openai", base: "https://generativelanguage.googleapis.com/v1beta/openai", keyUrl: "https://aistudio.google.com/apikey", free: "Free key (daily limits)" },
+  { id: "groq", name: "Groq", type: "openai", base: "https://api.groq.com/openai/v1", keyUrl: "https://console.groq.com/keys", free: "Free tier" },
+  { id: "openrouter", name: "OpenRouter", type: "openai", base: "https://openrouter.ai/api/v1", keyUrl: "https://openrouter.ai/keys", free: "Some free models" },
+  { id: "openai", name: "ChatGPT (OpenAI)", type: "openai", base: "https://api.openai.com/v1", keyUrl: "https://platform.openai.com/api-keys", free: "" },
+  { id: "claude", name: "Claude (Anthropic)", type: "anthropic", base: "", keyUrl: "https://console.anthropic.com/settings/keys", free: "" },
+  { id: "deepseek", name: "DeepSeek", type: "openai", base: "https://api.deepseek.com/v1", keyUrl: "https://platform.deepseek.com/api_keys", free: "" },
+  { id: "mistral", name: "Mistral", type: "openai", base: "https://api.mistral.ai/v1", keyUrl: "https://console.mistral.ai/api-keys", free: "" },
+];
+const WEB = [["chatgpt", "ChatGPT"], ["gemini", "Gemini"], ["claude", "Claude"], ["copilot", "Copilot"], ["perplexity", "Perplexity"], ["deepseek", "DeepSeek"]];
+
+VIEWS.connect = () => {
+  const L = S.local || { servers: [], recommended: [], pulls: {} };
+  if (!ui.scannedOnce) { ui.scannedOnce = true; call("scanLocal").catch(() => {}); }
+  const ollama = L.servers.find((s) => s.id === "ollama");
+  const found = L.servers.filter((s) => s.running && s.id !== "ollama");
+  const connected = (s) => S.providers.find((p) => p.local && p.baseURL === s.baseURL);
+  const installed = new Set((ollama?.models || []).map((m) => m.id));
+  const gb = (b) => (b ? (b / 1e9).toFixed(1) + " GB" : "");
+  const pull = (m) => L.pulls[m];
+
+  const ollamaCard = !ollama ? "" : `<div class="panel pad stack" style="gap:12px"><div class="row"><div class="ava" style="width:36px;height:36px">${ic("chip")}</div><div class="grow"><div class="h3">Ollama</div><div class="faint" style="font-size:12.5px">The easiest way to run free AI models on your PC.</div></div>
+      ${ollama.running ? `<span class="chip ok"><span class="dot connected"></span>Running · ${ollama.models.length} models</span>` : L.ollamaInstalled ? `<button class="btn sm primary" data-act="startOllama">${ic("play")}Start Ollama</button>` : `<button class="btn sm primary" data-act="openUrl" data-id="${ollama.site}">${ic("download")}Get Ollama (free)</button>`}</div>
+    ${!ollama.running && !L.ollamaInstalled ? `<div class="muted" style="font-size:12.5px">Install Ollama from ollama.com, open it, then press <b>Scan</b>. Then download models below with one click.</div>` : ""}
+    ${ollama.running && ollama.models.length ? `<div class="label">Downloaded models</div>${ollama.models.map((m) => `<div class="row" style="padding:6px 0;border-top:1px solid var(--border)"><span class="mono grow">${esc(m.id)}</span><span class="faint" style="font-size:12px">${esc(m.params)} ${gb(m.size)}</span><button class="btn sm" data-act="localAgent" data-server="ollama" data-id="${esc(m.id)}">${ic("plus")}Add as AI</button><button class="btn sm ghost danger icon" title="Delete model" data-act="deleteModel" data-id="${esc(m.id)}">${ic("trash")}</button></div>`).join("")}` : ""}
+  </div>`;
+
+  const recommended = `<div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">${L.recommended.map((r) => {
+    const p = pull(r.model), has = installed.has(r.model);
+    return `<div class="panel pad stack" style="gap:6px"><div class="row"><b class="mono grow" style="font-size:13px">${esc(r.model)}</b><span class="tag">${esc(r.size)}</span></div>
+      <div class="faint" style="font-size:12px">by ${esc(r.maker)} · ${r.tools ? "can use tools" : "chat only"}</div>
+      <div class="muted" style="font-size:12.5px;min-height:36px">${esc(r.goodFor)}</div>
+      <div class="faint" style="font-size:11.5px">Best roles: ${r.roles.map(esc).join(", ")}</div>
+      ${has ? `<div class="row"><span class="chip ok">Downloaded</span><div class="grow"></div><button class="btn sm primary" data-act="localAgent" data-server="ollama" data-id="${esc(r.model)}" data-role="${esc(r.roles[0])}">${ic("plus")}Add as AI</button></div>`
+        : p && !p.error && !p.done ? `<div class="stack" style="gap:4px"><div class="faint" style="font-size:12px">${esc(p.status)}${p.pct != null ? " · " + p.pct + "%" : ""}</div>${bar((p.pct || 0) / 100, "live")}</div>`
+        : `<div class="row">${p?.error ? `<span class="faint grow" style="font-size:12px;color:var(--bad)">${esc(p.status)}</span>` : '<div class="grow"></div>'}<button class="btn sm" data-act="pullModel" data-id="${esc(r.model)}" ${ollama?.running ? "" : 'disabled title="Start Ollama first"'}>${ic("download")}Download</button></div>`}
+    </div>`;
+  }).join("")}</div>`;
+
+  const others = found.map((s) => `<div class="panel pad row" style="gap:12px"><div class="ava" style="width:36px;height:36px">${ic("chip")}</div><div class="grow"><div class="h3">${esc(s.name)}</div><div class="faint" style="font-size:12px">${s.models.length} models · ${esc(s.baseURL)}</div></div>
+    ${connected(s) ? '<span class="chip ok">Connected</span>' : `<button class="btn sm primary" data-act="connectLocal" data-id="${s.id}">Connect</button>`}
+    ${s.models.slice(0, 1).map((m) => `<button class="btn sm" data-act="localAgent" data-server="${s.id}" data-id="${esc(m.id)}">${ic("plus")}Add as AI</button>`).join("")}</div>`).join("");
+
+  const img = L.image;
+  const forge = !img ? "" : `<div class="panel pad row" style="gap:12px"><div class="ava" style="width:36px;height:36px">${ic("image")}</div><div class="grow"><div class="h3">Forge / AUTOMATIC1111 <span class="faint" style="font-weight:400">· free image AI on your PC</span></div>
+      <div class="faint" style="font-size:12.5px">${img.running ? `Running with ${img.models.length} model(s). The Image Creator can use it for icons and thumbnails.` : img.apiOff ? "Found, but its API is off. Start it with the --api option, then Scan." : "Not found. Install Forge, start it with --api, then Scan."}</div></div>
+      ${img.running ? `<span class="row" style="gap:8px"><span class="faint" style="font-size:12px">Use for images</span><div class="toggle ${L.imageBackend ? "on" : ""}" data-act="toggleForge"></div></span>` : `<button class="btn sm" data-act="openUrl" data-id="${img.site}">Get Forge</button>`}</div>`;
+
+  return `<div class="row"><div class="h3 grow">${ic("chip", "mi")} Free AIs on this PC <span class="faint" style="font-weight:400;font-size:12.5px">· private: nothing leaves your computer</span></div><span class="faint" style="font-size:12px">${L.scannedAt ? "Scanned " + ago(L.scannedAt) : ""}</span><button class="btn sm" data-act="scanLocal">${ic("refresh")}Scan</button></div>
+  <div class="sp" style="height:12px"></div>
+  <div class="stack" style="gap:14px">${ollamaCard}${others}${forge}</div>
+  <div class="faint" style="font-size:12px;margin-top:8px">Also looked for: ${L.servers.filter((s) => s.id !== "ollama" && !s.running).map((s) => esc(s.name)).join(", ")}.</div>
+  <div class="sp"></div>
+  <div class="row"><div class="h3 grow">Recommended free models</div><span class="faint" style="font-size:12px">Open models from well-known makers, from Ollama's official library. 7–8B models run well on an RTX 4060.</span></div>
+  <div class="sp" style="height:12px"></div>${recommended}
+  <div class="sp"></div>
+  <div class="h3">${ic("globe", "mi")} Online AIs <span class="faint" style="font-weight:400;font-size:12.5px">· get a key on their site, paste it, done</span></div>
+  <div class="sp" style="height:12px"></div>
+  <div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(230px,1fr))">${ONLINE.map((o) => {
+    const has = S.providers.find((p) => (o.base && p.baseURL === o.base) || (!o.base && p.type === o.type && o.type === "anthropic"));
+    return `<div class="panel pad stack" style="gap:8px"><div class="row"><b class="grow">${esc(o.name)}</b>${o.free ? `<span class="chip ok">${esc(o.free)}</span>` : '<span class="chip">Paid</span>'}</div>
+      <div class="row">${has ? `<span class="chip ok"><span class="dot ${has.status}"></span>${has.status === "connected" ? "Connected" : esc(has.status)}</span>` : `<button class="btn sm" data-act="openUrl" data-id="${o.keyUrl}">Get key</button><button class="btn sm primary" data-act="connectOnline" data-id="${o.id}">Connect</button>`}</div></div>`;
+  }).join("")}</div>
+  <div class="sp"></div>
+  <div class="h3">AI websites <span class="faint" style="font-weight:400;font-size:12.5px">· use your own accounts by hand — VYRON doesn't read or control them</span></div>
+  <div class="sp" style="height:12px"></div>
+  <div class="row wrap" style="gap:10px">${WEB.map(([id, n]) => `<div class="panel pad row" style="gap:8px;padding:10px 12px"><b style="font-size:13px">${n}</b><button class="btn sm" data-act="openWeb" data-id="${id}" ${desktop ? "" : "disabled"}>Open</button></div>`).join("")}</div>`;
+};
+
+function localAgentModal(server, model, role) {
+  const rec = (S.local?.recommended || []).find((r) => r.model === model);
+  const r = role || rec?.roles[0] || "Luau Developer";
+  modal("Add an AI on " + esc(model), `
+    <div class="grid g2" style="gap:12px"><label class="field"><span>Name</span><input class="input" id="laName" value="${esc(NAME_POOL.find((n) => !S.agents.some((x) => x.name === n)) || "")}"></label>
+    <label class="field"><span>Role</span><select class="select" id="laRole">${roleOptions(r)}</select></label></div>
+    <div class="faint" style="font-size:12.5px">Runs free on your PC with <span class="mono">${esc(model)}</span>${rec && !rec.tools ? " — this model can only chat, so give it a talking role (ideas, research, marketing)" : ""}.</div>
+    <input type="hidden" id="laServer" value="${esc(server)}"><input type="hidden" id="laModel" value="${esc(model)}">`,
+    `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="saveLocalAgent">Add AI</button>`);
 }
 
 /* ---------- Team & Permissions ---------- */
@@ -746,12 +841,13 @@ function modal(title, body, foot, wide) {
 const closeModal = () => ($("#modalRoot").innerHTML = "");
 const val = (id) => $("#" + id)?.value ?? "";
 
-function providerModal(p) {
-  const type = p?.type || "anthropic";
-  modal(p ? "Edit provider" : "Add AI provider", `
+function providerModal(p, preset) {
+  const type = p?.type || preset?.type || "anthropic";
+  modal(p ? "Edit provider" : preset ? "Connect " + esc(preset.name) : "Add AI provider", `
     ${p ? "" : `<label class="field"><span>Provider type</span><select class="select" id="pType">${Object.entries(S.providerTypes).map(([k, v]) => `<option value="${k}" ${k === type ? "selected" : ""}>${esc(v.label)}</option>`).join("")}</select></label>`}
-    <label class="field"><span>Name</span><input class="input" id="pName" value="${esc(p?.name || "")}" placeholder="${type === "anthropic" ? "Claude" : "OpenAI"}"></label>
-    <div id="pBaseWrap" style="${type === "openai" ? "" : "display:none"}"><label class="field"><span>Base URL</span><input class="input" id="pBase" value="${esc(p?.baseURL || "https://api.openai.com/v1")}" list="pBaseList"><datalist id="pBaseList">${OPENAI_PRESETS.map(([n, u]) => `<option value="${u}">${n}</option>`).join("")}</datalist><small>Local servers like Ollama or LM Studio don't need a key.</small></label></div>
+    ${preset ? `<div class="faint" style="font-size:12.5px;margin:-4px 0 12px">Get a key at <a data-act="openUrl" data-id="${esc(preset.keyUrl)}" style="cursor:pointer">${esc(new URL(preset.keyUrl).hostname)}</a>, then paste it below.${preset.free ? " " + esc(preset.free) + "." : ""}</div>` : ""}
+    <label class="field"><span>Name</span><input class="input" id="pName" value="${esc(p?.name || preset?.name || "")}" placeholder="${type === "anthropic" ? "Claude" : "OpenAI"}"></label>
+    <div id="pBaseWrap" style="${type === "openai" ? "" : "display:none"}"><label class="field"><span>Base URL</span><input class="input" id="pBase" value="${esc(p?.baseURL || preset?.base || "https://api.openai.com/v1")}" list="pBaseList"><datalist id="pBaseList">${OPENAI_PRESETS.map(([n, u]) => `<option value="${u}">${n}</option>`).join("")}</datalist><small>Local servers like Ollama or LM Studio don't need a key.</small></label></div>
     <label class="field"><span>API key</span><input class="input" type="password" id="pKey" placeholder="${p?.hasKey ? "Saved — leave blank to keep it" : "Paste your API key"}" autocomplete="off"><small>${type === "anthropic" ? 'Get one at console.anthropic.com → API Keys.' : ""} Stored encrypted on this PC.</small></label>
     <label class="field"><span>Account email <span class="faint">(which account this key belongs to)</span></span><input class="input" type="email" id="pEmail" value="${esc(p?.accountEmail || "")}" placeholder="you@gmail.com"><small>Shown on every AI that uses this provider, so you know which account it runs on.</small></label>`,
     `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="saveProvider" data-id="${p?.id || ""}">${p ? "Save & reconnect" : "Connect"}</button>`);
@@ -1072,6 +1168,19 @@ const ACT = {
   async saveImproved() { await call("savePrompt", { title: val("impIdea").slice(0, 80), category: val("impCat"), body: val("impText") }); toast("Saved to the library"); },
   async buildImproved() { await call("build", val("impText")); closeModal(); toast("Build started"); go("tasks"); },
 
+  async scanLocal() { await call("scanLocal"); toast("Scan finished"); },
+  async startOllama(el) { el.disabled = true; el.innerHTML = '<span class="spinner"></span>Starting…'; try { await call("startOllama"); toast("Ollama is running"); } catch { /* toasted */ } },
+  openUrl: (el) => B.host("openUrl", el.dataset.id),
+  async pullModel(el) { await call("pullModel", el.dataset.id); toast("Downloading " + el.dataset.id + " — this can take a few minutes"); },
+  async deleteModel(el) { if (confirm(`Delete ${el.dataset.id} from your PC?`)) await call("deleteModel", el.dataset.id); },
+  localAgent: (el) => localAgentModal(el.dataset.server, el.dataset.id, el.dataset.role),
+  async saveLocalAgent() { await call("addLocalAgent", { serverId: val("laServer"), model: val("laModel"), role: val("laRole"), name: val("laName") }); closeModal(); toast("AI added — it runs free on your PC"); },
+  async connectLocal(el) { await call("connectLocal", el.dataset.id); toast("Connected"); },
+  async toggleForge() { await call("setImageBackend", S.local.imageBackend ? null : S.local.image.url); },
+  connectOnline: (el) => providerModal(null, ONLINE.find((o) => o.id === el.dataset.id)),
+  openWeb: (el) => B.host("openWeb", el.dataset.id),
+  askAll: () => { ui.wsSel = S.agents.filter((a) => a.enabled && a.status !== "disconnected").map((a) => a.id); if (!ui.wsSel.length) return toast("No connected AIs yet", "error"); ui.wsFocus = ui.wsSel[0]; ui.wsCompare = true; render(); setTimeout(() => $("#chatInput")?.focus(), 50); },
+  toggleCompare: () => { ui.wsCompare = !ui.wsCompare; render(); },
   authMode: (el) => { ui.authMode = el.dataset.id; ui.authErr = ""; ui.authInfo = ""; render(); },
   async authSetup(el) {
     await authCall(el, "authSetup", { googleClientId: val("suGid"), googleClientSecret: val("suGsec"), allowedEmails: val("suAllow") });
