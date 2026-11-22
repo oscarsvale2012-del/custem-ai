@@ -170,8 +170,22 @@ function drawNav() {
   $("#sideFoot").innerHTML = `
     ${p ? `<div class="mini-proj" data-go="projects">${gameIcon(p, "sm")}<div class="grow"><div class="ell" style="font-weight:600;font-size:13px">${esc(p.game?.name || p.name)}</div><div class="faint" style="font-size:11.5px"><span class="dot ${p.studioConnected ? "connected" : "unknown"}" style="display:inline-block;width:6px;height:6px;margin-right:5px"></span>${p.studioConnected ? "Open in Studio" : "Studio not linked"}</div></div></div>`
       : `<div class="mini-proj" data-go="projects"><div class="gicon sm"><div class="fallback">+</div></div><div class="faint" style="font-size:12.5px">Add a project</div></div>`}
-    <div class="faint" style="font-size:11.5px;padding:2px 4px"><span class="dot ${claudeDot()}" style="display:inline-block;width:6px;height:6px;margin-right:6px"></span>${claudeLine()}${modelNow() ? " · " + esc(modelNow()) : ""}</div>
+    <div class="conns">${connections().map(([dot, text, go, tip]) => `<div class="conn" data-go="${go}" title="${esc(tip)}"><span class="dot ${dot}"></span><span class="ell">${esc(text)}</span></div>`).join("")}</div>
     ${S.auth?.user ? `<div class="row acct" data-go="settings" title="${esc(S.auth.user.email)}"><div class="av" style="margin:0;width:24px;height:24px;font-size:10px">${esc(initials(S.auth.user.email))}</div><span class="ell grow" style="font-size:12px">${esc(S.auth.user.email)}</span></div>` : ""}`;
+}
+/** Sidebar status lines: [dot class, text, page, tooltip]. */
+function connections() {
+  const st = S.studio || {}, b = S.blender || {}, X = S.control;
+  const studioOk = st.status === "connected" && S.studios.length;
+  return [
+    [claudeDot(), claudeLine() + (modelNow() ? " · " + modelNow() : ""), "claude", "Claude Code on this PC"],
+    [studioOk ? "connected" : st.status === "connected" ? "unknown" : st.status === "connecting" ? "connecting" : "error",
+      studioOk ? "Roblox Studio connected" : st.status === "connected" ? "Roblox Studio: no place open" : st.status === "connecting" ? "Roblox Studio connecting…" : "Roblox Studio offline", "projects",
+      studioOk ? S.studios.map((w) => w.name).join(", ") : S.studioError || "Open Studio and turn on its AI/MCP connection"],
+    [b.open ? "connected" : b.found ? "unknown" : "error", b.open ? "Blender connected" : b.found ? "Blender not open" : "Blender not installed", "projects",
+      b.open ? b.file || "Blender is open" : b.error || "Open Blender with its MCP add-on on"],
+    ...(X ? [[X.running ? "connected" : X.enabled ? "error" : "unknown", X.running ? "Claude connector on" + (X.desktop?.connected ? " · desktop" : "") : X.enabled ? "Claude connector error" : "Claude connector off", "settings", X.running ? "Claude can control VYRON" : X.error || "Turn it on in Settings"]] : []),
+  ];
 }
 const claudeDot = () => (!S.claude.found ? "error" : S.claude.busy ? "working" : S.claude.auth?.loggedIn ? "connected" : "unknown");
 /** Which model Claude is running (as Claude Code reports it), and a note if a different one is picked for the next message. */

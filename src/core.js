@@ -71,6 +71,7 @@ class Backend extends EventEmitter {
     if (this.useStudio) {
       this.connectStudio().catch(() => {});
       setTimeout(() => this.checkBlender().catch(() => {}), 3000);
+      this._blenderTimer = setInterval(() => this.checkBlender().catch(() => {}), 20000);
       this._studioTimer = setInterval(() => this.detectStudios(true).catch(() => {}), 15000);
     }
     this._revTimer = setInterval(() => this.refreshRevenue(false).catch(() => {}), 10 * 60 * 1000);
@@ -82,7 +83,7 @@ class Backend extends EventEmitter {
   }
 
   async shutdown() {
-    clearInterval(this._studioTimer); clearInterval(this._revTimer); clearInterval(this._rateTimer); clearInterval(this._syncT);
+    clearInterval(this._studioTimer); clearInterval(this._blenderTimer); clearInterval(this._revTimer); clearInterval(this._rateTimer); clearInterval(this._syncT);
     if (this._dirty) await this.accountPush().catch(() => {});
     this.claude.shutdown();
     await this.mcp.closeAll();
