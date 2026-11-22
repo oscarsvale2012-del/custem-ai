@@ -615,10 +615,10 @@ function drawLock() {
       <button class="btn primary wide" data-act="accNewPassword" data-primary>Save password and continue</button>
       <div class="auth-links"><a data-act="accCancel">Cancel</a></div>`;
   } else if (A.pending) {
-    body = `<h2>Check your email</h2><p class="muted">${CODE_FOR[A.pending.kind] || "We sent you a code"}: <b>${esc(A.pending.email)}</b>. Type it below. It can take a minute; check spam too.</p>${msg}
+    body = `<h2>Check your email</h2><p class="muted">${CODE_FOR[A.pending.kind] || "We sent you a code"}: <b>${esc(A.pending.email)}</b>. Type it below. It can take a minute; check spam too.</p>${A.pending.kind !== "login" ? `<p class="faint" style="font-size:12px;margin:-6px 0 12px">Got a <b>link</b> instead of a code? Click it — ${A.pending.kind === "signup" ? "then come back and log in with your password." : "the VYRON website lets you choose a new password, then log in here."}</p>` : ""}${msg}
       <label class="field"><span>Code</span><input class="input code-input" id="auCode" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="123456"></label>
       <button class="btn primary wide" data-act="accVerify" data-primary>${A.pending.kind === "recovery" ? "Continue" : "Log in"}</button>
-      <div class="auth-links"><a data-act="accResend">Send a new code</a><a data-act="accCancel">Use another email</a></div>`;
+      <div class="auth-links"><a data-act="accResend">Send a new code</a><a data-act="accCancel">${A.pending.kind === "login" ? "Use another email" : "Back to log in"}</a></div>`;
   } else if (mode === "signup") {
     body = `<h2>Create your VYRON account</h2><p class="muted">Your projects, ideas and Claude chats are saved to it.</p>${msg}
       <button class="btn wide google" data-act="accGoogle">${GOOGLE_G}Sign up with Google</button><div class="or"><span>or with email</span></div>

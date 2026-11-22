@@ -25,6 +25,9 @@ create policy "own data: read"   on public.vyron_data for select using (auth.uid
 create policy "own data: insert" on public.vyron_data for insert with check (auth.uid() = user_id);
 create policy "own data: update" on public.vyron_data for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own data: delete" on public.vyron_data for delete using (auth.uid() = user_id);
+
+-- Signed-in users may use the table (still only their own row).
+grant select, insert, update, delete on table public.vyron_data to authenticated;
 ```
 
 ## 3. Make the emails send a code

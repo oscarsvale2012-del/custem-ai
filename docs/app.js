@@ -52,7 +52,22 @@ async function google() {
   const back = location.origin + location.pathname;
   location.href = `${URL0}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(back)}&code_challenge=${challenge}&code_challenge_method=s256`;
 }
+/** Email links (Supabase's default emails): #access_token=…&type=signup|recovery|magiclink */
+function finishEmailLink() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  const err = h.get("error_description") || h.get("error");
+  if (!h.get("access_token") && !err) return false;
+  history.replaceState(null, "", location.pathname + "#account");
+  if (err) { say(/expired|invalid/i.test(err) ? "That email link has expired or was already used. Ask for a new one." : err, true); return true; }
+  const type = h.get("type");
+  keep({ access_token: h.get("access_token"), refresh_token: h.get("refresh_token"), expires_in: Number(h.get("expires_in")) || 3600, user: { email: "" } }, type === "recovery");
+  api("GET", "/auth/v1/user", undefined, session.access).then((u) => { session.email = u?.email || ""; store.set(session); draw(); }).catch(() => {});
+  say(type === "recovery" ? "" : type === "signup" ? "Your email is confirmed! You can log in to the VYRON app now." : "You're logged in!");
+  if (type !== "recovery") loadRelease();
+  return true;
+}
 async function finishGoogle() {
+  if (finishEmailLink()) return;
   const q = new URLSearchParams(location.search);
   const code = q.get("code"), err = q.get("error_description") || q.get("error");
   if (!code && !err) return;
