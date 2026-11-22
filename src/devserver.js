@@ -6,7 +6,7 @@ const fs = require("fs");
 const path = require("path");
 const { Backend } = require("./core");
 const { dispatch, lockedState } = require("./api");
-const { AuthManager } = require("./auth");
+const { AccountManager, loadAccountConfig } = require("./account");
 
 const PORT = Number(process.env.PORT || 5181);
 const dataDir = process.env.AF_DATA || path.join(__dirname, "..", ".devdata");
@@ -26,7 +26,9 @@ const backend = new Backend({
 });
 const enc = (s) => "plain:" + Buffer.from(s).toString("base64");
 const dec = (s) => (s.startsWith("plain:") ? Buffer.from(s.slice(6), "base64").toString() : s);
-const auth = new AuthManager({ dataDir, encrypt: enc, decrypt: dec, openExternal: (url) => console.log("Open to sign in with Google:", url) });
+const auth = new AccountManager({ dataDir, encrypt: enc, decrypt: dec, config: loadAccountConfig(path.join(__dirname, "..")) });
+auth.beforeSignOut = () => started && backend.accountPush();
+auth.openExternal = (url) => console.log("Open to continue with Google:", url);
 backend.authInfo = () => auth.public();
 let started = false;
 const clients = new Set();
@@ -38,7 +40,7 @@ backend.on("log", (l) => !auth.locked && send("log", l));
 backend.on("notify", (n) => send("notify", n));
 backend.on("alert", (a) => send("alert", a));
 auth.on("change", sendState);
-auth.on("signedIn", async () => { await startBackend(); sendState(); });
+auth.on("signedIn", async () => { await startBackend(); sendState(); backend.accountSignedIn(auth).catch(() => {}); });
 auth.on("signedOut", () => sendState());
 
 const MIME = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml", ".png": "image/png" };

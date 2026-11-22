@@ -12,3 +12,5 @@ download/
 .testdata-team/
 .testdata-control/
 .testdata-local/
+.devdata-acct/
+.testdata-account/

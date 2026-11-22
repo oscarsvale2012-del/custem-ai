@@ -26,20 +26,6 @@ jobs:
         run: npm test
         continue-on-error: true  # some checks need roblox.com / Roblox Studio, which CI may not reach
 
-      - name: Add Google sign-in (from repository secrets, if set)
-        shell: bash
-        env:
-          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          ALLOWED_EMAILS: ${{ secrets.ALLOWED_EMAILS }}
-        run: |
-          if [ -n "$GOOGLE_CLIENT_ID" ]; then
-            node -e "require('fs').writeFileSync('src/auth-config.json', JSON.stringify({ googleClientId: process.env.GOOGLE_CLIENT_ID, googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || '', allowedEmails: (process.env.ALLOWED_EMAILS || '').split(/[\s,;]+/).filter(Boolean) }))"
-            echo "Google sign-in is built in"
-          else
-            echo "No GOOGLE_CLIENT_ID secret: Google sign-in is set up inside the app on first start"
-          fi
-
       - name: Build installer and portable .exe
         run: npx electron-builder --win --publish never
 

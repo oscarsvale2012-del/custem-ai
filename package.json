@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "dev:web": "node src/devserver.js",
-    "test": "node test/core.js && node test/revenue.js && node test/auth.js",
+    "test": "node test/core.js && node test/revenue.js && node test/account.js",
     "icon": "electron build/render-icon.js",
     "dist": "electron-builder --win --publish never"
   },

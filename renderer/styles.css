@@ -375,3 +375,5 @@ body.locked #shell{display:none}
 .theme-card b{font-size:12.5px;font-weight:600;color:color-mix(in srgb,var(--ta) 30%,#fff)}
 .theme-card span{font-size:11px;opacity:.6}
 .theme-card.light{color:#1a1d27}.theme-card.light b{color:color-mix(in srgb,var(--ta) 55%,#1a1d27)}.theme-card.light span{opacity:.7}
+
+.code-input{font:600 22px var(--f-mono);letter-spacing:.35em;text-align:center}

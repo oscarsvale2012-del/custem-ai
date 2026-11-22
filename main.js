@@ -4,7 +4,7 @@ const path = require("path");
 const fs = require("fs");
 const { Backend } = require("./src/core");
 const { dispatch, lockedState } = require("./src/api");
-const { AuthManager, loadBundledConfig } = require("./src/auth");
+const { AccountManager, loadAccountConfig } = require("./src/account");
 const { ControlServer } = require("./src/control");
 
 let win;
@@ -199,11 +199,10 @@ app.whenReady().then(async () => {
   const dataDir = app.getPath("userData");
   backend = new Backend({ dataDir, encrypt, decrypt, host: robloxHost });
   // Sign-in gate: nothing in the backend starts until the user is signed in.
-  auth = new AuthManager({
-    dataDir, encrypt, decrypt,
-    openExternal: (url) => shell.openExternal(url),
-    bundledConfig: loadBundledConfig(__dirname),
-  });
+  // VYRON account: nothing in the backend starts until you are signed in.
+  auth = new AccountManager({ dataDir, encrypt, decrypt, config: loadAccountConfig(__dirname) });
+  auth.beforeSignOut = () => started && backend.accountPush();
+  auth.openExternal = (url) => shell.openExternal(url);
   backend.authInfo = () => auth.public();
   const send = (type, payload) => win && !win.isDestroyed() && win.webContents.send("event", type, payload);
   control = new ControlServer({ dataDir, getCtx: () => ({ backend, auth, control }), log: (t, l, s) => backend.log(t, l, s), version: app.getVersion() });
@@ -228,10 +227,9 @@ app.whenReady().then(async () => {
   backend.on("state", (s) => !auth.locked && send("state", s));
   backend.on("log", (l) => !auth.locked && send("log", l));
   auth.on("change", sendState);
-  auth.on("signedIn", async () => { await startBackend(); sendState(); });
+  auth.on("signedIn", async () => { await startBackend(); sendState(); backend.accountSignedIn(auth).catch(() => {}); });
   auth.on("signedOut", async () => {
-    if (!auth.required) return sendState(); // sign-in is optional: keep working
-    // Sign-in is required: restart into the sign-in screen with everything stopped.
+    // Restart into the sign-in screen with everything stopped (your data was saved to your account first).
     quitting = true;
     try { await backend.shutdown(); } finally { app.relaunch(); app.exit(0); }
   });

@@ -283,6 +283,18 @@ class ClaudeRunner extends EventEmitter {
     this.changed();
   }
 
+  /** For the account backup: chats without running state, trimmed. */
+  exportTasks() { return this.tasks.slice(0, 40).map(({ busy, queued, stopped, ...t }) => ({ ...t, messages: t.messages.slice(-80) })); }
+  importTasks(list) {
+    if (this.busy) return false;
+    const ok = Array.isArray(list) ? list.filter((t) => t && t.id && Array.isArray(t.messages)) : [];
+    this.tasks = ok.map((t) => ({ ...t, busy: false, queued: null }));
+    if (!this.tasks.length) this.tasks.push(this.blank("Main chat"));
+    this.save();
+    this.changed();
+    return true;
+  }
+
   shutdown() { clearInterval(this._authT); this.stop(); }
 }
 

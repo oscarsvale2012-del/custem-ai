@@ -76,7 +76,8 @@ class Backend extends EventEmitter {
   }
 
   async shutdown() {
-    clearInterval(this._studioTimer); clearInterval(this._revTimer); clearInterval(this._rateTimer);
+    clearInterval(this._studioTimer); clearInterval(this._revTimer); clearInterval(this._rateTimer); clearInterval(this._syncT);
+    if (this._dirty) await this.accountPush().catch(() => {});
     this.claude.shutdown();
     await this.mcp.closeAll();
     this.store.saveNow();
@@ -89,7 +90,7 @@ class Backend extends EventEmitter {
     this.changed();
   }
   changed() { clearTimeout(this._emitT); this._emitT = setTimeout(() => this.emit("state", this.publicState()), 80); }
-  save() { this.store.save(); this.changed(); }
+  save() { this.store.save(); this._dirty = true; this.changed(); }
 
   publicState() {
     const s = this.d.settings;
@@ -169,6 +170,74 @@ class Backend extends EventEmitter {
     this.emit("notify", this.notes[this.notes.length - 1]);
     this.changed();
   }
+
+  /* ================= account sync ================= */
+  /** What is saved to your VYRON account. No secrets: Roblox key and Claude/Roblox sign-ins stay on this PC. */
+  exportForAccount() {
+    const d = this.d;
+    const { activeProjectId, ...settings } = d.settings;
+    return {
+      v: 1, at: now(), settings: { ...settings, activeProjectId },
+      projects: d.projects.map(({ studioId, ...p }) => p), customIdeas: d.customIdeas, picked: d.picked,
+      claudeTasks: this.claude.exportTasks(), revenueHistory: (d.roblox.history || []).slice(-120),
+    };
+  }
+  importFromAccount(x) {
+    if (!x || x.v !== 1) return;
+    const d = this.d;
+    if (x.settings && typeof x.settings === "object") { d.settings = { ...d.settings, ...x.settings }; this.saveSettings({}); }
+    if (Array.isArray(x.projects)) d.projects = x.projects.map((p) => ({ ...p, studioId: null }));
+    if (Array.isArray(x.customIdeas)) d.customIdeas = x.customIdeas;
+    if (Array.isArray(x.picked)) d.picked = x.picked;
+    if (Array.isArray(x.revenueHistory)) d.roblox.history = x.revenueHistory;
+    if (Array.isArray(x.claudeTasks)) this.claude.importTasks(x.claudeTasks);
+    this.save();
+  }
+  /** Data that belongs to someone else is cleared before another person signs in on this PC. */
+  resetUserData() {
+    const d = this.d;
+    d.projects = []; d.customIdeas = []; d.picked = []; d.settings.activeProjectId = null;
+    d.roblox = { account: null, history: [], analytics: {}, summary: null, games: [] };
+    delete d.secrets.robloxApiKey;
+    this.claude.importTasks([]);
+    this.host.robloxLogout?.();
+    this.save();
+  }
+  /** After signing in: bring the account's data here (or save this PC's data to a new account). */
+  async accountSignedIn(acc) {
+    this.account = acc;
+    const d = this.d;
+    d.account = d.account || {};
+    const changedUser = d.account.owner && d.account.owner !== acc.user.id;
+    if (changedUser) { this.resetUserData(); d.account.syncedAt = 0; }
+    d.account.owner = acc.user.id;
+    this.save();
+    try {
+      acc.sync.busy = true; acc.emit("change");
+      const cloud = await acc.pull();
+      if (cloud?.data && (changedUser || !d.account.syncedAt || cloud.updatedAt > d.account.syncedAt)) {
+        this.importFromAccount(cloud.data);
+        this.log("Your data was loaded from your VYRON account", "ok", "Account");
+      } else await acc.push(this.exportForAccount());
+      d.account.syncedAt = now(); acc.sync = { at: now(), error: null, busy: false };
+    } catch (e) {
+      acc.sync = { at: acc.sync.at, error: e.message, busy: false };
+      this.log("Account sync: " + e.message, "warn", "Account");
+    }
+    this.save(); acc.emit("change");
+    clearInterval(this._syncT);
+    this._syncT = setInterval(() => this._dirty && this.accountPush().catch(() => {}), 60000);
+  }
+  /** Save to the account now (also before signing out and when VYRON quits). */
+  async accountPush() {
+    const acc = this.account;
+    if (!acc?.signedIn || acc.offline) return;
+    acc.sync.busy = true; acc.emit("change");
+    try { await acc.push(this.exportForAccount()); this._dirty = false; this.d.account.syncedAt = now(); acc.sync = { at: now(), error: null, busy: false }; this.store.save(); }
+    catch (e) { acc.sync = { ...acc.sync, error: e.message, busy: false }; throw e; }
+    finally { acc.emit("change"); }
+  }
+  accountSyncNow() { return this.accountPush(); }
 
   /* ================= PC control ================= */
   /** Claude asks (through the connector) to see or use the PC. Off / ask the user / allowed. */

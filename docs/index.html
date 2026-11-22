@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VYRON — Build Roblox games with Claude</title>
+<meta name="description" content="VYRON is a desktop app for making Roblox games with Claude. Create your VYRON account and download the app.">
+<link rel="icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="sky" aria-hidden="true"></canvas>
+<header class="top">
+  <a class="brand" href="#"><img src="icon.svg" alt=""><b>VYRON</b></a>
+  <nav><a href="#features">Features</a><a href="#account" id="navAccount">Log in</a></nav>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="pitch">
+      <span class="eyebrow">Desktop app for Windows</span>
+      <h1>Build Roblox games<br><span class="grad">with Claude.</span></h1>
+      <p>Tell Claude what to build — VYRON lets it work right inside Roblox Studio, run many tasks at once, pick from 700+ game ideas and show your Robux in kroner.</p>
+      <div class="cta"><a class="btn primary" href="#account" id="ctaMain">Create your account</a><a class="btn" href="#features">See what it does</a></div>
+      <p class="small">VYRON needs a free VYRON account and a Claude plan that includes Claude Code.</p>
+    </div>
+
+    <div class="card" id="account" aria-live="polite">
+      <div id="view"></div>
+    </div>
+  </section>
+
+  <section id="features" class="features">
+    <div class="f"><i>✦</i><h3>Claude in Roblox Studio</h3><p>Claude builds scripts, maps and UI in the place you have open — and tests it.</p></div>
+    <div class="f"><i>⧉</i><h3>Multitask</h3><p>Run up to 20 Claude tasks at the same time. The rest wait in a queue.</p></div>
+    <div class="f"><i>✺</i><h3>700+ game ideas</h3><p>Brainrot, shooters, PvP, simulators, tycoons and more. Pick a few and build.</p></div>
+    <div class="f"><i>◎</i><h3>Robux in kroner</h3><p>Official DevEx rate and the European Central Bank's daily rate.</p></div>
+    <div class="f"><i>☾</i><h3>Runs in the background</h3><p>Close the window and Claude keeps working. A pop-up tells you when it's done.</p></div>
+    <div class="f"><i>◐</i><h3>38 themes</h3><p>Galaxy, nebula, aurora, synthwave and more — with sounds you can turn off.</p></div>
+  </section>
+</main>
+
+<footer>
+  <span>© VYRON</span>
+  <span class="muted">VYRON isn't made by or affiliated with Roblox or Anthropic.</span>
+</footer>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

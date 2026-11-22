@@ -166,7 +166,7 @@ function drawNav() {
     ${p ? `<div class="mini-proj" data-go="projects">${gameIcon(p, "sm")}<div class="grow"><div class="ell" style="font-weight:600;font-size:13px">${esc(p.game?.name || p.name)}</div><div class="faint" style="font-size:11.5px"><span class="dot ${p.studioConnected ? "connected" : "unknown"}" style="display:inline-block;width:6px;height:6px;margin-right:5px"></span>${p.studioConnected ? "Open in Studio" : "Studio not linked"}</div></div></div>`
       : `<div class="mini-proj" data-go="projects"><div class="gicon sm"><div class="fallback">+</div></div><div class="faint" style="font-size:12.5px">Add a project</div></div>`}
     <div class="faint" style="font-size:11.5px;padding:2px 4px"><span class="dot ${claudeDot()}" style="display:inline-block;width:6px;height:6px;margin-right:6px"></span>${claudeLine()}${modelNow() ? " · " + esc(modelNow()) : ""}</div>
-    ${S.auth?.user ? `<div class="row acct" data-go="settings" title="${esc(S.auth.user.email)}"><div class="av" style="margin:0;width:24px;height:24px;font-size:10px;overflow:hidden">${S.auth.user.photo ? `<img src="${esc(S.auth.user.photo)}" alt="" style="width:100%;height:100%;object-fit:cover">` : esc(initials(S.auth.user.name))}</div><span class="ell grow" style="font-size:12px">${esc(S.auth.user.email)}</span></div>` : ""}`;
+    ${S.auth?.user ? `<div class="row acct" data-go="settings" title="${esc(S.auth.user.email)}"><div class="av" style="margin:0;width:24px;height:24px;font-size:10px">${esc(initials(S.auth.user.email))}</div><span class="ell grow" style="font-size:12px">${esc(S.auth.user.email)}</span></div>` : ""}`;
 }
 const claudeDot = () => (!S.claude.found ? "error" : S.claude.busy ? "working" : S.claude.auth?.loggedIn ? "connected" : "unknown");
 /** Which model Claude is running (as Claude Code reports it), and a note if a different one is picked for the next message. */
@@ -529,16 +529,13 @@ VIEWS.settings = () => {
   const s = S.settings, C = S.claude;
   const A = S.auth;
   const u = A?.user;
-  const account = !A ? "" : u
-    ? `<div class="panel pad"><div class="row" style="gap:14px"><div class="ava" style="border-radius:50%;overflow:hidden">${u.photo ? `<img src="${esc(u.photo)}" alt="" style="width:100%;height:100%;object-fit:cover">` : esc(initials(u.name))}</div>
-        <div class="grow"><div class="h3">${esc(u.name)}</div><div class="faint" style="font-size:12.5px">${esc(u.email)} · signed in to VYRON</div></div>
-        <button class="btn sm" data-act="editSignIn">Sign-in settings</button><button class="btn sm danger" data-act="authSignOut">Sign out</button></div>
-        <hr class="sep"><div class="row"><div class="grow"><div style="font-weight:500">Require sign-in when VYRON opens</div><div class="faint" style="font-size:12.5px">Off: VYRON opens straight away. On: it stays locked until you sign in.</div></div><div class="toggle ${A.required ? "on" : ""}" data-act="toggleRequire"></div></div></div>`
-    : `<div class="panel pad row" style="gap:14px"><div class="ava" style="border-radius:50%">?</div>
-        <div class="grow"><div class="h3">VYRON account (optional)</div><div class="faint" style="font-size:12.5px">Only needed if you want VYRON to be locked with your Google account.</div></div>
-        ${A.waitingForGoogle ? `<span class="chip"><span class="spinner"></span>Finish signing in in your browser</span><button class="btn sm" data-act="authCancelGoogleSettings">Cancel</button>`
-          : A.googleEnabled ? `<button class="btn sm google" data-act="authGoogleSettings">${GOOGLE_G}Sign in with Google</button><button class="btn sm ghost" data-act="editSignIn">Settings</button>`
-          : `<button class="btn sm" data-act="editSignIn">Set up Google sign-in</button>`}</div>`;
+  const sy = A?.sync || {};
+  const account = !A || !u ? "" : `<div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:50%">${esc(initials(u.email))}</div>
+      <div class="grow" style="min-width:0"><div class="h3">VYRON account</div><div class="faint ell" style="font-size:12.5px">${esc(u.email)}${A.offline ? " · offline" : ""}</div></div>
+      <button class="btn sm danger" data-act="accSignOut">Sign out</button></div>
+    <div class="row wrap" style="gap:8px"><span class="chip ${sy.error ? "bad" : "ok"}"><span class="dot ${sy.busy ? "connecting" : sy.error ? "error" : "connected"}"></span>${sy.busy ? "Saving…" : sy.error ? esc(sy.error) : sy.at ? "Saved to your account " + ago(sy.at) : "Not saved yet"}</span><div class="grow"></div>
+      <button class="btn sm" data-act="accSyncNow" ${sy.busy || A.offline ? "disabled" : ""}>Save now</button><button class="btn sm ghost" data-act="accChangePassword">Change password</button></div>
+    <div class="faint" style="font-size:11.5px">Saved: settings, projects, your ideas, picked ideas and Claude chats. Not saved: your Roblox and Claude sign-ins and keys (they stay on this PC).</div></div>`;
   const X = S.control;
   return `<div class="grid g2">
     <div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("claude")}</div><div class="grow" style="min-width:0"><div class="row" style="gap:8px"><div class="h3">Claude</div>${modelChip()}</div><div class="faint ell mono" style="font-size:11.5px" title="${esc(C.exe || "")}">${C.found ? esc(C.exe) : "Claude Code not found"}</div></div>
@@ -595,79 +592,63 @@ function projectModal(p) {
     `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="saveProject" data-id="${p?.id || ""}">${p ? "Save" : "Add project"}</button>`);
 }
 
-/* ---------------- sign-in (lock screen) ---------------- */
+/* ---------------- VYRON account sign-in (lock screen) ---------------- */
 const GOOGLE_G = '<svg viewBox="0 0 48 48" width="18" height="18"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>';
-
-/** Google sign-in setup: just a client ID (+ secret). */
-function setupForm(editing) {
-  return `<div class="stack" style="gap:2px">
-    <label class="field"><span>Google client ID</span><input class="input mono" id="suGid" placeholder="…apps.googleusercontent.com" autocomplete="off"></label>
-    <label class="field"><span>Google client secret</span><input class="input mono" type="password" id="suGsec" placeholder="${editing ? "Leave blank to keep the saved one" : "GOCSPX-…"}" autocomplete="off"></label>
-    <label class="field"><span>Only allow these emails <span class="faint">(optional)</span></span><input class="input" id="suAllow" placeholder="you@gmail.com"><small>Put your own Gmail here to keep VYRON private.</small></label>
-    <details class="howto"><summary>How do I get a Google client ID? (2 minutes, free)</summary>
-      <ol>
-        <li>Open <b>console.cloud.google.com</b> and create a project (any name, e.g. VYRON).</li>
-        <li><b>APIs &amp; Services → OAuth consent screen</b>: choose <b>External</b>, fill in the app name and your email, and add yourself under <b>Test users</b>.</li>
-        <li><b>APIs &amp; Services → Credentials → Create credentials → OAuth client ID</b>, type <b>Desktop app</b>.</li>
-        <li>Copy the <b>Client ID</b> and <b>Client secret</b> into the boxes above.</li>
-      </ol></details>
-  </div>`;
-}
-
-/** Optional email + password sign-in through Firebase. */
-function firebaseForm() {
-  return `<label class="field"><span>Firebase Web API key</span><input class="input mono" id="suKey" placeholder="AIza…" autocomplete="off"><small>Firebase console → Authentication: turn on Email/Password (and Google). Project settings → General → Web API Key.</small></label>`;
-}
-
+const CODE_FOR = { signup: "We sent a code to confirm your email", login: "We sent a code to log you in", recovery: "We sent a code to reset your password" };
 function drawLock() {
   const A = S.auth;
   const root = $("#lockRoot");
   const keep = preserve(root);
   const msg = ui.authErr ? `<div class="auth-msg bad">${esc(ui.authErr)}</div>` : ui.authInfo ? `<div class="auth-msg">${esc(ui.authInfo)}</div>` : "";
+  const mode = ui.authMode || "login";
   let body;
-  if (ui.authMode === "firebase" && A.canEditSetup) {
-    body = `<h2>Email sign-in</h2><p class="muted">Optional. Email + password accounts need a free Firebase project.</p>${msg}${firebaseForm()}
-      <button class="btn primary wide" data-act="authSetupFirebase" data-primary>Save</button>
-      <div class="auth-links"><a data-act="authMode" data-id="signin">Back</a></div>`;
-  } else if (!A.configured || (ui.authMode === "setup" && A.canEditSetup)) {
-    body = `<h2>Turn on Google sign-in</h2><p class="muted">One time only. Paste your Google client ID — after that it's one click.</p>${msg}${setupForm(false)}
-      <button class="btn primary wide" data-act="authSetup" data-primary>Save and continue</button>
-      <div class="auth-links">${A.configured ? `<a data-act="authMode" data-id="signin">Back to sign in</a>` : "<span></span>"}<a data-act="authMode" data-id="firebase">Use email sign-in instead</a></div>`;
+  if (!A.configured) {
+    body = `<h2>Not connected yet</h2><p class="muted">This copy of VYRON isn't connected to the VYRON account service, so it can't be used. Download VYRON from the official VYRON website.</p>`;
   } else if (A.waitingForGoogle) {
-    body = `<h2>Continue in your browser</h2><p class="muted">A Google sign-in page opened in your web browser. Choose your account there, then come back here.</p>
+    body = `<h2>Continue in your browser</h2><p class="muted">A Google sign-in page opened in your web browser. Pick your account there, then come back.</p>
       <div class="row" style="justify-content:center;margin:18px 0"><span class="spinner" style="width:22px;height:22px"></span></div>${msg}
-      <button class="btn wide" data-act="authCancelGoogle">Cancel</button>`;
-  } else if (A.pendingVerify) {
-    body = `<h2>Verify your email</h2><p class="muted">We sent a link to <b>${esc(A.pendingVerify.email)}</b>. Open it to confirm it's your email, then press continue.</p>${msg}
-      <button class="btn primary wide" data-act="authCheck" data-primary>I've verified — continue</button>
-      <div class="row" style="justify-content:space-between;margin-top:10px"><button class="btn ghost sm" data-act="authResend">Resend email</button><button class="btn ghost sm" data-act="authCancelVerify">Use another account</button></div>`;
+      <button class="btn wide" data-act="accCancelGoogle">Cancel</button>`;
+  } else if (A.mustSetPassword) {
+    body = `<h2>Choose a new password</h2><p class="muted">For <b>${esc(A.user?.email || "")}</b>. At least 8 characters.</p>${msg}
+      <label class="field"><span>New password</span><input class="input" id="auPass" type="password" autocomplete="new-password"></label>
+      <label class="field"><span>Repeat new password</span><input class="input" id="auPass2" type="password" autocomplete="new-password"></label>
+      <button class="btn primary wide" data-act="accNewPassword" data-primary>Save password and continue</button>
+      <div class="auth-links"><a data-act="accCancel">Cancel</a></div>`;
+  } else if (A.pending) {
+    body = `<h2>Check your email</h2><p class="muted">${CODE_FOR[A.pending.kind] || "We sent you a code"}: <b>${esc(A.pending.email)}</b>. Type it below. It can take a minute; check spam too.</p>${msg}
+      <label class="field"><span>Code</span><input class="input code-input" id="auCode" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="123456"></label>
+      <button class="btn primary wide" data-act="accVerify" data-primary>${A.pending.kind === "recovery" ? "Continue" : "Log in"}</button>
+      <div class="auth-links"><a data-act="accResend">Send a new code</a><a data-act="accCancel">Use another email</a></div>`;
+  } else if (mode === "signup") {
+    body = `<h2>Create your VYRON account</h2><p class="muted">Your projects, ideas and Claude chats are saved to it.</p>${msg}
+      <button class="btn wide google" data-act="accGoogle">${GOOGLE_G}Sign up with Google</button><div class="or"><span>or with email</span></div>
+      <label class="field"><span>Email</span><input class="input" id="auEmail" type="email" autocomplete="email"></label>
+      <label class="field"><span>Password <span class="faint">(at least 8 characters)</span></span><input class="input" id="auPass" type="password" autocomplete="new-password"></label>
+      <label class="field"><span>Repeat password</span><input class="input" id="auPass2" type="password" autocomplete="new-password"></label>
+      <button class="btn primary wide" data-act="accSignUp" data-primary>Create account</button>
+      <div class="auth-links"><a data-act="authMode" data-id="login">I already have an account</a></div>`;
+  } else if (mode === "forgot" || mode === "code") {
+    const f = mode === "forgot";
+    body = `<h2>${f ? "Forgot your password?" : "Log in with an email code"}</h2><p class="muted">${f ? "We'll email you a code. Then you choose a new password." : "No password needed — we'll email you a code."}</p>${msg}
+      <label class="field"><span>Email</span><input class="input" id="auEmail" type="email" autocomplete="email" value="${esc(ui.authEmail || "")}"></label>
+      <button class="btn primary wide" data-act="${f ? "accForgot" : "accLoginCode"}" data-primary>Email me a code</button>
+      <div class="auth-links"><a data-act="authMode" data-id="login">Back to log in</a></div>`;
   } else {
-    const mode = ui.authMode || "signin";
-    const google = A.googleEnabled ? `<button class="btn wide google" data-act="authGoogle" ${A.emailEnabled ? "" : "data-primary"}>${GOOGLE_G}Continue with Google</button>${A.emailEnabled ? '<div class="or"><span>or</span></div>' : ""}` : "";
-    if (!A.emailEnabled) {
-      body = `<h2>Sign in to VYRON</h2><p class="muted">Use your Google account.</p>${msg}${google}`;
-    } else if (mode === "reset") {
-      body = `<h2>Reset password</h2><p class="muted">Enter your email and we'll send a link to choose a new password.</p>${msg}
-        <label class="field"><span>Email</span><input class="input" id="auEmail" type="email" autocomplete="email"></label>
-        <button class="btn primary wide" data-act="authReset" data-primary>Send reset link</button>
-        <div class="auth-links"><a data-act="authMode" data-id="signin">Back to sign in</a></div>`;
-    } else {
-      const up = mode === "signup";
-      body = `<h2>${up ? "Create your account" : "Sign in to VYRON"}</h2><p class="muted">${up ? "Use your email or Google account." : "Welcome back."}</p>${msg}${google}
-        <label class="field"><span>Email</span><input class="input" id="auEmail" type="email" autocomplete="email"></label>
-        <label class="field"><span>Password</span><input class="input" id="auPass" type="password" autocomplete="${up ? "new-password" : "current-password"}"></label>
-        ${up ? `<label class="field"><span>Repeat password</span><input class="input" id="auPass2" type="password" autocomplete="new-password"></label>` : ""}
-        <button class="btn primary wide" data-act="${up ? "authSignUp" : "authSignIn"}" data-primary>${up ? "Create account" : "Sign in"}</button>
-        <div class="auth-links">${up ? `<a data-act="authMode" data-id="signin">I already have an account</a>` : `<a data-act="authMode" data-id="signup">Create an account</a><a data-act="authMode" data-id="reset">Forgot password?</a>`}</div>`;
-    }
+    body = `<h2>Log in to VYRON</h2><p class="muted">VYRON works when you're signed in to your VYRON account.</p>${msg}
+      <button class="btn wide google" data-act="accGoogle">${GOOGLE_G}Continue with Google</button><div class="or"><span>or</span></div>
+      <label class="field"><span>Email</span><input class="input" id="auEmail" type="email" autocomplete="email" value="${esc(ui.authEmail || "")}"></label>
+      <label class="field"><span>Password</span><input class="input" id="auPass" type="password" autocomplete="current-password"></label>
+      <button class="btn primary wide" data-act="accSignIn" data-primary>Log in</button>
+      <div class="auth-links"><a data-act="authMode" data-id="forgot">Forgot password?</a><a data-act="authMode" data-id="code">Log in with an email code</a></div>
+      <div class="or"><span>new here?</span></div>
+      <button class="btn wide" data-act="authMode" data-id="signup">Create an account</button>`;
   }
-  if (A.configured && A.canEditSetup && !["setup", "firebase"].includes(ui.authMode) && !A.pendingVerify && !A.waitingForGoogle) body += `<div class="auth-links" style="justify-content:center;margin-top:12px"><a data-act="authMode" data-id="setup">Change sign-in setup</a></div>`;
   root.innerHTML = `<div class="lock-bar"><div class="winctl">
       <button data-host="minimize" title="Minimize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
       <button data-host="close" class="x" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div></div>
-    <div class="lock"><div class="lock-card ${!A.configured ? "wide" : ""}"><img class="lock-logo" src="icon.svg" alt=""><div class="lock-brand">VYRON</div>${body}</div>
-    ${A.allowList ? '<div class="lock-foot">This copy of VYRON is private.</div>' : ""}</div>`;
-  const key = [A.configured, A.waitingForGoogle, !!A.pendingVerify, ui.authMode].join("|");
+    <div class="lock"><div class="lock-card"><img class="lock-logo" src="icon.svg" alt=""><div class="lock-brand">VYRON</div>${body}</div>
+    <div class="lock-foot">Your password is never stored on this PC.</div></div>`;
+  const key = [A.configured, A.pending?.kind, A.mustSetPassword, A.waitingForGoogle, mode].join("|");
   root.classList.toggle("settled", root.dataset.key === key);
   root.dataset.key = key;
   restore(root, keep);
@@ -740,45 +721,30 @@ const ACT = {
   async detectStudios() { try { const r = await call("detectStudios"); toast(r.length ? `Found ${r.length} Studio window(s)` : "No Studio window found"); } catch { /* toasted */ } },
   async linkStudio(el) { await call("updateProject", S.activeProjectId, { studioId: el.dataset.id }); toast("Linked to the active project"); },
   async projectFromStudio(el) { const id = await call("addProject", { studioId: el.dataset.id }); await call("setActiveProject", id); toast("Project created"); },
-  authMode: (el) => { ui.authMode = el.dataset.id; ui.authErr = ""; ui.authInfo = ""; render(); },
-  async authSetup(el) {
-    await authCall(el, "authSetup", { googleClientId: val("suGid"), googleClientSecret: val("suGsec"), allowedEmails: val("suAllow") });
-    if (!ui.authErr) { ui.authInfo = "Google sign-in is on. Click Continue with Google."; ui.authMode = "signin"; }
-    render();
-  },
-  async authSetupFirebase(el) {
-    await authCall(el, "authSetup", { apiKey: val("suKey") });
-    if (!ui.authErr) { ui.authInfo = "Email sign-in is on. Create an account or sign in."; ui.authMode = "signin"; }
-    render();
-  },
-  async authSignIn(el) { await authCall(el, "authSignIn", { email: val("auEmail"), password: val("auPass") }); },
-  async authSignUp(el) {
+  authMode: (el) => { ui.authEmail = $("#auEmail")?.value || ui.authEmail; ui.authMode = el.dataset.id; ui.authErr = ""; ui.authInfo = ""; render(); },
+  async accSignIn(el) { ui.authEmail = val("auEmail"); await authCall(el, "accountSignIn", { email: val("auEmail"), password: val("auPass") }); },
+  async accSignUp(el) {
     if (val("auPass") !== val("auPass2")) { ui.authErr = "The passwords don't match."; return render(); }
-    await authCall(el, "authSignUp", { email: val("auEmail"), password: val("auPass") });
+    ui.authEmail = val("auEmail");
+    await authCall(el, "accountSignUp", { email: val("auEmail"), password: val("auPass") });
   },
-  async authGoogle(el) { await authCall(el, "authGoogle"); },
-  async authCancelGoogle(el) { await authCall(el, "authCancelGoogle"); ui.authErr = ""; render(); },
-  async authReset(el) { const r = await authCall(el, "authResetPassword", { email: val("auEmail") }); if (!ui.authErr) { ui.authInfo = "If that email has an account, a reset link is on its way."; ui.authMode = "signin"; render(); } return r; },
-  async authResend(el) { await authCall(el, "authResendVerify"); if (!ui.authErr) { ui.authInfo = "Email sent again. Check your spam folder too."; render(); } },
-  async authCheck(el) { await authCall(el, "authCheckVerified"); },
-  async authCancelVerify(el) { await authCall(el, "authCancelVerify"); },
-  async authSignOut() { if (confirm(S.auth?.required ? "Sign out of VYRON?" : "Sign out of your Google account in VYRON?")) await B.call("authSignOut"); },
+  async accForgot(el) { ui.authEmail = val("auEmail"); await authCall(el, "accountForgot", { email: val("auEmail") }); },
+  async accLoginCode(el) { ui.authEmail = val("auEmail"); await authCall(el, "accountLoginCode", { email: val("auEmail") }); },
+  async accVerify(el) { await authCall(el, "accountVerify", { code: val("auCode") }); },
+  async accResend(el) { await authCall(el, "accountResend"); if (!ui.authErr) { ui.authInfo = "A new code is on its way."; render(); } },
+  async accCancel(el) { ui.authMode = "login"; await authCall(el, "accountCancel"); },
+  async accNewPassword(el) {
+    if (val("auPass") !== val("auPass2")) { ui.authErr = "The passwords don't match."; return render(); }
+    await authCall(el, "accountSetPassword", { password: val("auPass") });
+  },
+  async accGoogle(el) { await authCall(el, "accountGoogle"); },
+  async accCancelGoogle(el) { await authCall(el, "accountCancelGoogle"); ui.authErr = ""; render(); },
+  async accSignOut() { if (confirm("Sign out of VYRON? Your data is saved to your account first. Claude's running tasks stop.")) await B.call("accountSignOut"); },
+  async accSyncNow() { await call("accountSyncNow"); toast("Saved to your VYRON account"); },
+  accChangePassword: () => modal("Change password", `<label class="field"><span>New password <span class="faint">(at least 8 characters)</span></span><input class="input" id="cpPass" type="password" autocomplete="new-password"></label><label class="field"><span>Repeat new password</span><input class="input" id="cpPass2" type="password" autocomplete="new-password"></label>`, `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="accSavePassword">Save</button>`),
+  async accSavePassword() { if (val("cpPass") !== val("cpPass2")) return toast("The passwords don't match", "error"); await call("accountSetPassword", { password: val("cpPass") }); closeModal(); toast("Password changed"); },
   async controlToggle() { const r = await call("controlSetEnabled", !S.control.enabled); toast(r.enabled ? (r.running ? "Claude can control VYRON again" : "Could not start: " + r.error) : "Claude control is off"); },
   async controlNewKey() { if (confirm("Make a new control key? Claude has to reconnect.")) { await call("controlNewKey"); toast("New key made"); } },
-  async toggleRequire() { await call("authSetup", { requireSignIn: !S.auth.required }); toast(S.auth.required ? "Sign-in is no longer required" : "VYRON now requires sign-in when it opens"); },
-  async authGoogleSettings() { toast("Finish signing in in your browser"); try { await call("authGoogle"); toast("Signed in"); } catch { /* toasted */ } },
-  async authCancelGoogleSettings() { await B.call("authCancelGoogle").catch(() => {}); },
-  editSignIn: () => modal("Sign-in settings", setupForm(true) + `<div class="label" style="margin:6px 0 10px">Optional: email sign-in</div>` + firebaseForm(), `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="saveSignIn">Save</button>`, true),
-  async saveSignIn() {
-    const x = {};
-    if (val("suGid").trim()) x.googleClientId = val("suGid");
-    if (val("suGsec").trim()) x.googleClientSecret = val("suGsec");
-    if (val("suAllow").trim()) x.allowedEmails = val("suAllow");
-    if (val("suKey").trim()) x.apiKey = val("suKey");
-    if (!Object.keys(x).length) return closeModal();
-    await call("authSetup", x); closeModal(); toast(S.auth?.signedIn ? "Sign-in settings saved" : "Google sign-in is ready — click Sign in with Google");
-  },
-
   async linkRoblox(el) {
     el.disabled = true; el.innerHTML = '<span class="spinner"></span>Waiting for Roblox sign-in…';
     try { const me = await call("linkRoblox"); toast(`Linked @${me.name}`); } catch { /* toasted */ } finally { render(); }
