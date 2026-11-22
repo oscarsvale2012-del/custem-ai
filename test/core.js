@@ -46,7 +46,7 @@ function fakeSpawn(script) {
   };
 }
 const reply = (input) => [
-  { type: "system", subtype: "init", session_id: "sess-1" },
+  { type: "system", subtype: "init", session_id: "sess-1", model: "claude-opus-5-5" },
   { type: "assistant", message: { content: [{ type: "tool_use", name: "mcp__roblox_studio__execute_luau", input: { code: "print(1)" } }] } },
   { type: "assistant", message: { content: [{ type: "text", text: "Built it: " + input.split("\n").pop().slice(0, 20) }] } },
   { type: "result", subtype: "success", is_error: false, result: "ok", session_id: "sess-1", duration_ms: 2100, num_turns: 3 },
@@ -55,7 +55,8 @@ const reply = (input) => [
 (async () => {
   console.log("Game ideas");
   await test("a big library across many genres, ids unique, nothing empty", () => {
-    assert(IDEAS.length >= 120, "only " + IDEAS.length);
+    assert(IDEAS.length >= 700, "only " + IDEAS.length);
+    assert.equal(IDEAS[0].id, "idea-1"); assert.equal(IDEAS[0].title, "Brainrot Barn"); // old ids keep working
     for (const c of ["Brainrot", "Shooter", "PvP & Fighting", "Simulator", "Tycoon", "Obby & Parkour", "Horror", "Tower Defense"]) assert(CATEGORIES.includes(c), c);
     assert.equal(new Set(IDEAS.map((i) => i.id)).size, IDEAS.length);
     assert.equal(new Set(IDEAS.map((i) => i.title)).size, IDEAS.length, "duplicate titles");
@@ -142,6 +143,7 @@ const reply = (input) => [
     assert(m.some((x) => /^assistant:Built it/.test(x)));
     assert(m.some((x) => /^result:Done in 2 s · 3 steps/.test(x)));
     assert.equal(be.claude.sessionId, "sess-1");
+    assert.equal(be.publicState().claude.modelName, "Opus 5.5");
     assert(!JSON.stringify(be.publicState()).includes(control.cfg.token), "control key leaked to the UI");
   });
   await test("the next message continues the same Claude chat", async () => {
@@ -169,6 +171,10 @@ const reply = (input) => [
     for (let i = 0; i < 50 && be.claude.busy; i++) await wait(20);
     assert(be.claude.messages.some((m) => m.role === "error" && /Sign in to Claude/.test(m.text)));
     be.claude.o.spawnImpl = fakeSpawn(reply);
+  });
+  await test("model names read like the real ones", () => {
+    const { modelName } = require("../src/claude");
+    assert.deepEqual(["claude-opus-5-5", "claude-sonnet-4-5-20250929", "claude-haiku-5-5", "claude-fable-5-2", "claude-opus-5-5[1m]", "claude-3-7-sonnet-20250219"].map(modelName), ["Opus 5.5", "Sonnet 4.5", "Haiku 5.5", "Fable 5.2", "Opus 5.5", "Sonnet 3.7"]);
   });
   await test("new chat forgets the session", async () => {
     await dispatch(ctx, "claudeNewChat", []);

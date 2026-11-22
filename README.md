@@ -10,7 +10,7 @@ Claude inside VYRON; Claude controls VYRON and Roblox Studio for you.
   PC in the background (`claude -p`, streamed), in the project's folder, with two
   tool servers: VYRON's own connector and Roblox Studio's MCP server. Claude
   builds in your open Studio place. Chats continue (`--resume`) until *New chat*.
-- **Game Ideas** — 200+ original ideas across 17 genres (brainrot, shooter, PvP,
+- **Game Ideas** — 700+ original ideas across 17 genres (brainrot, shooter, PvP,
   simulator, tycoon, obby, horror, tower defense, RPG, racing, roleplay, survival,
   party, puzzle, sports, anime-style, sandbox). Pick several and press
   *Build with Claude*. **Custom** tab for your own ideas.

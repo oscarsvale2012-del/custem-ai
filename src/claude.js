@@ -66,19 +66,21 @@ class ClaudeRunner extends EventEmitter {
     this.busy = false;
     this.auth = null;
     this.exe = opts.exe !== undefined ? opts.exe : findClaude();
-    try { const j = JSON.parse(fs.readFileSync(this.file, "utf8")); this.sessionId = j.sessionId || null; this.messages = j.messages || []; }
+    try { const j = JSON.parse(fs.readFileSync(this.file, "utf8")); this.sessionId = j.sessionId || null; this.messages = j.messages || []; this.model = j.model || null; }
     catch { this.sessionId = null; this.messages = []; }
   }
 
   save() {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    fs.writeFileSync(this.file, JSON.stringify({ sessionId: this.sessionId, messages: this.messages.slice(-300) }));
+    fs.writeFileSync(this.file, JSON.stringify({ sessionId: this.sessionId, model: this.model, messages: this.messages.slice(-300) }));
   }
   changed() { this.emit("change"); }
   push(m) { this.messages.push({ at: now(), ...m }); if (this.messages.length > 400) this.messages.splice(0, this.messages.length - 400); this.changed(); }
 
+  setModel(id) { if (id && id !== this.model) { this.model = id; this.changed(); } }
+
   public() {
-    return { found: !!this.exe, exe: this.exe, auth: this.auth, busy: this.busy, sessionId: this.sessionId, messages: this.messages.slice(-150) };
+    return { model: this.model, modelName: modelName(this.model), found: !!this.exe, exe: this.exe, auth: this.auth, busy: this.busy, sessionId: this.sessionId, messages: this.messages.slice(-150) };
   }
 
   run(args, timeout = 20000) {
@@ -168,8 +170,9 @@ class ClaudeRunner extends EventEmitter {
   onLine(line, gotResult) {
     let j;
     try { j = JSON.parse(line); } catch { return; }
-    if (j.session_id && j.type === "system") { this.sessionId = j.session_id; return; }
+    if (j.type === "system") { if (j.session_id) this.sessionId = j.session_id; if (j.model) this.setModel(j.model); return; }
     if (j.type === "assistant") {
+      if (j.message?.model && j.message.model !== "<synthetic>") this.setModel(j.message.model);
       for (const c of j.message?.content || []) {
         if (c.type === "text" && c.text.trim() && !/^Not logged in/i.test(c.text.trim())) this.push({ role: "assistant", text: c.text });
         else if (c.type === "tool_use") this.push({ role: "tool", tool: c.name, text: toolLabel(c.name, c.input) });
@@ -202,10 +205,20 @@ class ClaudeRunner extends EventEmitter {
   shutdown() { clearInterval(this._authT); this.stop(); }
 }
 
+/** "claude-opus-5-5" → "Opus 5.5", "claude-sonnet-4-5-20250929" → "Sonnet 4.5". */
+function modelName(id) {
+  if (!id) return null;
+  const m = String(id).match(/(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?=-|\[|$)/i);
+  const old = String(id).match(/claude-(\d+)-(\d+)-(opus|sonnet|haiku)/i); // e.g. claude-3-7-sonnet
+  if (old) return old[3][0].toUpperCase() + old[3].slice(1).toLowerCase() + " " + old[1] + "." + old[2];
+  if (!m) return String(id).replace(/^claude-/, "");
+  return m[1][0].toUpperCase() + m[1].slice(1).toLowerCase() + " " + m[2] + (m[3] ? "." + m[3] : "");
+}
+
 function toolLabel(name, input = {}) {
   const n = String(name).replace(/^mcp__/, "").replace(/__/, " · ");
   const hint = input.file_path || input.path || input.pattern || input.command || input.query || input.name || input.title || input.message || "";
   return clip(n + (hint ? " — " + String(hint) : ""), 160);
 }
 
-module.exports = { ClaudeRunner, findClaude, studioServer, SYSTEM };
+module.exports = { modelName, ClaudeRunner, findClaude, studioServer, SYSTEM };

@@ -162,10 +162,14 @@ function drawNav() {
   $("#sideFoot").innerHTML = `
     ${p ? `<div class="mini-proj" data-go="projects">${gameIcon(p, "sm")}<div class="grow"><div class="ell" style="font-weight:600;font-size:13px">${esc(p.game?.name || p.name)}</div><div class="faint" style="font-size:11.5px"><span class="dot ${p.studioConnected ? "connected" : "unknown"}" style="display:inline-block;width:6px;height:6px;margin-right:5px"></span>${p.studioConnected ? "Open in Studio" : "Studio not linked"}</div></div></div>`
       : `<div class="mini-proj" data-go="projects"><div class="gicon sm"><div class="fallback">+</div></div><div class="faint" style="font-size:12.5px">Add a project</div></div>`}
-    <div class="faint" style="font-size:11.5px;padding:2px 4px"><span class="dot ${claudeDot()}" style="display:inline-block;width:6px;height:6px;margin-right:6px"></span>${claudeLine()}</div>
+    <div class="faint" style="font-size:11.5px;padding:2px 4px"><span class="dot ${claudeDot()}" style="display:inline-block;width:6px;height:6px;margin-right:6px"></span>${claudeLine()}${modelNow() ? " · " + esc(modelNow()) : ""}</div>
     ${S.auth?.user ? `<div class="row acct" data-go="settings" title="${esc(S.auth.user.email)}"><div class="av" style="margin:0;width:24px;height:24px;font-size:10px;overflow:hidden">${S.auth.user.photo ? `<img src="${esc(S.auth.user.photo)}" alt="" style="width:100%;height:100%;object-fit:cover">` : esc(initials(S.auth.user.name))}</div><span class="ell grow" style="font-size:12px">${esc(S.auth.user.email)}</span></div>` : ""}`;
 }
 const claudeDot = () => (!S.claude.found ? "error" : S.claude.busy ? "working" : S.claude.auth?.loggedIn ? "connected" : "unknown");
+/** Which model Claude is running (as Claude Code reports it), and a note if a different one is picked for the next message. */
+const modelNow = () => S.claude.modelName || null;
+const modelPending = () => { const want = S.settings.claudeModel; const now = (S.claude.modelName || "").toLowerCase(); return want && now && !now.startsWith(want.toLowerCase()) ? want[0].toUpperCase() + want.slice(1) : null; };
+const modelChip = () => modelNow() ? `<span class="chip model" title="${esc(S.claude.model)}">${ic("sparkle")}${esc(modelNow())}${modelPending() ? ` → ${esc(modelPending())} next` : ""}</span>` : `<span class="chip" title="Shown after Claude answers once">${ic("sparkle")}${S.settings.claudeModel ? esc(S.settings.claudeModel[0].toUpperCase() + S.settings.claudeModel.slice(1)) : "Model: after first reply"}</span>`;
 const claudeLine = () => (!S.claude.found ? "Claude Code not installed" : S.claude.busy ? "Claude is working" : S.claude.auth?.loggedIn ? "Claude ready" : S.claude.auth ? "Sign in to Claude" : "Checking Claude…");
 
 /* ---------------- shared pieces ---------------- */
@@ -222,7 +226,7 @@ VIEWS.dashboard = () => {
   </div>
   <div class="sp"></div>
   <div class="grid g4">
-    <div class="panel stat click" data-go="claude"><div class="label">Claude</div><div class="n" style="font-size:20px"><span class="dot ${claudeDot()}" style="display:inline-block;margin-right:8px"></span>${claudeLine()}</div><div class="d">${C.messages.filter((m) => m.role === "user").length} messages in this chat</div></div>
+    <div class="panel stat click" data-go="claude"><div class="label">Claude</div><div class="n" style="font-size:20px"><span class="dot ${claudeDot()}" style="display:inline-block;margin-right:8px"></span>${claudeLine()}</div><div class="d">${modelNow() ? "Model: <b>" + esc(modelNow()) + "</b> · " : ""}${C.messages.filter((m) => m.role === "user").length} messages in this chat</div></div>
     <div class="panel stat click" data-go="projects"><div class="label">Roblox Studio</div><div class="n" style="font-size:20px">${S.studio.status === "connected" ? S.studios.length + " open" : "Not connected"}</div><div class="d">${esc(S.studios.map((s) => s.name).join(", ") || S.studioError || "")}</div></div>
     <div class="panel stat click" data-go="ideas"><div class="label">Picked ideas</div><div class="n">${S.ideas.picked.length}</div><div class="d">${S.ideas.count} ideas in the library · ${S.ideas.custom.length} of your own</div></div>
     <div class="panel stat click" data-go="revenue"><div class="label">Robux (DevEx value)</div><div class="n">${sm ? rbx(sm.balance) : "—"}</div><div class="d">${sm ? `≈ ${kr(sm.balance)} · pending ${kr(sm.pending)}` : "Link Roblox on the Revenue tab"}</div></div>
@@ -262,8 +266,8 @@ VIEWS.claude = () => {
   return `<div class="chat-wrap" style="height:calc(100vh - 102px)">
     ${claudeSetupCard()}
     <div class="panel chat" style="flex:1;min-height:0">
-      <div class="panel-h"><div class="ava" style="width:32px;height:32px;border-radius:10px">${ic("claude")}</div><div><h3>Claude</h3><div class="faint" style="font-size:12px">${S.settings.claudeAccess === "full" ? "Full access" : "Studio + VYRON + project files"}${S.settings.claudeModel ? " · " + esc(S.settings.claudeModel) : ""} · works in ${esc(p ? p.game?.name || p.name : "VYRON's Games folder")}</div></div><div class="grow"></div>
-        <span class="chip ${S.studio.status === "connected" && S.studios.length ? "ok" : ""}"><span class="dot ${S.studio.status === "connected" && S.studios.length ? "connected" : "unknown"}"></span>Studio</span>
+      <div class="panel-h"><div class="ava" style="width:32px;height:32px;border-radius:10px">${ic("claude")}</div><div><h3>Claude</h3><div class="faint" style="font-size:12px">${S.settings.claudeAccess === "full" ? "Full access" : "Studio + VYRON + project files"}· works in ${esc(p ? p.game?.name || p.name : "VYRON's Games folder")}</div></div><div class="grow"></div>
+        ${modelChip()}<span class="chip ${S.studio.status === "connected" && S.studios.length ? "ok" : ""}"><span class="dot ${S.studio.status === "connected" && S.studios.length ? "connected" : "unknown"}"></span>Studio</span>
         ${C.busy ? `<button class="btn sm danger" data-act="claudeStop">${ic("stop")}Stop</button>` : `<button class="btn sm ghost" data-act="claudeNewChat">${ic("plus")}New chat</button>`}</div>
       <div class="thread" id="thread">
         ${C.messages.length ? C.messages.map((m) => msgView(m)).join("") : `<div class="empty" style="margin:auto;max-width:520px"><b>You control Claude from here</b>Ask for anything in your game — Claude builds it in Roblox Studio, and can use VYRON too (your projects, picked ideas, revenue). Try: “Make an obby with 20 stages and checkpoints”.</div>`}
@@ -471,7 +475,7 @@ VIEWS.settings = () => {
           : `<button class="btn sm" data-act="editSignIn">Set up Google sign-in</button>`}</div>`;
   const X = S.control;
   return `<div class="grid g2">
-    <div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("claude")}</div><div class="grow" style="min-width:0"><div class="h3">Claude</div><div class="faint ell mono" style="font-size:11.5px" title="${esc(C.exe || "")}">${C.found ? esc(C.exe) : "Claude Code not found"}</div></div>
+    <div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("claude")}</div><div class="grow" style="min-width:0"><div class="row" style="gap:8px"><div class="h3">Claude</div>${modelChip()}</div><div class="faint ell mono" style="font-size:11.5px" title="${esc(C.exe || "")}">${C.found ? esc(C.exe) : "Claude Code not found"}</div></div>
         <span class="chip ${C.auth?.loggedIn ? "ok" : ""}"><span class="dot ${claudeDot()}"></span>${claudeLine()}</span></div>
       <div class="row">${C.found ? `<button class="btn sm ${C.auth?.loggedIn ? "" : "primary"}" data-act="claudeLogin">${C.auth?.loggedIn ? "Sign in again / switch account" : "Sign in to Claude"}</button>` : `<button class="btn sm" data-act="openUrl" data-id="https://claude.ai/download">Get Claude</button>`}<button class="btn sm ghost" data-act="claudeCheck">${ic("refresh")}Check</button></div>
       <div class="label" style="margin-top:6px">What Claude may do</div>

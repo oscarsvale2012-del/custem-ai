@@ -248,6 +248,9 @@ const RAW = [
   ["Anime-style", "Ki Fighters", "Charge energy, fly and fire energy blasts in battles.", "flight, energy, transformations"],
 ];
 
+// v1.1 adds 500+ more (appended, so earlier idea ids stay the same).
+RAW.push(...require("./ideas-more").parseMore());
+
 const IDEAS = RAW.map(([category, title, pitch, features], i) => ({ id: "idea-" + (i + 1), category, title, pitch, features }));
 const CATEGORIES = [...new Set(IDEAS.map((i) => i.category))];
 

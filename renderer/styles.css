@@ -353,3 +353,5 @@ body.locked #shell{display:none}
 .pickbar b{white-space:nowrap}
 .pickbar .input{height:36px;min-width:160px}
 @media (max-width:1250px){.pickbar .ell{display:none}}
+.chip.model{color:var(--accent);border-color:rgba(169,193,255,.3)}
+.chip svg{width:13px;height:13px}
