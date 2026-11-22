@@ -63,6 +63,11 @@ const ICON = {
   mail: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m4 7 8 6 8-6"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2M17 6l3 3M14.5 8.5l2 2"/>', link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
 };
+ICON.crown = '<path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 11H5z"/><path d="M5 19h14"/>';
+ICON.cube = '<path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/>';
+ICON.code = '<path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14"/>';
+ICON.layout = '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 9h18M9 9v11"/>';
+ICON.coin = '<circle cx="12" cy="12" r="8.5"/><path d="M14.8 9.2c-.5-.9-1.6-1.4-2.8-1.4-1.6 0-2.8.8-2.8 2s1.2 1.7 2.8 2 2.8.8 2.8 2-1.2 2-2.8 2c-1.3 0-2.4-.6-2.9-1.5M12 6.3v1.5M12 16.2v1.5"/>';
 const ic = (n, cls = "") => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[n] || ""}</svg>`;
 ICON.claude = '<path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4M5.3 5.3l2.8 2.8M15.9 15.9l2.8 2.8M5.3 18.7l2.8-2.8M15.9 8.1l2.8-2.8"/>';
 ICON.ideas = '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1 2V16h5.2v-.2c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z"/>';
@@ -321,14 +326,14 @@ VIEWS.claude = () => {
   const p = activeProject();
   const t = curTask();
   const active = t.busy || t.queued;
-  const list = C.tasks.map((x) => { const [dot, label] = taskState(x); return `<div class="pick task-pick ${x.id === t.id ? "on" : ""}" data-act="pickTask" data-id="${x.id}">
-      <span class="dot ${dot}" title="${label}"></span><div class="grow" style="min-width:0"><div class="ell" style="font-weight:500">${x.role ? `<span class="role-tag r-${x.role}">${esc(S.roles[x.role]?.name || x.role)}</span>` : ""}${esc(x.role ? x.title.replace(/^[^:]{2,22}: /, "") : x.title)}</div>
+  const list = C.tasks.map((x) => { const [dot, label] = taskState(x); return `<div class="pick task-pick ${x.id === t.id ? "on" : ""} ${x.role ? "r-" + x.role + " has-role" : ""}" data-act="pickTask" data-id="${x.id}">
+      ${x.role ? `<span class="agent-ic sm">${ic(ROLE_ICON[x.role])}</span>` : `<span class="dot ${dot}" title="${label}"></span>`}<div class="grow" style="min-width:0"><div class="ell" style="font-weight:500">${x.role ? `<span class="role-tag r-${x.role}">${esc(S.roles[x.role]?.name || x.role)}</span>` : ""}${esc(x.role ? x.title.replace(/^[^:]{2,22}: /, "") : x.title)}</div>
       <div class="faint ell" style="font-size:11.5px">${label}${x.inbox ? ` · ${x.inbox} message${x.inbox > 1 ? "s" : ""} waiting` : ""}${x.modelName ? " · " + esc(x.modelName) : ""}${x.last ? " · " + esc(x.last) : ""}</div></div></div>`; }).join("");
   return `<div class="chat-wrap" style="height:calc(100vh - 102px)">
     ${claudeSetupCard()}
     <div class="claude-grid" style="flex:1;min-height:0">
       <div class="panel ws-agents"><div class="panel-h"><h3>Tasks</h3><span class="faint" style="font-size:12px">${C.running}/${C.limit} running${C.queued ? ` · ${C.queued} waiting` : ""}</span><div class="grow"></div><button class="btn sm" data-act="newTask" title="Start another Claude that works at the same time">${ic("plus")}New</button></div>
-        <div style="padding:8px">${list}</div>
+        <div style="padding:8px">${teamColumn()}<div class="label" style="margin:12px 6px 6px">Tasks</div>${list}</div>
         <div class="faint" style="font-size:11.5px;padding:4px 14px 14px">Every task is its own Claude working at the same time (up to ${C.limit}, change it in Settings). More tasks use your Claude usage faster.</div></div>
       <div class="panel chat">
         <div class="panel-h"><div class="ava" style="width:32px;height:32px;border-radius:10px">${ic("claude")}</div><div style="min-width:0"><h3 class="ell">${esc(t.title)}</h3><div class="faint" style="font-size:12px">${S.settings.claudeAccess === "full" ? "Full access" : "Studio + VYRON + project files"} · works in ${esc(p ? p.game?.name || p.name : "VYRON's Games folder")}</div></div><div class="grow"></div>
@@ -356,8 +361,29 @@ function blenderPanel() {
       <div class="faint" style="font-size:11.5px">A Builder &amp; Modeler Claude builds it in your open Blender file and exports it as .fbx to the project's models folder for Studio's 3D Importer.</div></div></div>`;
 }
 
+/** Working, Idle, Offline or Broken for one role (from the newest team in this project). */
+function agentStatus(r) {
+  const C = S.claude;
+  if (!C.found || (C.auth && !C.auth.loggedIn)) return ["offline", "Offline", !C.found ? "Claude Code isn't installed" : "Claude isn't signed in"];
+  const team = (S.teams || [])[0];
+  const ro = team?.roles?.[r];
+  if (team && ro && !ro.enabled) return ["offline", "Offline", "Switched off"];
+  const t = ro?.taskId && C.tasks.find((x) => x.id === ro.taskId);
+  if (t?.busy || t?.queued || (r === "cofounder" && team && (team.status === "planning" || team.status === "revising"))) return ["working", "Working", t?.queued && !t?.busy ? "Waiting for a free slot" : esc(t?.last || "Working on " + (team?.plan?.title || "the plan"))];
+  if (ro?.state === "problem" || (r === "cofounder" && team?.status === "failed")) return ["broken", "Broken", esc(t?.last || team?.error || "Its last step failed")];
+  return ["idle", "Idle", team?.plan ? (ro?.taskId ? "Done — waiting for the next job" : "Ready") : "No team yet — ask the Co-Founder in Game Ideas"];
+}
+function teamColumn() {
+  const team = (S.teams || [])[0];
+  return `<div class="team-list"><div class="row" style="padding:2px 6px 8px"><b style="font:600 13px var(--f-head)">Team</b><span class="faint ell grow" style="font-size:11.5px;margin-left:8px">${team?.plan ? esc(team.plan.title) : ""}</span></div>
+    ${ROLE_ORDER.map((r) => { const [k, label, why] = agentStatus(r); const tid = team?.roles?.[r]?.taskId;
+      return `<div class="agent r-${r} st-${k}" ${tid ? `data-act="pickTask" data-id="${tid}"` : 'data-go="ideas"'} title="${why}">
+        <span class="agent-ic">${ic(ROLE_ICON[r])}</span><div class="grow" style="min-width:0"><div class="agent-name ell">${esc(S.roles[r].name)}</div><div class="faint ell" style="font-size:11px">${why}</div></div>
+        <span class="agent-st"><span class="dot"></span>${label}</span></div>`; }).join("")}</div>`;
+}
+
 /* ---------- Studio team (Co-Founder) ---------- */
-const ROLE_ICON = { cofounder: "star", builder: "roblox", coder: "edit", ui: "image", money: "revenue" };
+const ROLE_ICON = { cofounder: "crown", builder: "cube", coder: "code", ui: "layout", money: "coin" };
 const ROLE_ORDER = ["cofounder", "builder", "coder", "ui", "money"];
 const STATE_DOT = { working: "working", waiting: "connecting", done: "connected", problem: "error", off: "unknown", "not started": "unknown", ready: "unknown" };
 function roleSwitch(team, r) {
@@ -367,7 +393,7 @@ function roleSwitch(team, r) {
 }
 function teamCard(t) {
   const P = t.plan;
-  const head = `<div class="row" style="gap:10px"><span class="role-ic r-cofounder">${ic("star")}</span><div class="grow" style="min-width:0"><b style="font:600 15px var(--f-head)">${esc(P?.title || "New game plan")}</b><div class="faint ell" style="font-size:12px">${esc({ planning: "The Co-Founder is planning…", revising: "The Co-Founder is changing the plan…", proposed: "Plan ready — accept it or ask for changes", building: "The team is building", failed: "Something went wrong", done: "Done" }[t.status] || t.status)}</div></div>
+  const head = `<div class="row" style="gap:10px"><span class="role-ic r-cofounder">${ic("crown")}</span><div class="grow" style="min-width:0"><b style="font:600 15px var(--f-head)">${esc(P?.title || "New game plan")}</b><div class="faint ell" style="font-size:12px">${esc({ planning: "The Co-Founder is planning…", revising: "The Co-Founder is changing the plan…", proposed: "Plan ready — accept it or ask for changes", building: "The team is building", failed: "Something went wrong", done: "Done" }[t.status] || t.status)}</div></div>
     ${t.cofounderTaskId ? `<button class="btn sm ghost" data-act="openTask" data-id="${t.cofounderTaskId}">Co-Founder chat</button>` : ""}<button class="btn sm ghost danger icon" data-act="teamDiscard" data-id="${t.id}" title="Remove this plan (stops its team)">${ic("trash")}</button></div>`;
   if (t.status === "planning" || t.status === "revising") return `<div class="panel pad team-card">${head}<div class="row" style="margin-top:12px"><span class="spinner"></span><span class="faint" style="font-size:12.5px">Reading your idea and writing a plan for every role. This takes a minute or two.</span></div></div>`;
   const change = `<div class="row" style="margin-top:12px;gap:8px"><input class="input grow" id="cfChange-${t.id}" placeholder="Want something different? e.g. “make it a horror game, fewer gamepasses”"><button class="btn" data-act="teamRevise" data-id="${t.id}">Change</button>${t.status === "proposed" ? `<button class="btn primary" data-act="teamAccept" data-id="${t.id}">${ic("check")}Accept &amp; start building</button>` : ""}</div>`;
@@ -382,8 +408,8 @@ function teamCard(t) {
 function teamPanel() {
   const teams = S.teams || [];
   const n = S.ideas.picked.length;
-  return `<div class="panel pad stack cofounder-box"><div class="row" style="gap:12px"><span class="role-ic r-cofounder big">${ic("star")}</span><div class="grow"><div class="h3">Ask the Co-Founder</div><div class="faint" style="font-size:12.5px">Say your idea — the Co-Founder plans the whole game and splits it into jobs for the Builder &amp; Modeler, Coder, UI Maker and Money Maker. Nothing is built until you press Accept.</div></div></div>
-    <div class="row" style="gap:8px"><input class="input grow" id="cfIdea" placeholder="e.g. a brainrot pet simulator with trading and a lava obby"><button class="btn primary" data-act="teamPlan">${ic("star")}Plan it${n ? ` (+${n} picked)` : ""}</button></div></div>
+  return `<div class="panel pad stack cofounder-box"><div class="row" style="gap:12px"><span class="role-ic r-cofounder big">${ic("crown")}</span><div class="grow"><div class="h3">Ask the Co-Founder</div><div class="faint" style="font-size:12.5px">Say your idea — the Co-Founder plans the whole game and splits it into jobs for the Builder &amp; Modeler, Coder, UI Maker and Money Maker. Nothing is built until you press Accept.</div></div></div>
+    <div class="row" style="gap:8px"><input class="input grow" id="cfIdea" placeholder="e.g. a brainrot pet simulator with trading and a lava obby"><button class="btn primary" data-act="teamPlan">${ic("crown")}Plan it${n ? ` (+${n} picked)` : ""}</button></div></div>
     ${teams.map(teamCard).join("")}<div class="sp" style="height:14px"></div>`;
 }
 

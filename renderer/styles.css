@@ -386,6 +386,25 @@ body.locked #shell{display:none}
 .team-col{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--surface)}
 .role-row{display:flex;align-items:center;gap:8px}.role-row.off{opacity:.55}
 .role-ic{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;flex:none;background:var(--surface-3)}.role-ic svg{width:15px;height:15px}.role-ic.big{width:36px;height:36px}
-.r-cofounder{color:#ffd76a}.r-builder{color:#7cc7ff}.r-coder{color:#74e3ae}.r-ui{color:#ff8ad8}.r-money{color:#ffcf4a}
+
 .jobs{margin:8px 0 0 16px;font-size:12px;display:flex;flex-direction:column;gap:4px}
 .role-tag{font-size:10.5px;font-weight:600;border:1px solid currentColor;border-radius:6px;padding:0 5px;margin-right:6px;opacity:.9}
+
+/* role colours: Co-Founder yellow (crown), Builder blue, Coder green, UI pink, Money orange */
+.r-cofounder{--rc:#ffcc33}.r-builder{--rc:#5fb4ff}.r-coder{--rc:#4fdc96}.r-ui{--rc:#ff6fcf}.r-money{--rc:#ff9a3c}
+.role-ic.r-cofounder,.role-ic.r-builder,.role-ic.r-coder,.role-ic.r-ui,.role-ic.r-money{color:var(--rc);background:color-mix(in srgb,var(--rc) 16%,transparent)}
+.role-tag{color:var(--rc)}
+.team-list{border:1px solid var(--border);border-radius:12px;padding:8px;background:var(--surface)}
+.agent{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:10px;cursor:pointer;border-left:3px solid var(--rc);margin-bottom:4px;background:color-mix(in srgb,var(--rc) 5%,transparent);transition:background .15s}
+.agent:hover{background:color-mix(in srgb,var(--rc) 12%,transparent)}
+.agent-ic{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;flex:none;color:var(--rc);background:color-mix(in srgb,var(--rc) 18%,transparent)}
+.agent-ic svg{width:15px;height:15px}.agent-ic.sm{width:22px;height:22px;border-radius:6px;margin-top:1px}.agent-ic.sm svg{width:13px;height:13px}
+.agent-name{font-weight:600;font-size:13px;color:color-mix(in srgb,var(--rc) 70%,var(--text))}
+.r-cofounder .agent-ic{box-shadow:0 0 12px color-mix(in srgb,#ffcc33 35%,transparent)}
+.agent-st{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:2px 7px;border-radius:999px;flex:none}
+.agent-st .dot{width:6px;height:6px}
+.st-working .agent-st{color:var(--ok);background:rgba(116,227,174,.12)}.st-working .agent-st .dot{background:var(--ok);animation:breathe 1.4s infinite}
+.st-idle .agent-st{color:var(--idle);background:rgba(169,193,255,.12)}.st-idle .agent-st .dot{background:var(--idle)}
+.st-offline .agent-st{color:var(--off);background:rgba(108,115,134,.15)}.st-offline .agent-st .dot{background:var(--off)}.st-offline{opacity:.65}
+.st-broken .agent-st{color:var(--bad);background:rgba(245,143,143,.13)}.st-broken .agent-st .dot{background:var(--bad)}
+.task-pick.has-role{border-left:3px solid var(--rc)}
