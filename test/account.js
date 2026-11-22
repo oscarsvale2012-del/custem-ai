@@ -159,6 +159,8 @@ const dec = (s) => Buffer.from(s.slice(2), "hex").toString();
   });
   await test("signing out saves first; signing in on another PC brings everything back", async () => {
     beA.addCustomIdea({ title: "Space Bakery", pitch: "Bake bread on the moon." });
+    beA.d.setupDoneFor = [A.user.id]; // this PC finished setup for this account
+    assert.equal(beA.publicState().setup.onboarded, true);
     A.beforeSignOut = () => beA.accountPush();
     let out = 0; A.once("signedOut", () => out++);
     await A.signOut();
@@ -172,6 +174,7 @@ const dec = (s) => Buffer.from(s.slice(2), "hex").toString();
     assert.equal(s.projects[0].name, "Pet Tycoon");
     assert(s.ideas.custom.some((i) => i.title === "Space Bakery"));
     assert.equal(s.revenue.hasApiKey, false, "the Roblox key isn't copied to other PCs");
+    assert.equal(s.setup.onboarded, false, "same account on a new PC must connect everything again");
     await beB.shutdown();
   });
   await test("someone else signing in on the same PC doesn't see the first person's data", async () => {

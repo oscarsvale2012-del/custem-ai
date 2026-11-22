@@ -301,11 +301,15 @@ function fakeSpawn(exe, args, opts) {
     assert(be.publicState().setup.items.find((i) => i.id === "discord").skipped);
   });
   await test("Finish marks this PC as set up (not synced to other PCs)", async () => {
-    be.setupStatus = () => ({ items: [], done: 6, total: 6, ready: true, onboarded: !!be.d.onboardedHere });
+    be.setupStatus = () => ({ items: [], done: 6, total: 6, ready: true, onboarded: (be.d.setupDoneFor || []).includes(be.setupKey()) });
     await dispatch(ctx, "finishSetup", []);
     delete be.setupStatus;
     assert.equal(be.publicState().setup.onboarded, true);
-    assert(!("onboardedHere" in be.exportForAccount().settings));
+    assert(!("setupDoneFor" in be.exportForAccount()) && !JSON.stringify(be.exportForAccount()).includes("setupDoneFor"), "not synced to other devices");
+    be.account = { user: { id: "someone-else" } };
+    assert.equal(be.publicState().setup.onboarded, false, "another account on this PC must set up too");
+    delete be.account;
+    assert.equal(be.publicState().setup.onboarded, true);
   });
 
   await client.close();

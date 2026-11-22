@@ -545,13 +545,17 @@ class Backend extends EventEmitter {
       { id: "discord", name: "Discord", optional: true, skipped: !!this.d.discordSkipped, ok: !!this.d.secrets.discordWebhook, how: "Paste a Discord channel webhook link (Channel settings → Integrations → Webhooks → New Webhook → Copy URL)." },
     ];
     const need = items.filter((i) => !i.optional);
-    return { apps: A, items, done: need.filter((i) => i.ok).length, total: need.length, ready: need.every((i) => i.ok), onboarded: !!this.d.onboardedHere };
+    return { apps: A, items, done: need.filter((i) => i.ok).length, total: need.length, ready: need.every((i) => i.ok), onboarded: (this.d.setupDoneFor || []).includes(this.setupKey()) };
   }
+  /** Setup is done per account on each device: this PC's data folder + the signed-in account. */
+  setupKey() { return this.account?.user?.id || this.d.account?.owner || "local"; }
   skipDiscord() { this.d.discordSkipped = true; this.save(); }
   finishSetup() {
     const s = this.setupStatus();
     if (!s.ready) throw new Error("Connect these first: " + s.items.filter((i) => !i.optional && !i.ok).map((i) => i.name).join(", "));
-    this.d.onboardedHere = true; this.save(); this.log("Setup finished", "ok", "System"); }
+    const k = this.setupKey();
+    this.d.setupDoneFor = [...new Set([...(this.d.setupDoneFor || []), k])].slice(-20);
+    this.save(); this.log("Setup finished", "ok", "System"); }
 
   /* --- Discord: VYRON posts task news to a channel through a webhook --- */
   async setDiscord(url) {
