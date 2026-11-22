@@ -218,6 +218,23 @@ class ControlServer {
       roles: z.array(z.string()).optional(), timeout_seconds: z.number().int().min(10).max(900).optional(), team_id: teamId,
     }, async ({ roles, timeout_seconds, team_id }) => { await this.state(); return this.call("teamWait", team_id, roles, timeout_seconds); });
 
+    tool("vyron_setup_status", "First-time setup checklist: Claude, Claude desktop, Claude Code, Roblox Studio, Blender, Roblox account and Discord — which are connected and how to fix the rest.", {}, async () => {
+      const s = await this.state();
+      return { ...s.setup, studioWindows: s.studios.map((w) => w.name), blender: s.blender, connector: { running: this.status().running, url: this.status().url } };
+    });
+    tool("vyron_connect_claude_desktop", "Add VYRON to the Claude desktop app's settings (keeps its other connections, makes a backup). The user must quit and reopen Claude desktop afterwards.", {}, async () => {
+      await this.state();
+      const r = this.setDesktop(true);
+      return { connected: r.connected, files: r.files, next: "Tell the user to quit Claude desktop (tray icon → Quit) and open it again at the end." };
+    });
+    tool("vyron_check_connections", "Re-check Roblox Studio and Blender right now.", {}, async () => {
+      await this.state();
+      await this.call("connectStudio").catch(() => {});
+      const b = await this.call("checkBlender").catch((e) => ({ error: e.message }));
+      const s = await this.state();
+      return { studio: { connected: s.studio.status === "connected", windows: s.studios.map((w) => w.name), problem: s.studioError || undefined }, blender: b };
+    });
+
     tool("vyron_activity", "Recent activity log.", { limit: z.number().int().min(1).max(150).optional() }, async ({ limit = 40 }) => {
       const s = await this.state();
       return s.activity.slice(-limit).map((l) => `${new Date(l.at).toLocaleTimeString()} [${l.source}] ${l.text}`);

@@ -413,3 +413,40 @@ body.locked #shell{display:none}
 .conn:hover{color:var(--text-2)}
 .conn .dot{width:6px;height:6px;flex:none}
 .conns{max-height:190px;overflow:auto}
+
+/* first-run setup (Welcome to VYRON) */
+#setupRoot{position:fixed;inset:0;z-index:90;pointer-events:none}#setupRoot:empty{display:none}
+.ob{position:absolute;inset:0;pointer-events:auto;display:grid;place-items:center;background:#05040b;overflow:auto;animation:obIn .6s ease both}
+.ob.fade{opacity:0;transition:opacity .7s ease}
+.ob-sky{position:fixed;inset:0;background:radial-gradient(60% 50% at 20% 20%,color-mix(in srgb,var(--accent) 35%,transparent),transparent 70%),radial-gradient(50% 50% at 85% 75%,rgba(106,60,255,.35),transparent 70%),radial-gradient(40% 40% at 60% 10%,rgba(95,240,210,.18),transparent 70%);filter:blur(30px);animation:obSky 18s ease-in-out infinite alternate}
+@keyframes obSky{0%{transform:scale(1) translate(0,0)}50%{transform:scale(1.15) translate(-3%,2%)}100%{transform:scale(1.05) translate(3%,-2%)}}
+@keyframes obIn{from{opacity:0}}
+.ob-hello{position:relative;text-align:center;transition:opacity .45s ease,transform .45s ease,filter .45s ease}
+.ob-hello.out{opacity:0;transform:translateY(-8px);filter:blur(6px)}.ob-hello.in{opacity:1;transform:none;filter:none}
+.ob-hi{font:300 84px/1.1 var(--f-head);letter-spacing:-.02em;color:#fff}
+.ob-logo{width:84px;height:84px;margin-bottom:18px;filter:drop-shadow(0 10px 40px color-mix(in srgb,var(--accent) 60%,transparent));animation:obFloat 4s ease-in-out infinite}
+@keyframes obFloat{50%{transform:translateY(-6px)}}
+.ob-title{font:600 46px/1.15 var(--f-head);color:#fff;letter-spacing:-.01em}.ob-title.sm{font-size:30px}
+.ob-sub{color:#a7aec0;font-size:16px;margin-top:10px}
+.ob-skipintro{position:fixed;right:24px;bottom:22px;background:none;border:0;color:#8890a4;font-size:13px;cursor:pointer}.ob-skipintro:hover{color:#fff}
+.ob-card{position:relative;width:min(820px,calc(100vw - 48px));margin:40px 0;padding:28px;border-radius:22px;background:rgba(14,12,26,.82);border:1px solid rgba(255,255,255,.1);backdrop-filter:blur(20px);box-shadow:0 30px 80px rgba(0,0,0,.5);animation:obCard .6s cubic-bezier(.2,.8,.2,1) both;color:var(--text)}
+@keyframes obCard{from{opacity:0;transform:translateY(16px) scale(.98)}}
+.ob-head{display:flex;gap:18px;align-items:center;margin-bottom:18px}
+.ob-ring{--p:0;width:64px;height:64px;border-radius:50%;flex:none;display:grid;place-items:center;background:conic-gradient(var(--accent) calc(var(--p)*1%),rgba(255,255,255,.08) 0);transition:background .6s}
+.ob-ring span{width:52px;height:52px;border-radius:50%;background:#0e0c1a;display:grid;place-items:center;font:600 14px var(--f-head)}
+.ob-magic{display:flex;gap:14px;align-items:center;width:100%;text-align:left;padding:14px 16px;border-radius:14px;cursor:pointer;color:var(--text);border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);background:linear-gradient(110deg,color-mix(in srgb,var(--accent) 18%,transparent),rgba(106,60,255,.12));transition:transform .15s,box-shadow .15s}
+.ob-magic:hover{transform:translateY(-1px);box-shadow:0 10px 30px color-mix(in srgb,var(--accent) 25%,transparent)}
+.ob-magic svg{width:26px;height:26px;color:var(--accent);flex:none}.ob-magic b{display:block;font:600 15px var(--f-head)}.ob-magic span{font-size:12.5px;color:#a7aec0}
+.ob-prompt{margin-top:12px;padding:14px;border-radius:14px;border:1px solid var(--border);background:rgba(0,0,0,.25)}
+.ob-prompt ol{margin:0 0 10px 18px;font-size:13px;color:#c9cede;display:flex;flex-direction:column;gap:3px}
+.ob-prompt textarea{width:100%;height:170px;font-size:11.5px;resize:vertical;margin-bottom:10px}
+.ob-list{display:flex;flex-direction:column;gap:8px;margin-top:16px}
+.ob-item{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:12px;border:1px solid var(--border);background:var(--surface);transition:border-color .3s,background .3s}
+.ob-item.ok{border-color:rgba(116,227,174,.3);background:rgba(116,227,174,.05)}
+.ob-ic{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;flex:none;background:var(--surface-3);color:var(--accent)}.ob-ic svg{width:17px;height:17px}
+.ob-item.ok .ob-ic{color:var(--ok);background:rgba(116,227,174,.12)}
+.ob-ok{display:inline-flex;align-items:center;gap:4px;color:var(--ok);font-size:12px;font-weight:600}.ob-ok svg{width:13px;height:13px}
+.ob-no{color:#8890a4;font-size:12px}
+.ob-later{color:#8890a4;font-size:13px;cursor:pointer}.ob-later:hover{color:#fff}
+.ob-finish{height:40px;padding:0 20px}
+body.in-setup #shell{filter:blur(4px)}

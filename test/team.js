@@ -178,6 +178,50 @@ function fakeSpawn(exe, args, opts) {
     await dispatch(ctx, "saveSettings", [{ blender: true }]);
   });
 
+  console.log("First-run setup");
+  await test("the checklist has the 7 connections and isn't done on a new PC", () => {
+    const s = be.publicState().setup;
+    assert.deepEqual(s.items.map((i) => i.id), ["claude", "desktop", "code", "studio", "blender", "roblox", "discord"]);
+    assert.equal(s.onboarded, false);
+    assert(s.items.find((i) => i.id === "claude").ok, "Claude is signed in in this test");
+    assert(s.items.find((i) => i.id === "code").ok, "this test's MCP client counts as Claude Code");
+    assert(!s.items.find((i) => i.id === "discord").ok);
+  });
+  await test("Discord: only real webhook links, a hello message, task news is posted", async () => {
+    const posts = [];
+    be.fetch = async (url, o) => { posts.push({ url, body: JSON.parse(o.body) }); return new Response(null, { status: 204 }); };
+    await assert.rejects(dispatch(ctx, "setDiscord", ["https://evil.example/hook"]), /isn't a Discord webhook/);
+    const hook = "https://discord.com/api/webhooks/123456789/abcDEF_-x";
+    await dispatch(ctx, "setDiscord", [hook]);
+    assert(/VYRON is connected/.test(posts[0].body.content) && posts[0].url === hook);
+    assert.deepEqual(posts[0].body.allowed_mentions, { parse: [] }, "never pings @everyone");
+    assert(be.publicState().setup.items.find((i) => i.id === "discord").ok);
+    assert(!JSON.stringify(be.publicState()).includes("abcDEF_-x"), "the webhook link stays secret");
+    await dispatch(ctx, "makeModel", ["a sword"]);
+    await idle();
+    await wait(50);
+    assert(posts.some((p) => /Claude finished/.test(p.body.content)), "task news reached Discord");
+    be.fetch = async () => new Response("", { status: 404 });
+    await assert.rejects(dispatch(ctx, "testDiscord", []), /doesn't exist/);
+  });
+  await test("the setup prompt's tools work through the connector", async () => {
+    const st = await tool("vyron_setup_status", {});
+    assert.equal(st.total, 7);
+    assert(st.items.every((i) => i.how));
+    const LA = path.join(TMP, "LA"); fs.mkdirSync(path.join(LA, "Claude-Data", "acc"), { recursive: true });
+    fs.writeFileSync(path.join(LA, "Claude-Data", "acc", "claude_desktop_config.json"), "{}");
+    const old = process.env.LOCALAPPDATA; process.env.LOCALAPPDATA = LA;
+    control.bridge = { command: "VYRON.exe", args: ["bridge.js"], env: { ELECTRON_RUN_AS_NODE: "1" } };
+    try { const r = await tool("vyron_connect_claude_desktop", {}); assert(r.connected); } finally { process.env.LOCALAPPDATA = old; }
+    const cc = await tool("vyron_check_connections", {});
+    assert("studio" in cc && "blender" in cc);
+  });
+  await test("Finish marks this PC as set up (not synced to other PCs)", async () => {
+    await dispatch(ctx, "finishSetup", []);
+    assert.equal(be.publicState().setup.onboarded, true);
+    assert(!("onboardedHere" in be.exportForAccount().settings));
+  });
+
   await client.close();
   await control.stop(); await be.shutdown();
   fs.rmSync(TMP, { recursive: true, force: true });

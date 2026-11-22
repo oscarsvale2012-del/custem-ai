@@ -62,6 +62,8 @@ class Backend extends EventEmitter {
       if (!msg) return; // stopped by the user
       this.log(msg[0] + ": " + f.title, f.outcome === "done" ? "ok" : "warn", "Claude");
       this.emit("alert", { kind: f.outcome, title: msg[0], body: clip(msg[1], 240), taskId: f.id, at: now() });
+      const hook = this.d.secrets.discordWebhook;
+      if (hook) this.discordPost(hook, `${{ done: "✅", failed: "❌", usage: "⛽", login: "🔑" }[f.outcome] || "ℹ️"} **${msg[0]}** — ${clip(msg[1], 400)}`).then(() => (this.discordError = null)).catch((e) => { this.discordError = e.message; this.changed(); });
     });
   }
 
@@ -111,6 +113,8 @@ class Backend extends EventEmitter {
       studio: { status: si.status, error: si.error, tools: si.tools.length },
       studios: this.studios,
       windows: this.windows || { studio: [], blender: [] },
+      setup: this.setupStatus(),
+      discord: { set: !!this.d.secrets.discordWebhook, lastError: this.discordError || null },
       studioError: this.studioError,
       revenue: this.revenuePublic(),
       rates: this.d.rates,
@@ -212,6 +216,7 @@ class Backend extends EventEmitter {
     d.projects = []; d.customIdeas = []; d.picked = []; d.settings.activeProjectId = null;
     d.roblox = { account: null, history: [], analytics: {}, summary: null, games: [] };
     delete d.secrets.robloxApiKey;
+    delete d.secrets.discordWebhook;
     this.claude.importTasks([]);
     this.host.robloxLogout?.();
     this.save();
@@ -442,6 +447,42 @@ class Backend extends EventEmitter {
     const names = (ids || []).map((id) => this.idea(id)?.title).filter(Boolean);
     return this.claudeStartTask(this.ideaPrompt(ids, extra), "Build: " + names.slice(0, 3).join(" + ") + (names.length > 3 ? " +" + (names.length - 3) : ""));
   }
+
+  /* ================= first-run setup ================= */
+  /** What is connected, for the welcome checklist and the setup prompt. */
+  setupStatus() {
+    const C = this.claude.public(), X = this.controlInfo ? this.controlInfo() : null, b = this.blenderInfo || {};
+    const fresh = (k) => (X?.clients || []).some((c) => c.kind === k && now() - c.last < 15 * 60 * 1000);
+    const studioOn = this.mcp.info(STUDIO_ID).status === "connected";
+    const items = [
+      { id: "claude", name: "Claude", ok: !!(C.found && C.auth?.loggedIn), how: C.found ? "Sign in to Claude (button below)." : "Install the Claude desktop app (it includes Claude Code)." },
+      { id: "desktop", name: "Claude desktop", ok: !!(X?.desktop?.connected), active: fresh("desktop"), how: "Press Connect, then quit and reopen the Claude desktop app." },
+      { id: "code", name: "Claude Code / web", ok: fresh("code"), how: "Paste the setup prompt into the Claude desktop app's Code tab — it connects to VYRON while it sets everything up." },
+      { id: "studio", name: "Roblox Studio", ok: studioOn && this.studios.length > 0, how: studioOn ? "Open your place in Roblox Studio." : "Open Roblox Studio and turn on its AI / MCP connection (Assistant settings)." },
+      { id: "blender", name: "Blender", ok: !!b.open, how: b.found ? "Open Blender and turn on its MCP add-on." : "Install Blender's MCP: Claude desktop → Settings → Extensions → Blender, plus the Blender add-on (blender.org/lab/mcp-server)." },
+      { id: "roblox", name: "Roblox account", ok: !!this.d.roblox.account, how: "Sign in with Roblox (you type your own password on roblox.com)." },
+      { id: "discord", name: "Discord", ok: !!this.d.secrets.discordWebhook, how: "Paste a Discord channel webhook link (Channel settings → Integrations → Webhooks → New Webhook → Copy URL)." },
+    ];
+    return { items, done: items.filter((i) => i.ok).length, total: items.length, onboarded: !!this.d.onboardedHere };
+  }
+  finishSetup() { this.d.onboardedHere = true; this.save(); this.log("Setup finished", "ok", "System"); }
+
+  /* --- Discord: VYRON posts task news to a channel through a webhook --- */
+  async setDiscord(url) {
+    url = String(url || "").trim();
+    if (!/^https:\/\/(?:[a-z]+\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(url)) throw new Error("That isn't a Discord webhook link. It looks like https://discord.com/api/webhooks/123…/abc…");
+    await this.discordPost(url, "✅ **VYRON is connected!** I'll post here when Claude finishes a task, fails, or runs out of usage.");
+    this.d.secrets.discordWebhook = url;
+    this.discordError = null;
+    this.save();
+  }
+  clearDiscord() { delete this.d.secrets.discordWebhook; this.save(); }
+  async discordPost(url, content) {
+    const r = await this.fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "VYRON", content: clip(content, 1900), allowed_mentions: { parse: [] } }), signal: AbortSignal.timeout(15000) })
+      .catch(() => { throw new Error("Couldn't reach Discord."); });
+    if (!r.ok) throw new Error(r.status === 404 || r.status === 401 ? "Discord says this webhook doesn't exist (it may have been deleted)." : "Discord answered " + r.status);
+  }
+  testDiscord() { if (!this.d.secrets.discordWebhook) throw new Error("Connect Discord first"); return this.discordPost(this.d.secrets.discordWebhook, "🔔 Test message from VYRON."); }
 
   /* ================= open windows ================= */
   /** Windows of a program running on this PC (tasklist), e.g. RobloxStudioBeta.exe or blender.exe. */

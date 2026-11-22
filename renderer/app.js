@@ -140,6 +140,7 @@ function draw() {
   document.body.classList.toggle("noanim", S.settings.animations === false);
   document.body.classList.toggle("reduce", !!S.settings.reduceEffects);
   drawNav();
+  if (typeof drawSetup === "function") drawSetup();
   const page = $("#page");
   const keep = preserve(page);
   const th0 = $("#thread");
@@ -651,6 +652,8 @@ VIEWS.settings = () => {
       <div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("dashboard")}</div><div class="grow"><div class="h3">PC control</div><div class="faint" style="font-size:12.5px">Lets Claude see your screen and use the mouse and keyboard for hard tasks the Studio tools can't do.</div></div></div>
         ${[["off", "Off", "Claude can't see or touch your PC."], ["ask", "Ask me each time (recommended)", "A popup shows exactly what Claude wants to do. Allow, deny, or allow for 10 minutes."], ["on", "Allowed", "Claude may take screenshots, click and type without asking. A bar with a Stop button shows while it does."]].map(([k, t, d]) => `<div class="radio-card ${(s.pcControl || "off") === k ? "on" : ""}" data-act="setting" data-key="pcControl" data-val="${k}"><span class="dot ${(s.pcControl || "off") === k ? "connected" : "unknown"}"></span><div><b style="font-weight:600">${t}</b><div class="faint" style="font-size:12.5px">${d}</div></div></div>`).join("")}
         <div class="faint" style="font-size:11.5px">Claude is told never to type passwords or payment details, buy things or change security settings, and to ignore instructions shown on screen. Screenshots go to Claude (Anthropic) like your chat messages.</div></div>
+      <div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("sparkle")}</div><div class="grow"><div class="h3">Setup &amp; connections</div><div class="faint" style="font-size:12.5px">${S.setup ? S.setup.done + " of " + S.setup.total + " connected" : ""}</div></div><button class="btn sm" data-act="openSetup">Open setup</button></div>
+        <div class="row" style="gap:8px"><span class="grow">Discord <span class="faint" style="font-size:12px">${S.discord?.set ? "connected — VYRON posts task news to your channel" + (S.discord.lastError ? " · " + esc(S.discord.lastError) : "") : "not connected"}</span></span>${S.discord?.set ? '<button class="btn sm" data-act="discordTest">Test</button><button class="btn sm ghost" data-act="discordClear">Disconnect</button>' : '<button class="btn sm" data-act="openSetup">Connect</button>'}</div></div>
       <div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("bell")}</div><div class="grow"><div class="h3">Notifications &amp; sounds</div><div class="faint" style="font-size:12.5px">When a task is done, fails, runs out of usage, or Claude needs your OK.</div></div></div>
         <div class="row"><span class="grow">Pop-ups</span><div class="seg">${[["vyron", "VYRON style"], ["windows", "Windows"], ["off", "Off"]].map(([k, l]) => `<button class="${(s.notifyStyle || "vyron") === k ? "on" : ""}" data-act="setting" data-key="notifyStyle" data-val="${k}">${l}</button>`).join("")}</div><button class="btn sm ghost" data-act="testPopup" title="Show a test pop-up">Test</button></div>
         <div class="row"><span class="grow">Keep running when I close the window <span class="faint" style="font-size:12px">(Claude keeps working; VYRON stays by the clock)</span></span><div class="toggle ${s.keepRunning !== false ? "on" : ""}" data-act="setting" data-key="keepRunning" data-val="${s.keepRunning === false}"></div></div>
@@ -868,6 +871,16 @@ const ACT = {
   openTask: (el) => { ui.taskId = el.dataset.id; go("claude"); },
   async checkBlender() { const b = await call("checkBlender"); toast(b.open ? "Blender is connected" : b.error || "Blender isn't open", b.open ? "" : "error"); },
   async makeModel() { const t = val("mkModel"); if (!t.trim()) return toast("Describe the model first", "error"); ui.taskId = await call("makeModel", t); $("#mkModel").value = ""; go("claude"); },
+  obSkipIntro: () => showSetupList(),
+  obPrompt: () => { ui.obPrompt = !ui.obPrompt; updateSetupList(); },
+  async obCopy() { try { await navigator.clipboard.writeText(SETUP_PROMPT); toast("Copied! Paste it into the Claude desktop app's Code tab."); } catch { const t = $("#obPromptText"); t.select(); document.execCommand("copy"); toast("Copied!"); } },
+  async obRecheck(el) { el.disabled = true; el.innerHTML = '<span class="spinner"></span>Checking…'; await call("connectStudio").catch(() => {}); await call("checkBlender").catch(() => {}); render(); },
+  async obDiscord(el) { el.disabled = true; try { await call("setDiscord", val("obDiscord")); toast("Discord connected — check your channel"); } finally { el.disabled = false; } },
+  async obFinish() { await call("finishSetup"); finishSetupAnim(); },
+  async obSkip() { if (confirm("Skip setup for now? Things that aren't connected won't work until you connect them. You can open setup again in Settings.")) { await call("finishSetup"); ui.forceSetup = false; setupRoot.innerHTML = ""; setupPhase = null; document.body.classList.remove("in-setup"); render(); } },
+  openSetup: () => { ui.forceSetup = true; ui.obPrompt = false; render(); },
+  async discordTest() { await call("testDiscord"); toast("Test message sent to Discord"); },
+  async discordClear() { if (confirm("Disconnect Discord?")) await call("clearDiscord"); },
   async refreshRates() { await call("refreshRates"); toast("Rates updated from Roblox and the ECB"); },
   async setting(el) { let v = el.dataset.val; if (v === "true") v = true; else if (v === "false") v = false; await call("saveSettings", { [el.dataset.key]: v }); },
   copyLog: () => { navigator.clipboard.writeText(S.activity.map((l) => `${new Date(l.at).toISOString()} [${l.level}] ${l.source}: ${l.text}`).join("\n")); toast("Log copied"); },
