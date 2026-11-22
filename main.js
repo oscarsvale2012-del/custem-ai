@@ -84,7 +84,7 @@ const robloxHost = {
 };
 
 // Links the app may open in the normal browser.
-const SAFE_LINK = /^https:\/\/(create\.roblox\.com|www\.roblox\.com|www\.ecb\.europa\.eu|claude\.ai|github\.com|console\.firebase\.google\.com|console\.cloud\.google\.com)\//;
+const SAFE_LINK = /^https:\/\/(create\.roblox\.com|www\.roblox\.com|www\.ecb\.europa\.eu|claude\.ai|github\.com|www\.blender\.org|console\.firebase\.google\.com|console\.cloud\.google\.com)\//;
 
 let tray = null;
 let forceQuit = false;

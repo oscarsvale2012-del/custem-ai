@@ -449,23 +449,41 @@ class Backend extends EventEmitter {
   }
 
   /* ================= first-run setup ================= */
+  /** Which apps are installed on this PC (official download links for the missing ones). */
+  installedApps(env = process.env) {
+    if (this._apps && now() - this._apps.at < 30000) return this._apps;
+    const ls = (d) => { try { return fs.readdirSync(d); } catch { return []; } };
+    const la = env.LOCALAPPDATA || "", pf = [env.ProgramFiles, env["ProgramFiles(x86)"], la && path.join(la, "Programs")].filter(Boolean);
+    const studio = !!la && (fs.existsSync(path.join(la, "Roblox", "mcp.bat")) || ls(path.join(la, "Roblox", "Versions")).some((v) => fs.existsSync(path.join(la, "Roblox", "Versions", v, "RobloxStudioBeta.exe"))));
+    const blender = pf.some((p) => ls(path.join(p, "Blender Foundation")).some((v) => fs.existsSync(path.join(p, "Blender Foundation", v, "blender.exe")))) || ls(path.join(env.APPDATA || "", "Blender Foundation", "Blender")).length > 0;
+    this._apps = { at: now(), claude: !!this.claude.exe, studio, blender, blenderMcp: !!blenderServer() };
+    return this._apps;
+  }
+
   /** What is connected, for the welcome checklist and the setup prompt. */
   setupStatus() {
     const C = this.claude.public(), X = this.controlInfo ? this.controlInfo() : null, b = this.blenderInfo || {};
     const fresh = (k) => (X?.clients || []).some((c) => c.kind === k && now() - c.last < 15 * 60 * 1000);
     const studioOn = this.mcp.info(STUDIO_ID).status === "connected";
+    const A = this.installedApps();
+    const dl = (name, url) => ({ downloadName: name, download: url });
     const items = [
-      { id: "claude", name: "Claude", ok: !!(C.found && C.auth?.loggedIn), how: C.found ? "Sign in to Claude (button below)." : "Install the Claude desktop app (it includes Claude Code)." },
-      { id: "desktop", name: "Claude desktop", ok: !!(X?.desktop?.connected), active: fresh("desktop"), how: "Press Connect, then quit and reopen the Claude desktop app." },
-      { id: "code", name: "Claude Code / web", ok: fresh("code"), how: "Paste the setup prompt into the Claude desktop app's Code tab — it connects to VYRON while it sets everything up." },
-      { id: "studio", name: "Roblox Studio", ok: studioOn && this.studios.length > 0, how: studioOn ? "Open your place in Roblox Studio." : "Open Roblox Studio and turn on its AI / MCP connection (Assistant settings)." },
-      { id: "blender", name: "Blender", ok: !!b.open, how: b.found ? "Open Blender and turn on its MCP add-on." : "Install Blender's MCP: Claude desktop → Settings → Extensions → Blender, plus the Blender add-on (blender.org/lab/mcp-server)." },
+      { id: "claude", name: "Claude", installed: A.claude, ...dl("Claude desktop", "https://claude.ai/download"), ok: !!(C.found && C.auth?.loggedIn), how: C.found ? "Sign in to Claude (button below)." : "Install the Claude desktop app (it includes Claude Code)." },
+      { id: "desktop", name: "Claude desktop", installed: A.claude, ...dl("Claude desktop", "https://claude.ai/download"), ok: !!(X?.desktop?.connected), active: fresh("desktop"), how: "Press Connect, then quit and reopen the Claude desktop app." },
+      { id: "code", name: "Claude Code / web", installed: A.claude, ...dl("Claude desktop", "https://claude.ai/download"), ok: fresh("code"), how: "Paste the setup prompt into the Claude desktop app's Code tab — it connects to VYRON while it sets everything up." },
+      { id: "studio", name: "Roblox Studio", installed: A.studio, ...dl("Roblox Studio", "https://create.roblox.com/landing"), ok: studioOn && this.studios.length > 0, how: studioOn ? "Open your place in Roblox Studio." : "Open Roblox Studio and turn on its AI / MCP connection (Assistant settings)." },
+      { id: "blender", name: "Blender", installed: A.blender && A.blenderMcp, ...(A.blender ? dl("Blender MCP add-on", "https://www.blender.org/lab/mcp-server/") : dl("Blender", "https://www.blender.org/download/")), ok: !!b.open, how: b.found ? "Open Blender and turn on its MCP add-on." : "Install Blender's MCP: Claude desktop → Settings → Extensions → Blender, plus the Blender add-on (blender.org/lab/mcp-server)." },
       { id: "roblox", name: "Roblox account", ok: !!this.d.roblox.account, how: "Sign in with Roblox (you type your own password on roblox.com)." },
-      { id: "discord", name: "Discord", ok: !!this.d.secrets.discordWebhook, how: "Paste a Discord channel webhook link (Channel settings → Integrations → Webhooks → New Webhook → Copy URL)." },
+      { id: "discord", name: "Discord", optional: true, skipped: !!this.d.discordSkipped, ok: !!this.d.secrets.discordWebhook, how: "Paste a Discord channel webhook link (Channel settings → Integrations → Webhooks → New Webhook → Copy URL)." },
     ];
-    return { items, done: items.filter((i) => i.ok).length, total: items.length, onboarded: !!this.d.onboardedHere };
+    const need = items.filter((i) => !i.optional);
+    return { apps: A, items, done: need.filter((i) => i.ok).length, total: need.length, ready: need.every((i) => i.ok), onboarded: !!this.d.onboardedHere };
   }
-  finishSetup() { this.d.onboardedHere = true; this.save(); this.log("Setup finished", "ok", "System"); }
+  skipDiscord() { this.d.discordSkipped = true; this.save(); }
+  finishSetup() {
+    const s = this.setupStatus();
+    if (!s.ready) throw new Error("Connect these first: " + s.items.filter((i) => !i.optional && !i.ok).map((i) => i.name).join(", "));
+    this.d.onboardedHere = true; this.save(); this.log("Setup finished", "ok", "System"); }
 
   /* --- Discord: VYRON posts task news to a channel through a webhook --- */
   async setDiscord(url) {

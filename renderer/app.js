@@ -876,6 +876,7 @@ const ACT = {
   async obCopy() { try { await navigator.clipboard.writeText(SETUP_PROMPT); toast("Copied! Paste it into the Claude desktop app's Code tab."); } catch { const t = $("#obPromptText"); t.select(); document.execCommand("copy"); toast("Copied!"); } },
   async obRecheck(el) { el.disabled = true; el.innerHTML = '<span class="spinner"></span>Checking…'; await call("connectStudio").catch(() => {}); await call("checkBlender").catch(() => {}); render(); },
   async obDiscord(el) { el.disabled = true; try { await call("setDiscord", val("obDiscord")); toast("Discord connected — check your channel"); } finally { el.disabled = false; } },
+  async obSkipDiscord() { await call("skipDiscord"); },
   async obFinish() { await call("finishSetup"); finishSetupAnim(); },
   async obSkip() { if (confirm("Skip setup for now? Things that aren't connected won't work until you connect them. You can open setup again in Settings.")) { await call("finishSetup"); ui.forceSetup = false; setupRoot.innerHTML = ""; setupPhase = null; document.body.classList.remove("in-setup"); render(); } },
   openSetup: () => { ui.forceSetup = true; ui.obPrompt = false; render(); },

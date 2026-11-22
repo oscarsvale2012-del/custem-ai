@@ -27,6 +27,18 @@ Useful tools (POST to \`/rpc/<tool>\`):
 If the connector doesn't answer: open VYRON, go to Settings → "Claude controls VYRON", make sure it's switched on, and try again.
 
 ## Steps
+0. **Check what's installed.** Look for these on this PC (don't install anything yet):
+   - Claude desktop app — you're running in it, so it's installed.
+   - Roblox Studio — \`%LOCALAPPDATA%\\Roblox\\Versions\\*\\RobloxStudioBeta.exe\` (or \`%LOCALAPPDATA%\\Roblox\\mcp.bat\`).
+   - Blender — \`C:\\Program Files\\Blender Foundation\\*\\blender.exe\`.
+   - Blender MCP for Claude — the "Blender" extension in Claude desktop (Settings → Extensions).
+   \`vyron_setup_status\` also reports this under \`apps\`.
+   If something is missing, **send me the official download link** and wait until I tell you it's installed:
+   - Roblox Studio: https://create.roblox.com/landing
+   - Blender: https://www.blender.org/download/
+   - Blender MCP add-on and instructions: https://www.blender.org/lab/mcp-server/
+   - Claude desktop: https://claude.ai/download
+   Only download or run an installer yourself if I clearly say yes, and only from these official links.
 1. **Check VYRON.** Call \`vyron_setup_status\` and tell me in one short list what is already connected and what's missing.
 
 2. **Claude desktop ↔ VYRON.** Call \`vyron_connect_claude_desktop\`. Don't restart the Claude desktop app now (you are running inside it). At the very end, remind me to quit it from the tray icon and open it again.
@@ -84,28 +96,29 @@ function showSetupList() {
 }
 
 function setupItem(it) {
-  const st = it.ok ? `<span class="ob-ok">${ic("check")}Connected</span>` : `<span class="ob-no">Not connected</span>`;
+  const st = it.ok ? `<span class="ob-ok">${ic("check")}Connected</span>` : it.skipped ? `<span class="ob-no">Skipped</span>` : it.optional ? `<span class="ob-no">Optional</span>` : `<span class="ob-no">Not connected</span>`;
   let act = "";
-  if (!it.ok) {
+  if (!it.ok && it.installed === false) act = `<button class="btn sm primary" data-act="openUrl" data-id="${esc(it.download)}">${ic("download")}Download ${esc(it.downloadName)}</button>`;
+  else if (!it.ok) {
     if (it.id === "claude") act = S.claude.found ? `<button class="btn sm primary" data-act="claudeLogin">Sign in to Claude</button>` : `<button class="btn sm" data-act="openUrl" data-id="https://claude.ai/download">Get Claude</button>`;
     if (it.id === "desktop") act = `<button class="btn sm primary" data-act="controlDesktop" data-val="on">Connect</button>`;
     if (it.id === "code") act = `<button class="btn sm primary" data-act="obPrompt">Copy setup prompt</button>`;
     if (it.id === "studio" || it.id === "blender") act = `<button class="btn sm" data-act="obRecheck">${ic("refresh")}Check again</button>`;
     if (it.id === "roblox") act = `<button class="btn sm primary" data-act="linkRoblox">Sign in with Roblox</button>`;
-    if (it.id === "discord") act = `<div class="row" style="gap:6px"><input class="input" id="obDiscord" placeholder="https://discord.com/api/webhooks/…" style="height:32px;width:240px"><button class="btn sm primary" data-act="obDiscord">Connect</button></div>`;
+    if (it.id === "discord") act = `<div class="row" style="gap:6px"><input class="input" id="obDiscord" placeholder="https://discord.com/api/webhooks/…" style="height:32px;width:240px"><button class="btn sm primary" data-act="obDiscord">Connect</button>${it.skipped ? "" : `<button class="btn sm ghost" data-act="obSkipDiscord">Skip</button>`}</div>`;
   }
-  return `<div class="ob-item ${it.ok ? "ok" : ""}"><span class="ob-ic">${ic(SETUP_ICON[it.id])}</span><div class="grow" style="min-width:0"><div class="row" style="gap:8px"><b>${esc(it.name)}</b>${st}</div>${it.ok ? "" : `<div class="faint" style="font-size:12px">${esc(it.how)}</div>`}</div>${act}</div>`;
+  return `<div class="ob-item ${it.ok ? "ok" : ""} ${it.skipped && !it.ok ? "skipped" : ""}"><span class="ob-ic">${ic(SETUP_ICON[it.id])}</span><div class="grow" style="min-width:0"><div class="row" style="gap:8px"><b>${esc(it.name)}</b>${st}</div>${it.ok ? "" : `<div class="faint" style="font-size:12px">${it.installed === false ? `${esc(it.downloadName)} isn't installed on this PC yet — download it from the official site, then come back.` : esc(it.how)}</div>`}</div>${act}</div>`;
 }
 
 function updateSetupList() {
-  const s = S.setup, pct = Math.round((s.done / s.total) * 100), all = s.done === s.total;
+  const s = S.setup, pct = Math.round((s.done / s.total) * 100), all = s.ready;
   const html = `<div class="ob-head"><div class="ob-ring" style="--p:${pct}"><span>${s.done}/${s.total}</span></div><div class="grow"><div class="ob-title sm" style="text-align:left">Connect everything</div>
       <div class="faint" style="font-size:13px">VYRON works best when Claude can reach all of these. Let Claude do most of it for you, or connect them one by one.</div></div></div>
     <button class="ob-magic" data-act="obPrompt">${ic("sparkle")}<div><b>Let Claude set it up for me</b><span>Copy a prompt into the Claude desktop app — Claude connects Studio, Blender and Claude desktop for you.</span></div></button>
     ${ui.obPrompt ? `<div class="ob-prompt"><ol><li>Open the <b>Claude desktop app</b> and go to the <b>Code</b> tab.</li><li>Paste the prompt (Ctrl+V) and press Enter.</li><li>Watch Claude work; it asks you when it needs you. This list turns green as things connect.</li></ol>
       <textarea class="input mono" readonly id="obPromptText" data-fresh>${esc(SETUP_PROMPT)}</textarea><div class="row"><span class="faint" style="font-size:12px">Your Roblox account and Discord stay with you — connect those below.</span><div class="grow"></div><button class="btn primary" data-act="obCopy">${ic("copy")}Copy prompt</button></div></div>` : ""}
     <div class="ob-list">${s.items.map(setupItem).join("")}</div>
-    <div class="row" style="margin-top:18px"><a class="ob-later" data-act="obSkip">I'll finish this later</a><div class="grow"></div><button class="btn ${all ? "primary" : ""} ob-finish" data-act="obFinish" ${all ? "" : "disabled"}>${all ? "Finish — let's build!" : `Finish (${s.total - s.done} left)`}</button></div>`;
+    <div class="row" style="margin-top:18px"><span class="faint" style="font-size:12px">Everything except Discord is needed to use VYRON.</span><div class="grow"></div><button class="btn ${all ? "primary" : ""} ob-finish" data-act="obFinish" ${all ? "" : "disabled"}>${all ? "Finish — let's build!" : `Finish (${s.total - s.done} left)`}</button></div>`;
   if (html === setupListHtml) return;
   const card = document.getElementById("obCard");
   const keep = preserve(card);

@@ -204,9 +204,26 @@ function fakeSpawn(exe, args, opts) {
     be.fetch = async () => new Response("", { status: 404 });
     await assert.rejects(dispatch(ctx, "testDiscord", []), /doesn't exist/);
   });
+  await test("missing apps are found and get their official download links", () => {
+    const empty = path.join(TMP, "emptyPC");
+    be._apps = null;
+    const oldB = process.env.VYRON_BLENDER_MCP; delete process.env.VYRON_BLENDER_MCP;
+    const A = be.installedApps({ LOCALAPPDATA: empty, APPDATA: empty, ProgramFiles: empty });
+    process.env.VYRON_BLENDER_MCP = oldB;
+    assert.equal(A.studio, false); assert.equal(A.blender, false);
+    be._apps = { ...A, at: Date.now() };
+    const items = be.setupStatus().items;
+    const st = items.find((i) => i.id === "studio"), bl = items.find((i) => i.id === "blender");
+    assert(st.installed === false && st.download === "https://create.roblox.com/landing");
+    assert(bl.installed === false && bl.download === "https://www.blender.org/download/");
+    be._apps = { ...A, blender: true, at: Date.now() };
+    assert.equal(be.setupStatus().items.find((i) => i.id === "blender").download, "https://www.blender.org/lab/mcp-server/", "Blender installed but no MCP → add-on link");
+    be._apps = null;
+  });
   await test("the setup prompt's tools work through the connector", async () => {
     const st = await tool("vyron_setup_status", {});
-    assert.equal(st.total, 7);
+    assert.equal(st.total, 6, "Discord is optional");
+    assert.equal(st.items.length, 7);
     assert(st.items.every((i) => i.how));
     const LA = path.join(TMP, "LA"); fs.mkdirSync(path.join(LA, "Claude-Data", "acc"), { recursive: true });
     fs.writeFileSync(path.join(LA, "Claude-Data", "acc", "claude_desktop_config.json"), "{}");
@@ -216,8 +233,16 @@ function fakeSpawn(exe, args, opts) {
     const cc = await tool("vyron_check_connections", {});
     assert("studio" in cc && "blender" in cc);
   });
+  await test("Finish needs everything except Discord", async () => {
+    await assert.rejects(dispatch(ctx, "finishSetup", []), /Connect these first: .*Roblox Studio.*Blender.*Roblox account/);
+    assert(!/Discord/.test(await dispatch(ctx, "finishSetup", []).catch((e) => e.message)));
+    await dispatch(ctx, "skipDiscord", []);
+    assert(be.publicState().setup.items.find((i) => i.id === "discord").skipped);
+  });
   await test("Finish marks this PC as set up (not synced to other PCs)", async () => {
+    be.setupStatus = () => ({ items: [], done: 6, total: 6, ready: true, onboarded: !!be.d.onboardedHere });
     await dispatch(ctx, "finishSetup", []);
+    delete be.setupStatus;
     assert.equal(be.publicState().setup.onboarded, true);
     assert(!("onboardedHere" in be.exportForAccount().settings));
   });

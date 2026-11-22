@@ -450,3 +450,4 @@ body.locked #shell{display:none}
 .ob-later{color:#8890a4;font-size:13px;cursor:pointer}.ob-later:hover{color:#fff}
 .ob-finish{height:40px;padding:0 20px}
 body.in-setup #shell{filter:blur(4px)}
+.ob-item.skipped{opacity:.6}
