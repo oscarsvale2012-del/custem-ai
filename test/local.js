@@ -4,6 +4,8 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const http = require("http");
+// Use a separate loopback address so a real Ollama on 127.0.0.1 doesn't clash.
+const H = (process.env.AF_LOCAL_HOST = "127.0.0.2");
 const { Backend } = require("../src/backend");
 
 let passed = 0, failed = 0;
@@ -55,8 +57,8 @@ function fakeForge() {
 (async () => {
   const o = fakeOllama(), f = fakeForge();
   try {
-    await new Promise((r, x) => o.listen(11434, "127.0.0.1", r).on("error", x));
-    await new Promise((r, x) => f.listen(7860, "127.0.0.1", r).on("error", x));
+    await new Promise((r, x) => o.listen(11434, H, r).on("error", x));
+    await new Promise((r, x) => f.listen(7860, H, r).on("error", x));
   } catch (e) { console.log("  (skipped: ports 11434/7860 are in use by real apps)"); process.exit(0); }
   const TMP = path.join(__dirname, "..", ".testdata-local");
   fs.rmSync(TMP, { recursive: true, force: true });
@@ -88,7 +90,7 @@ function fakeForge() {
     const id = await be.addLocalAgent({ serverId: "ollama", model: "qwen2.5-coder:7b", role: "Luau Developer", name: "Coder" });
     coder = be.d.agents.find((a) => a.id === id);
     const p = be.d.providers.find((x) => x.id === coder.providerId);
-    assert(p.local && !p.apiKey && p.baseURL === "http://127.0.0.1:11434/v1");
+    assert(p.local && !p.apiKey && p.baseURL === `http://${H}:11434/v1`);
     assert.equal(be.d.agents.length, 1);
     assert.equal(be.agentStatus(coder), "idle");
   });
@@ -105,7 +107,7 @@ function fakeForge() {
   });
   await test("Forge makes images for the Image Creator (local only)", async () => {
     assert.throws(() => be.setImageBackend("http://evil.example:7860"), /Only local/);
-    be.setImageBackend("http://127.0.0.1:7860");
+    be.setImageBackend(`http://${H}:7860`);
     const pixId = be.addAgent({ name: "Pix", role: "Image Creator", providerId: coder.providerId, model: "qwen2.5-coder:7b" });
     const pix = be.d.agents.find((a) => a.id === pixId);
     const t = be.newTask({ title: "t", description: "d", agentId: pix.id });
@@ -114,6 +116,14 @@ function fakeForge() {
     const out = await tool.run({ name: "Thumb", kind: "thumbnail", prompt: "a castle" });
     assert(/1344×768/.test(out) && /Forge/.test(out));
     assert.equal(Buffer.from(be.listImages()[0].dataUrl.split(",")[1], "base64").toString(), "PNG:1344x768");
+  });
+  await test("the Claude connector can scan and add local AIs", async () => {
+    const { ControlServer } = require("../src/control");
+    const c = new ControlServer({ dataDir: TMP, getCtx: () => ({ backend: be, auth: null }), version: "t" });
+    const scan = await c.runTool("vyron_scan_local", {});
+    assert(scan.apps.some((a) => a.app === "ollama" && a.models.includes("qwen2.5-coder:7b")));
+    assert(/Added Tester/.test(await c.runTool("vyron_add_local_ai", { model: "qwen2.5-coder:7b", role: "QA Tester", name: "Tester" })));
+    await assert.rejects(c.runTool("vyron_add_local_ai", { model: "nope:1b", role: "QA Tester" }), /isn't downloaded/);
   });
   await test("delete a model", async () => {
     await be.deleteModel("gemma3:12b");

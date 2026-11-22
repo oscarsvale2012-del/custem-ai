@@ -128,6 +128,31 @@ class ControlServer {
       return `Updated ${a.name}.`;
     });
 
+    tool("vyron_scan_local", "Find free AI apps running on this PC (Ollama, LM Studio, …) and their downloaded models.", {}, async () => {
+      await this.state();
+      const L = await this.call("scanLocal");
+      return { apps: L.servers.filter((s) => s.running).map((s) => ({ app: s.id, name: s.name, models: s.models.map((m) => m.id) })), notRunning: L.servers.filter((s) => !s.running).map((s) => s.name), imageAI: L.image?.running ? "Forge is running" : null, recommended: L.recommended.map((r) => ({ model: r.model, size: r.size, goodFor: r.goodFor, tools: r.tools })) };
+    });
+
+    tool("vyron_download_model", "Download a free model with Ollama (e.g. qwen3:8b). Runs in the background; check with vyron_scan_local.", { model: z.string() }, async ({ model }) => {
+      await this.state();
+      await this.call("pullModel", model);
+      return `Downloading ${model}. It can take a few minutes.`;
+    });
+
+    tool("vyron_add_local_ai", "Add an AI to the team that runs free on this PC with a local model.", {
+      model: z.string().describe("A downloaded model, e.g. qwen2.5-coder:7b"), role: z.string(), name: z.string().optional(), app: z.string().optional().describe("Local app id, default ollama"),
+    }, async ({ model, role, name, app = "ollama" }) => {
+      const s = await this.state();
+      if (!s.roleInfo[role]) throw new Error("Unknown role. Use vyron_list_roles.");
+      const L = await this.call("scanLocal");
+      const srv = L.servers.find((x) => x.id === app);
+      if (!srv?.running) throw new Error(`${srv?.name || app} isn't running on this PC.`);
+      if (!srv.models.some((m) => m.id === model)) throw new Error(`${model} isn't downloaded. Downloaded: ${srv.models.map((m) => m.id).join(", ") || "none"}`);
+      await this.call("addLocalAgent", { serverId: app, model, role, name });
+      return `Added ${name || model} as ${role}, running free on ${model}.`;
+    });
+
     tool("vyron_list_projects", "List Roblox projects and which one is active.", {}, async () => {
       const s = await this.state();
       return s.projects.map((p) => ({ id: p.id, name: p.game?.name || p.name, active: p.id === s.activeProjectId, universeId: p.universeId || null, placeId: p.placeId || null, studioConnected: p.studioConnected, rojoFolder: p.rojoDir || null }));

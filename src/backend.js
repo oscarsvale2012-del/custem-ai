@@ -376,7 +376,7 @@ class Backend extends EventEmitter {
   }
 
   setImageBackend(url) {
-    if (url && !/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(url)) throw new Error("Only local image servers on this PC can be used");
+    if (url && !/^http:\/\/(127\.\d{1,3}\.\d{1,3}\.\d{1,3}|localhost):\d+\/?$/.test(url)) throw new Error("Only local image servers on this PC can be used");
     this.d.settings.imageBackend = url || null;
     this.log(url ? "Image Creator now uses Forge on this PC" : "Forge disconnected", "info", "Local AI");
     this.save();
