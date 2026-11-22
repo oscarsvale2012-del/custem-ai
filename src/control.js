@@ -1,10 +1,10 @@
-// "Control VYRON from Claude": a local MCP server (plus a tiny JSON API) so an
-// assistant such as Claude Code on this PC can see the team and tasks, start
-// builds, give tasks and chat with the AIs.
-// - Off until the user turns it on in Settings.
+// Claude connector: a local MCP server (plus a tiny JSON API) so Claude can
+// see and control VYRON: projects, Studio, game ideas, revenue in kroner.
+// (VYRON starts Claude with this connector from its Claude tab.)
+// - On by default; can be switched off in Settings.
 // - Listens on 127.0.0.1 only, checks the Host header, needs a secret key.
 // - Goes through the same method whitelist and sign-in lock as the app's UI.
-// - Cannot approve risky actions, read or change API keys, or delete projects.
+// - Cannot read or change keys or delete projects.
 const http = require("http");
 const crypto = require("crypto");
 const fs = require("fs");
@@ -27,7 +27,7 @@ class ControlServer {
     this.server = null;
     this.error = null;
     try { this.cfg = JSON.parse(fs.readFileSync(this.file, "utf8")); } catch { this.cfg = {}; }
-    this.cfg = { enabled: false, port: DEFAULT_PORT, ...this.cfg };
+    this.cfg = { enabled: true, port: DEFAULT_PORT, ...this.cfg };
     if (!this.cfg.token) this.cfg.token = crypto.randomBytes(24).toString("base64url");
     this.saveCfg();
   }
@@ -53,7 +53,7 @@ class ControlServer {
   }
 
   /* ---------------- tools ---------------- */
-  call(method, ...args) { return dispatch(this.getCtx(), method, args); }
+  call(method, ...args) { return dispatch({ ...this.getCtx(), internal: true }, method, args); }
 
   async state() {
     const s = await this.call("publicState");
@@ -61,191 +61,89 @@ class ControlServer {
     return s;
   }
 
-  agentByName(s, name) {
-    const a = s.agents.find((x) => x.name.toLowerCase() === String(name || "").trim().toLowerCase());
-    if (!a) throw new Error(`No AI called "${name}". AIs: ${s.agents.map((x) => x.name).join(", ") || "none"}`);
-    return a;
-  }
-
-  taskBrief(s, t) {
-    const who = s.agents.find((a) => a.id === t.agentId)?.name || null;
-    return { id: t.id, title: t.title, kind: t.kind, status: t.status, role: t.role, agent: who, priority: t.priority, stage: t.stage, progress: t.progress, parentId: t.parentId, error: t.error || undefined };
+  findProject(s, q) {
+    const p = s.projects.find((x) => x.id === q || (x.game?.name || x.name).toLowerCase() === String(q).trim().toLowerCase());
+    if (!p) throw new Error(`No project "${q}". Projects: ${s.projects.map((x) => x.game?.name || x.name).join(", ") || "none"}`);
+    return p;
   }
 
   tools() {
     const T = [];
     const tool = (name, description, shape, run) => T.push({ name, description, shape, run });
+    const proj = (p, s) => ({ id: p.id, name: p.game?.name || p.name, active: p.id === s.activeProjectId, placeId: p.placeId || null, universeId: p.universeId || null, studioOpen: p.studioConnected, folder: p.rojoDir || null });
 
-    tool("vyron_status", "Overview of VYRON: active project, AIs (name, role, status, model, account email), providers, running tasks, pending approvals and revenue.", {}, async () => {
+    tool("vyron_status", "Overview of VYRON: active project, Roblox Studio connection, picked game ideas and revenue in Robux and Danish kroner.", {}, async () => {
       const s = await this.state();
       const p = s.projects.find((x) => x.id === s.activeProjectId);
       return {
         version: this.version,
-        activeProject: p ? { name: p.game?.name || p.name, universeId: p.universeId || null, placeId: p.placeId || null, studioConnected: p.studioConnected, rojoFolder: p.rojoDir || null } : null,
-        ais: s.agents.map((a) => ({ name: a.name, role: a.role, status: a.status, model: a.model, provider: a.providerName, accountEmail: a.accountEmail || null })),
-        providers: s.providers.map((x) => ({ name: x.name, type: x.type, status: x.status, error: x.error || undefined })),
-        mcpServers: s.mcpServers.map((m) => ({ name: m.name, status: m.status, tools: m.tools.length })),
-        runningTasks: s.tasks.filter((t) => ["planning", "in_progress", "testing", "waiting_approval"].includes(t.status)).map((t) => this.taskBrief(s, t)),
-        pendingTasks: s.tasks.filter((t) => t.status === "pending").length,
-        approvalsWaiting: s.approvals.map((a) => ({ agent: a.agentName, wants: a.title, note: "Only the user can approve this, in VYRON." })),
-        revenue: s.revenue?.summary ? { robux: s.revenue.summary.balance, pending: s.revenue.summary.pending, salesToday: s.revenue.summary.day.sales } : null,
+        activeProject: p ? proj(p, s) : null,
+        studio: { connected: s.studio.status === "connected", windows: s.studios.map((w) => w.name || w.id), problem: s.studioError || undefined },
+        pickedIdeas: s.ideas.picked.length,
+        revenue: await this.call("revenueKr"),
+        workFolder: s.workDir,
       };
     });
 
-    tool("vyron_list_roles", "All roles an AI can have, with what each does.", {}, async () => {
+    tool("vyron_list_projects", "List the user's Roblox projects and which one is active.", {}, async () => {
       const s = await this.state();
-      return Object.entries(s.roleInfo).map(([role, v]) => ({ role, group: v.group, does: v.short, holders: s.agents.filter((a) => a.role === role).map((a) => a.name) }));
-    });
-
-    tool("vyron_list_agents", "List the AIs with role, status, model, provider, account email, token use and permissions.", {}, async () => {
-      const s = await this.state();
-      return s.agents.map((a) => ({ name: a.name, role: a.role, status: a.status, enabled: a.enabled, model: a.model, provider: a.providerName, accountEmail: a.accountEmail || null, tokens: `${a.used}/${a.budget}`, permissions: Object.entries(a.perms).filter(([, v]) => v).map(([k]) => k), tasksDone: a.tasksDone }));
-    });
-
-    tool("vyron_add_agent", "Add an AI to the team with a role.", {
-      name: z.string(), role: z.string().describe("One of the roles from vyron_list_roles"), model: z.string().optional(), provider_name: z.string().optional(), account_email: z.string().optional(),
-    }, async ({ name, role, model, provider_name, account_email }) => {
-      const s = await this.state();
-      if (!s.roleInfo[role]) throw new Error("Unknown role. Use vyron_list_roles.");
-      const prov = provider_name ? s.providers.find((p) => p.name.toLowerCase() === provider_name.toLowerCase()) : s.providers.find((p) => p.status === "connected") || s.providers[0];
-      if (!prov) throw new Error("No AI provider is set up in VYRON yet. The user adds one on the AI Agents page.");
-      await this.call("addAgent", { name, role, providerId: prov.id, model: model || prov.models[0] || "", accountEmail: account_email || "" });
-      return `Added ${name} as ${role} (${prov.name}).`;
-    });
-
-    tool("vyron_update_agent", "Change an AI: role, model, on/off, or permissions (read, write, delete, studio, mcp, web, images, delegate, stats; null = back to role default).", {
-      agent_name: z.string(), role: z.string().optional(), model: z.string().optional(), enabled: z.boolean().optional(),
-      permissions: z.record(z.string(), z.boolean().nullable()).optional(),
-    }, async ({ agent_name, role, model, enabled, permissions }) => {
-      const s = await this.state();
-      const a = this.agentByName(s, agent_name);
-      const patch = {};
-      if (role) { if (!s.roleInfo[role]) throw new Error("Unknown role"); patch.role = role; }
-      if (model) patch.model = model;
-      if (permissions) patch.perms = permissions;
-      if (Object.keys(patch).length) await this.call("updateAgent", a.id, patch);
-      if (enabled !== undefined) await this.call("agentAction", a.id, enabled ? "enable" : "disable");
-      return `Updated ${a.name}.`;
-    });
-
-    tool("vyron_scan_local", "Find free AI apps running on this PC (Ollama, LM Studio, …) and their downloaded models.", {}, async () => {
-      await this.state();
-      const L = await this.call("scanLocal");
-      return { apps: L.servers.filter((s) => s.running).map((s) => ({ app: s.id, name: s.name, models: s.models.map((m) => m.id) })), notRunning: L.servers.filter((s) => !s.running).map((s) => s.name), imageAI: L.image?.running ? "Forge is running" : null, recommended: L.recommended.map((r) => ({ model: r.model, size: r.size, goodFor: r.goodFor, tools: r.tools })) };
-    });
-
-    tool("vyron_download_model", "Download a free model with Ollama (e.g. qwen3:8b). Runs in the background; check with vyron_scan_local.", { model: z.string() }, async ({ model }) => {
-      await this.state();
-      await this.call("pullModel", model);
-      return `Downloading ${model}. It can take a few minutes.`;
-    });
-
-    tool("vyron_add_local_ai", "Add an AI to the team that runs free on this PC with a local model.", {
-      model: z.string().describe("A downloaded model, e.g. qwen2.5-coder:7b"), role: z.string(), name: z.string().optional(), app: z.string().optional().describe("Local app id, default ollama"),
-    }, async ({ model, role, name, app = "ollama" }) => {
-      const s = await this.state();
-      if (!s.roleInfo[role]) throw new Error("Unknown role. Use vyron_list_roles.");
-      const L = await this.call("scanLocal");
-      const srv = L.servers.find((x) => x.id === app);
-      if (!srv?.running) throw new Error(`${srv?.name || app} isn't running on this PC.`);
-      if (!srv.models.some((m) => m.id === model)) throw new Error(`${model} isn't downloaded. Downloaded: ${srv.models.map((m) => m.id).join(", ") || "none"}`);
-      await this.call("addLocalAgent", { serverId: app, model, role, name });
-      return `Added ${name || model} as ${role}, running free on ${model}.`;
-    });
-
-    tool("vyron_list_projects", "List Roblox projects and which one is active.", {}, async () => {
-      const s = await this.state();
-      return s.projects.map((p) => ({ id: p.id, name: p.game?.name || p.name, active: p.id === s.activeProjectId, universeId: p.universeId || null, placeId: p.placeId || null, studioConnected: p.studioConnected, rojoFolder: p.rojoDir || null }));
+      return s.projects.map((p) => proj(p, s));
     });
 
     tool("vyron_set_project", "Make a project the active one (by name or id).", { project: z.string() }, async ({ project }) => {
       const s = await this.state();
-      const p = s.projects.find((x) => x.id === project || (x.game?.name || x.name).toLowerCase() === project.toLowerCase());
-      if (!p) throw new Error("Project not found");
+      const p = this.findProject(s, project);
       await this.call("setActiveProject", p.id);
       return `Active project: ${p.game?.name || p.name}`;
     });
 
-    tool("vyron_build", "Ask the team to build something in the active game. The Co-Founder or Lead Developer plans it and splits it into tasks for the right roles. Returns the build task id.", {
-      request: z.string().describe("What to build, in detail"), priority: z.enum(["low", "normal", "high"]).optional(),
-    }, async ({ request, priority }) => {
+    tool("vyron_add_project", "Add a Roblox project to VYRON. Give a place id to load the game's name and icon; folder is optional (a Rojo project folder).", {
+      name: z.string().optional(), place_id: z.string().optional(), folder: z.string().optional(),
+    }, async ({ name, place_id, folder }) => {
+      const id = await this.call("addProject", { name, placeId: place_id, rojoDir: folder });
+      return { projectId: id };
+    });
+
+    tool("vyron_studio", "Check which Roblox Studio windows VYRON sees (reconnects if needed).", {}, async () => {
+      const s = await this.state();
+      if (s.studio.status !== "connected") await this.call("connectStudio");
+      const w = await this.call("detectStudios").catch((e) => ({ error: e.message }));
+      return w;
+    });
+
+    tool("vyron_list_ideas", "Game ideas in VYRON's library. Filter by category (e.g. Brainrot, Shooter, Simulator) or only the ones the user picked.", {
+      category: z.string().optional(), picked_only: z.boolean().optional(),
+    }, async ({ category, picked_only }) => {
+      const s = await this.state();
+      let list = [...(await this.call("listIdeas", category)), ...s.ideas.custom.filter((i) => !category || i.category.toLowerCase() === category.toLowerCase())];
+      if (picked_only) list = list.filter((i) => s.ideas.picked.includes(i.id));
+      return { categories: s.ideas.categories, ideas: list.map((i) => ({ id: i.id, category: i.category, title: i.title, pitch: i.pitch, features: i.features, picked: s.ideas.picked.includes(i.id) })) };
+    });
+
+    tool("vyron_pick_ideas", "Set which ideas are picked in VYRON's Ideas tab (by id).", { ids: z.array(z.string()) }, async ({ ids }) => {
+      await this.call("setPicked", ids);
+      return `Picked ${ids.length} idea(s).`;
+    });
+
+    tool("vyron_add_idea", "Save a new game idea in the user's own ideas (Custom tab).", { title: z.string(), pitch: z.string(), features: z.string().optional() }, async (a) => {
+      const id = await this.call("addCustomIdea", a);
+      return { id };
+    });
+
+    tool("vyron_revenue", "The user's Robux, pending Robux and today's sales with Danish kroner at the official DevEx rate (Roblox DevEx page + ECB daily rates).", {}, async () => {
       await this.state();
-      const id = await this.call("build", request, { priority });
-      return { taskId: id, next: "Use vyron_wait_for_task or vyron_get_task to follow it." };
+      return this.call("revenueKr");
     });
 
-    tool("vyron_create_task", "Give one task to a role or a specific AI.", {
-      description: z.string(), title: z.string().optional(), role: z.string().optional(), agent_name: z.string().optional(), priority: z.enum(["low", "normal", "high"]).optional(),
-    }, async ({ description, title, role, agent_name, priority }) => {
-      const s = await this.state();
-      const agent = agent_name ? this.agentByName(s, agent_name) : null;
-      if (role && !s.roleInfo[role]) throw new Error("Unknown role");
-      const id = await this.call("createTask", { title, description, role: role || null, agentId: agent?.id || null, priority: priority || "normal" });
-      return { taskId: id };
-    });
-
-    tool("vyron_list_tasks", "List tasks (newest first).", {
-      filter: z.enum(["active", "all", "completed", "failed"]).optional(), limit: z.number().int().min(1).max(100).optional(),
-    }, async ({ filter = "active", limit = 30 }) => {
-      const s = await this.state();
-      const ok = (t) => filter === "all" || (filter === "active" ? !["completed", "failed", "cancelled"].includes(t.status) : filter === "completed" ? t.status === "completed" : ["failed", "cancelled"].includes(t.status));
-      return s.tasks.filter((t) => t.kind !== "chat" && ok(t)).slice(-limit).reverse().map((t) => this.taskBrief(s, t));
-    });
-
-    tool("vyron_get_task", "Full details of a task: description, plan, sub-tasks, steps, changed files, team notes, result and errors.", { id: z.string() }, async ({ id }) => {
-      const s = await this.state();
-      const t = s.tasks.find((x) => x.id === id);
-      if (!t) throw new Error("Task not found");
-      return {
-        ...this.taskBrief(s, t), description: t.description, plan: t.plan || undefined,
-        subtasks: s.tasks.filter((k) => k.parentId === t.id).map((k) => this.taskBrief(s, k)),
-        steps: (t.steps || []).slice(-25).map((x) => clip(x.text, 400)), changedFiles: (t.changes || []).map((c) => `${c.op} ${c.path}`),
-        notes: (t.notes || []).map((n) => `${n.agent}: ${n.text}`), result: t.result || undefined,
-      };
-    });
-
-    tool("vyron_wait_for_task", "Wait until a task (or build) finishes, up to the timeout, then return its status and result.", {
-      id: z.string(), timeout_seconds: z.number().int().min(5).max(300).optional(),
-    }, async ({ id, timeout_seconds = 120 }) => {
-      const end = Date.now() + timeout_seconds * 1000;
-      for (;;) {
-        const s = await this.state();
-        const t = s.tasks.find((x) => x.id === id);
-        if (!t) throw new Error("Task not found");
-        const done = ["completed", "failed", "cancelled"].includes(t.status);
-        if (done || Date.now() > end) return { ...this.taskBrief(s, t), finished: done, result: t.result ? clip(t.result, 4000) : undefined, waitingForApproval: s.approvals.filter((a) => a.taskId === id || s.tasks.find((k) => k.id === a.taskId)?.parentId === id).map((a) => a.title) };
-        await sleep(1500);
-      }
-    });
-
-    tool("vyron_cancel_task", "Cancel a task (and its sub-tasks).", { id: z.string() }, async ({ id }) => { await this.call("cancelTask", id); return "Cancelled."; });
-    tool("vyron_retry_task", "Retry a failed or cancelled task.", { id: z.string() }, async ({ id }) => { await this.call("retryTask", id); return "Retrying."; });
-
-    tool("vyron_chat", "Send a message to one AI in VYRON (it can act on the project with its tools). Read the reply with vyron_get_chat.", {
-      agent_name: z.string(), message: z.string(),
-    }, async ({ agent_name, message }) => {
-      const s = await this.state();
-      const a = this.agentByName(s, agent_name);
-      await this.call("sendChat", { agentIds: [a.id], text: message });
-      return `Sent to ${a.name}. Use vyron_get_chat to read the reply.`;
-    });
-
-    tool("vyron_get_chat", "Read the latest messages in the chat with an AI.", { agent_name: z.string(), last: z.number().int().min(1).max(50).optional() }, async ({ agent_name, last = 10 }) => {
-      const s = await this.state();
-      const a = this.agentByName(s, agent_name);
-      const busy = s.tasks.some((t) => t.kind === "chat" && t.agentId === a.id && ["pending", "in_progress", "waiting_approval"].includes(t.status));
-      return { agent: a.name, stillWorking: busy, messages: (s.conversations[a.id] || []).slice(-last).map((m) => ({ from: m.role === "user" ? "you" : m.role === "error" ? "error" : a.name, text: clip(m.text, 3000) })) };
+    tool("vyron_notify", "Show a short message to the user inside VYRON (e.g. 'Your game is ready to test').", { message: z.string() }, async ({ message }) => {
+      await this.state();
+      await this.call("notify", message);
+      return "Shown in VYRON.";
     });
 
     tool("vyron_activity", "Recent activity log.", { limit: z.number().int().min(1).max(150).optional() }, async ({ limit = 40 }) => {
       const s = await this.state();
       return s.activity.slice(-limit).map((l) => `${new Date(l.at).toLocaleTimeString()} [${l.source}] ${l.text}`);
-    });
-
-    tool("vyron_list_images", "Images the Image Creator made for the active project (file paths).", {}, async () => {
-      const s = await this.state();
-      const imgs = await this.call("listImages", s.activeProjectId);
-      return imgs.map((i) => ({ name: i.name, kind: i.kind, size: `${i.w}x${i.h}`, by: i.agent, file: i.file }));
     });
 
     return T;

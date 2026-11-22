@@ -3,18 +3,13 @@
 // turned on "require sign-in" and is signed out is everything else locked.
 const METHODS = [
   "publicState", "saveSettings",
-  "addProvider", "updateProvider", "removeProvider", "testProvider",
-  "addAgent", "updateAgent", "removeAgent", "agentAction", "createDefaultTeam",
-  "addServer", "updateServer", "removeServer", "connectServer", "disconnectServer", "refreshServer", "setToolPolicy",
-  "detectStudios", "addProject", "updateProject", "removeProject", "setActiveProject", "refreshGame",
-  "listFiles", "readFile", "getChange", "undoChange", "snapshotProject",
-  "savePrompt", "deletePrompt", "toggleFavorite", "improvePrompt",
-  "build", "createTask", "cancelTask", "retryTask", "clearFinishedTasks", "resolveApproval",
-  "sendChat", "clearChat",
-  "linkRoblox", "unlinkRoblox", "setRobloxApiKey", "clearRobloxApiKey", "refreshRevenue",
-  "listImages", "deleteImage", "openImageFolder",
-  "scanLocal", "startOllama", "pullModel", "deleteModel", "connectLocal", "addLocalAgent", "setImageBackend",
+  "claudeSend", "claudeStop", "claudeNewChat", "claudeLogin", "claudeCheck",
+  "listIdeas", "setPicked", "addCustomIdea", "removeCustomIdea", "ideaPrompt", "buildIdeas",
+  "connectStudio", "detectStudios", "addProject", "updateProject", "removeProject", "setActiveProject", "refreshGame",
+  "linkRoblox", "unlinkRoblox", "setRobloxApiKey", "clearRobloxApiKey", "refreshRevenue", "refreshRates",
 ];
+// Read-only helpers the connector uses (not reachable from the UI's bridge list above).
+const INTERNAL = ["revenueKr", "notify"];
 
 const AUTH = {
   authStatus: (a) => a.public(),
@@ -41,7 +36,7 @@ async function dispatch(ctx, method, args) {
     if (!auth) throw new Error("Sign-in is not available");
     return AUTH[method](auth, ...args);
   }
-  if (!METHODS.includes(method) && !CONTROL[method]) throw new Error("Unknown method " + method);
+  if (!METHODS.includes(method) && !CONTROL[method] && !(ctx.internal && INTERNAL.includes(method))) throw new Error("Unknown method " + method);
   if (auth && auth.locked) {
     if (method === "publicState") return lockedState(auth);
     throw new Error("Sign in to VYRON first");

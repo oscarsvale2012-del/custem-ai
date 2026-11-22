@@ -75,9 +75,9 @@ async function test(name, fn) {
   let loggedOut = false;
   const TMP = path.join(__dirname, "..", ".testdata-rev");
   fs.rmSync(TMP, { recursive: true, force: true });
-  const { Backend } = require("../src/backend");
+  const { Backend } = require("../src/core");
   const be = new Backend({ dataDir: TMP, encrypt: (s) => "x:" + Buffer.from(s).toString("hex"), decrypt: (s) => Buffer.from(s.slice(2), "hex").toString(),
-    host: { robloxLogin: async () => {}, robloxFetch: fakeFetch, robloxLogout: async () => { loggedOut = true; } } });
+    host: { robloxLogin: async () => {}, robloxFetch: fakeFetch, robloxLogout: async () => { loggedOut = true; } }, studio: false, claude: { exe: null }, fetchImpl: async () => { throw new Error("offline"); } });
   await be.init();
   await test("link → account, balance, pending and summary lines", async () => {
     const me = await be.linkRoblox();
@@ -107,7 +107,7 @@ async function test(name, fn) {
     assert.equal(be.publicState().revenue.account, null);
   });
   await test("without the desktop app, linking explains why", async () => {
-    const be2 = new Backend({ dataDir: TMP + "2", encrypt: (s) => s, decrypt: (s) => s });
+    const be2 = new Backend({ dataDir: TMP + "2", encrypt: (s) => s, decrypt: (s) => s, studio: false, claude: { exe: null } });
     await assert.rejects(be2.linkRoblox(), /desktop app/);
   });
 

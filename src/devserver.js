@@ -4,7 +4,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { Backend } = require("./backend");
+const { Backend } = require("./core");
 const { dispatch, lockedState } = require("./api");
 const { AuthManager } = require("./auth");
 
@@ -35,6 +35,7 @@ const startBackend = async () => { if (!started) { started = true; await backend
 const sendState = () => send("state", !auth.locked && started ? backend.publicState() : lockedState(auth));
 backend.on("state", (s) => !auth.locked && send("state", s));
 backend.on("log", (l) => !auth.locked && send("log", l));
+backend.on("notify", (n) => send("notify", n));
 auth.on("change", sendState);
 auth.on("signedIn", async () => { await startBackend(); sendState(); });
 auth.on("signedOut", () => sendState());

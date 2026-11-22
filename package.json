@@ -1,20 +1,19 @@
 {
   "name": "vyron",
   "productName": "VYRON",
-  "version": "0.10.1",
-  "description": "VYRON - AI game studio: many AI agents, MCP servers and Roblox Studio working together",
+  "version": "1.0.0",
+  "description": "VYRON - desktop companion for Claude: build Roblox games with Claude, game ideas and DevEx kroner",
   "main": "main.js",
   "author": "VYRON",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
     "dev:web": "node src/devserver.js",
-    "test": "node test/run.js && node test/revenue.js && node test/auth.js && node test/team.js && node test/control.js && node test/local.js",
+    "test": "node test/core.js && node test/revenue.js && node test/auth.js",
     "icon": "electron build/render-icon.js",
     "dist": "electron-builder --win --publish never"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.136.0",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "zod": "^4.0.0"
   },
@@ -26,10 +25,23 @@
     "appId": "com.vyron.app",
     "productName": "VYRON",
     "copyright": "VYRON",
-    "directories": { "output": "dist", "buildResources": "build" },
-    "files": ["main.js", "preload.js", "src/**/*", "renderer/**/*", "package.json", "!src/devserver.js"],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "renderer/**/*",
+      "package.json",
+      "!src/devserver.js"
+    ],
     "win": {
-      "target": ["nsis", "portable"],
+      "target": [
+        "nsis",
+        "portable"
+      ],
       "icon": "build/icon.png",
       "executableName": "VYRON"
     },
@@ -44,6 +56,8 @@
       "deleteAppDataOnUninstall": false,
       "artifactName": "VYRON-Setup-${version}.${ext}"
     },
-    "portable": { "artifactName": "VYRON-${version}-Portable.exe" }
+    "portable": {
+      "artifactName": "VYRON-${version}-Portable.exe"
+    }
   }
 }

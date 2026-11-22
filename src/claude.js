@@ -1,0 +1,211 @@
+// Runs the Claude Code app that is installed on this PC (claude.exe) in the
+// background, so the user can talk to Claude from inside VYRON. Claude gets two
+// tool servers: VYRON's own connector (to control VYRON) and Roblox Studio.
+// Uses the user's own Claude sign-in; VYRON never sees a password or key.
+const EventEmitter = require("events");
+const { spawn, execFile } = require("child_process");
+const fs = require("fs");
+const path = require("path");
+
+const now = () => Date.now();
+const clip = (s, n) => (s && s.length > n ? s.slice(0, n) + "…" : s || "");
+
+const SYSTEM = [
+  "You are running inside VYRON, the user's desktop app for making Roblox games. The user talks to you from VYRON's Claude tab.",
+  "Tools: the `vyron` server controls VYRON (projects, picked game ideas, revenue in kroner, messages to the user). The `roblox_studio` server controls the Roblox Studio window the user has open.",
+  "When asked to build a game, build it for real in Roblox Studio (scripts, parts, UI), test it with play mode when useful, and save the place.",
+  "Write original games: never copy other games' names, characters or art. Keep replies short and simple; the user prefers brief answers.",
+].join(" ");
+
+function cmpVer(a, b) {
+  const x = a.split(".").map(Number), y = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0);
+  return 0;
+}
+
+/** Where claude.exe is. Newest Claude desktop copy first, then the standalone installs. */
+function findClaude(env = process.env) {
+  if (env.VYRON_CLAUDE_EXE && fs.existsSync(env.VYRON_CLAUDE_EXE)) return env.VYRON_CLAUDE_EXE;
+  const found = [];
+  const la = env.LOCALAPPDATA;
+  if (la) {
+    const base = path.join(la, "Claude-Data");
+    const ls = (d) => { try { return fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name); } catch { return []; } };
+    for (const acct of ls(base)) {
+      const cc = path.join(base, acct, "claude-code");
+      for (const ver of ls(cc).filter((v) => /^\d+(\.\d+)*$/.test(v))) {
+        for (const h of ls(path.join(cc, ver))) {
+          const exe = path.join(cc, ver, h, "claude.exe");
+          if (fs.existsSync(exe)) found.push({ ver, exe });
+        }
+      }
+    }
+  }
+  found.sort((a, b) => cmpVer(b.ver, a.ver));
+  if (found[0]) return found[0].exe;
+  const home = env.USERPROFILE || env.HOME || "";
+  for (const p of [path.join(home, ".local", "bin", "claude.exe"), env.APPDATA && path.join(env.APPDATA, "npm", "claude.cmd")]) if (p && fs.existsSync(p)) return p;
+  for (const dir of String(env.PATH || "").split(path.delimiter)) {
+    for (const n of ["claude.exe", "claude.cmd", "claude"]) { const p = path.join(dir, n); if (dir && fs.existsSync(p)) return p; }
+  }
+  return null;
+}
+
+function studioServer(env = process.env) {
+  const bat = env.LOCALAPPDATA ? path.join(env.LOCALAPPDATA, "Roblox", "mcp.bat") : null;
+  return bat && fs.existsSync(bat) ? { type: "stdio", command: "cmd.exe", args: ["/c", bat], env: {} } : null;
+}
+
+class ClaudeRunner extends EventEmitter {
+  /** opts: { dataDir, control: () => ({url, token, running}), settings: () => ({access, model}), log, spawnImpl, exe } */
+  constructor(opts) {
+    super();
+    this.o = opts;
+    this.file = path.join(opts.dataDir, "claude-chat.json");
+    this.proc = null;
+    this.busy = false;
+    this.auth = null;
+    this.exe = opts.exe !== undefined ? opts.exe : findClaude();
+    try { const j = JSON.parse(fs.readFileSync(this.file, "utf8")); this.sessionId = j.sessionId || null; this.messages = j.messages || []; }
+    catch { this.sessionId = null; this.messages = []; }
+  }
+
+  save() {
+    fs.mkdirSync(path.dirname(this.file), { recursive: true });
+    fs.writeFileSync(this.file, JSON.stringify({ sessionId: this.sessionId, messages: this.messages.slice(-300) }));
+  }
+  changed() { this.emit("change"); }
+  push(m) { this.messages.push({ at: now(), ...m }); if (this.messages.length > 400) this.messages.splice(0, this.messages.length - 400); this.changed(); }
+
+  public() {
+    return { found: !!this.exe, exe: this.exe, auth: this.auth, busy: this.busy, sessionId: this.sessionId, messages: this.messages.slice(-150) };
+  }
+
+  run(args, timeout = 20000) {
+    return new Promise((resolve) => {
+      if (!this.exe) return resolve({ code: -1, out: "" });
+      execFile(this.exe, args, { windowsHide: true, timeout }, (err, out) => resolve({ code: err ? err.code || 1 : 0, out: String(out || "") }));
+    });
+  }
+
+  async checkAuth() {
+    if (!this.exe) { this.exe = findClaude(); if (!this.exe) { this.auth = null; this.changed(); return null; } }
+    const r = await this.run(["auth", "status"]);
+    try { const j = JSON.parse(r.out); this.auth = { loggedIn: !!j.loggedIn, method: j.authMethod || null, email: j.email || j.account?.email || null }; }
+    catch { this.auth = { loggedIn: false, method: null, error: clip(r.out.trim(), 200) || "Could not read Claude sign-in" }; }
+    this.changed();
+    return this.auth;
+  }
+
+  /** Opens a console window where the user signs in to their Claude account. */
+  login() {
+    if (!this.exe) throw new Error("Claude Code isn't installed. Install the Claude desktop app first.");
+    const sp = this.o.spawnImpl || spawn;
+    sp("cmd.exe", ["/c", "start", "Sign in to Claude", "cmd.exe", "/k", this.exe, "auth", "login"], { detached: true, stdio: "ignore", windowsHide: false }).unref?.();
+    // Check again while the user signs in.
+    let n = 0;
+    clearInterval(this._authT);
+    this._authT = setInterval(async () => { const a = await this.checkAuth(); if (a?.loggedIn || ++n > 60) clearInterval(this._authT); }, 5000);
+  }
+
+  mcpConfig() {
+    const servers = {};
+    const c = this.o.control();
+    if (c?.running) servers.vyron = { type: "http", url: c.url, headers: { Authorization: "Bearer " + c.token } };
+    const st = studioServer();
+    if (st) servers.roblox_studio = st;
+    const file = path.join(this.o.dataDir, "claude-mcp.json");
+    fs.writeFileSync(file, JSON.stringify({ mcpServers: servers }, null, 2));
+    return { file, names: Object.keys(servers) };
+  }
+
+  args(cwd) {
+    const s = this.o.settings();
+    const mcp = this.mcpConfig();
+    const a = ["-p", "--output-format", "stream-json", "--verbose", "--mcp-config", mcp.file, "--strict-mcp-config", "--append-system-prompt", SYSTEM];
+    if (s.access === "full") a.push("--dangerously-skip-permissions");
+    else a.push("--permission-mode", "acceptEdits", "--allowedTools", ...mcp.names.map((n) => "mcp__" + n), "Read", "Edit", "Write", "Glob", "Grep", "WebSearch", "WebFetch");
+    if (s.model) a.push("--model", s.model);
+    if (this.sessionId) a.push("--resume", this.sessionId);
+    return { args: a, cwd };
+  }
+
+  /** Send a message to Claude. Replies stream into this.messages. */
+  send(text, cwd) {
+    text = String(text || "").trim();
+    if (!text) throw new Error("Type a message first");
+    if (!this.exe) throw new Error("Claude Code isn't installed on this PC. Install the Claude desktop app first.");
+    if (this.busy) throw new Error("Claude is still working. Wait or press Stop.");
+    if (!cwd || !fs.existsSync(cwd)) throw new Error("Working folder not found: " + cwd);
+    const { args } = this.args(cwd);
+    this.push({ role: "user", text });
+    this.busy = true;
+    this.changed();
+    const sp = this.o.spawnImpl || spawn;
+    const p = sp(this.exe, args, { cwd, windowsHide: true, env: { ...process.env } });
+    this.proc = p;
+    let buf = "", err = "", gotResult = false;
+    p.stdout.on("data", (d) => {
+      buf += d.toString();
+      let i;
+      while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (line) this.onLine(line, () => (gotResult = true)); }
+    });
+    p.stderr.on("data", (d) => { err = (err + d.toString()).slice(-4000); });
+    p.on("error", (e) => { this.push({ role: "error", text: "Could not start Claude: " + e.message }); });
+    p.on("close", (code) => {
+      if (buf.trim()) this.onLine(buf.trim(), () => (gotResult = true));
+      this.proc = null;
+      this.busy = false;
+      if (this.stopped) { this.push({ role: "error", text: "Stopped." }); this.stopped = false; }
+      else if (!gotResult && code) this.push({ role: "error", text: clip(err.trim(), 800) || "Claude stopped (code " + code + ")." });
+      this.save();
+      this.changed();
+      this.emit("done");
+    });
+    p.stdin.end(text);
+  }
+
+  onLine(line, gotResult) {
+    let j;
+    try { j = JSON.parse(line); } catch { return; }
+    if (j.session_id && j.type === "system") { this.sessionId = j.session_id; return; }
+    if (j.type === "assistant") {
+      for (const c of j.message?.content || []) {
+        if (c.type === "text" && c.text.trim() && !/^Not logged in/i.test(c.text.trim())) this.push({ role: "assistant", text: c.text });
+        else if (c.type === "tool_use") this.push({ role: "tool", tool: c.name, text: toolLabel(c.name, c.input) });
+      }
+    } else if (j.type === "user") {
+      for (const c of j.message?.content || []) if (c.type === "tool_result" && c.is_error) this.push({ role: "tool", tool: "error", text: clip(typeof c.content === "string" ? c.content : JSON.stringify(c.content), 300) });
+    } else if (j.type === "result") {
+      gotResult();
+      if (j.session_id) this.sessionId = j.session_id;
+      if (j.is_error) {
+        const msg = String(j.result || j.subtype || "Claude reported an error");
+        this.push({ role: "error", text: /not logged in|\/login/i.test(msg) ? "You're not signed in to Claude yet. Press “Sign in to Claude”." : msg });
+        if (/not logged in|\/login/i.test(msg)) { this.auth = { loggedIn: false }; }
+        return;
+      }
+      this.push({ role: "result", text: `Done in ${Math.round((j.duration_ms || 0) / 1000)} s${j.num_turns ? ` · ${j.num_turns} steps` : ""}` });
+    }
+  }
+
+  stop() { if (this.proc) { this.stopped = true; try { this.proc.kill(); } catch { /* gone */ } } }
+
+  newChat() {
+    if (this.busy) throw new Error("Stop Claude first");
+    this.sessionId = null;
+    this.messages = [];
+    this.save();
+    this.changed();
+  }
+
+  shutdown() { clearInterval(this._authT); this.stop(); }
+}
+
+function toolLabel(name, input = {}) {
+  const n = String(name).replace(/^mcp__/, "").replace(/__/, " · ");
+  const hint = input.file_path || input.path || input.pattern || input.command || input.query || input.name || input.title || input.message || "";
+  return clip(n + (hint ? " — " + String(hint) : ""), 160);
+}
+
+module.exports = { ClaudeRunner, findClaude, studioServer, SYSTEM };

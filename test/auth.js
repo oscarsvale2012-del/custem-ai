@@ -86,7 +86,7 @@ function fakeFirebase() {
   });
   const { AuthManager } = require("../src/auth");
   const { dispatch } = require("../src/api");
-  const { Backend } = require("../src/backend");
+  const { Backend } = require("../src/core");
   const TMP = path.join(__dirname, "..", ".testdata-auth");
   fs.rmSync(TMP, { recursive: true, force: true });
   const enc = (s) => "x:" + Buffer.from(s).toString("hex");
@@ -99,7 +99,7 @@ function fakeFirebase() {
   };
   const mk = () => new AuthManager({ dataDir: TMP, encrypt: enc, decrypt: dec, openExternal: browser });
   const auth = mk();
-  const backend = new Backend({ dataDir: TMP, encrypt: enc, decrypt: dec });
+  const backend = new Backend({ dataDir: TMP, encrypt: enc, decrypt: dec, studio: false, claude: { exe: null } });
   backend.authInfo = () => auth.public(); // as main.js does
   const ctx = { backend, auth };
 
@@ -107,7 +107,7 @@ function fakeFirebase() {
   await test("by default no sign-in is needed: the app is open", async () => {
     const s = await dispatch(ctx, "publicState");
     assert.equal(s.locked, undefined);
-    assert(Array.isArray(s.agents));
+    assert(Array.isArray(s.projects));
     assert.equal(s.auth.required, false);
     await dispatch(ctx, "saveSettings", [{ theme: "dark" }]);
   });
@@ -147,7 +147,7 @@ function fakeFirebase() {
     assert.equal(u.email, "me@test.com");
     assert.equal(auth.signedIn, true);
     const s = await dispatch(ctx, "publicState");
-    assert(!s.locked && Array.isArray(s.agents));
+    assert(!s.locked && Array.isArray(s.projects));
     assert(!JSON.stringify(s).includes("rt-"), "refresh token leaked to the UI");
   });
   await test("the session is saved encrypted and restored on the next start", async () => {
@@ -166,7 +166,7 @@ function fakeFirebase() {
     await dispatch(ctx, "authSetup", [{ requireSignIn: true }]);
     assert.equal(auth.public().required, true);
     await dispatch(ctx, "authSignOut");
-    await assert.rejects(dispatch(ctx, "addProvider", [{ type: "openai" }]), /Sign in to VYRON first/);
+    await assert.rejects(dispatch(ctx, "addProject", [{ name: "x" }]), /Sign in to VYRON first/);
     assert.equal((await dispatch(ctx, "publicState")).locked, true);
     assert.equal(await mk().restore(), false);
   });

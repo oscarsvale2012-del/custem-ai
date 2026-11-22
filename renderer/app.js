@@ -1,5 +1,5 @@
-/* VYRON renderer. All data comes from the backend (Electron main
-   process, or src/devserver.js in a browser). Nothing here is simulated. */
+/* VYRON renderer. A companion app for Claude. All data comes from the
+   backend (Electron main process, or src/devserver.js in a browser). */
 "use strict";
 
 /* ---------------- bridge ---------------- */
@@ -64,34 +64,28 @@ const ICON = {
   key: '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2M17 6l3 3M14.5 8.5l2 2"/>', link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
 };
 const ic = (n, cls = "") => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[n] || ""}</svg>`;
+ICON.claude = '<path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4M5.3 5.3l2.8 2.8M15.9 15.9l2.8 2.8M5.3 18.7l2.8-2.8M15.9 8.1l2.8-2.8"/>';
+ICON.ideas = '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1 2V16h5.2v-.2c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z"/>';
+ICON.stop = '<rect x="6" y="6" width="12" height="12" rx="2"/>';
+ICON.check = '<path d="m5 12 5 5 9-10"/>';
 
-const PAGES = [
-  ["dashboard", "Dashboard"], ["workspace", "AI Workspace"], ["connect", "Connect AIs"], ["agents", "AI Agents"], ["team", "Team & Permissions"], ["mcp", "MCP Servers"],
-  ["roblox", "Roblox Studio"], ["projects", "Projects"], ["revenue", "Revenue"], ["prompts", "Prompt Library"], ["tasks", "Task Manager"], ["settings", "Settings"],
-];
+const PAGES = [["dashboard", "Dashboard"], ["claude", "Claude"], ["ideas", "Game Ideas"], ["projects", "Projects & Studio"], ["revenue", "Revenue"], ["settings", "Settings"]];
 const SUB = {
-  dashboard: "Your AI team at a glance", workspace: "Talk to agents and send instructions", connect: "Free AIs on your PC, online AIs and AI websites", agents: "Providers, models and team roles", team: "Every AI, its role, account and what it may do",
-  mcp: "External tools for your agents", roblox: "Studio connection and project files", projects: "Your Roblox games", revenue: "Robux, pending earnings and game revenue",
-  prompts: "Save, improve and reuse prompts", tasks: "Everything the agents are working on", settings: "Preferences, permissions and diagnostics",
+  dashboard: "Your game studio at a glance", claude: "Talk to Claude — it controls VYRON and Roblox Studio for you", ideas: "Pick ideas and let Claude build them",
+  projects: "Your Roblox games and the Studio connection", revenue: "Robux, pending earnings and DevEx value in kroner", settings: "Claude access, appearance and account",
 };
-const AGENT_ST = { working: ["Working", "ok"], idle: ["Idle", "idle"], disconnected: ["Not connected", "warn"], offline: ["Offline", ""], tokens: ["Out of tokens", "bad"] };
-const TASK_ST = { pending: "Pending", planning: "Planning", in_progress: "In progress", waiting_approval: "Waiting for approval", testing: "Testing", completed: "Completed", failed: "Failed", cancelled: "Cancelled" };
-const CATEGORIES = ["Roblox UI", "Game Mechanics", "Simulator Systems", "Tycoon Systems", "Combat Systems", "Inventory Systems", "Pet Systems", "Animation", "Optimization", "Bug Fixes", "Game Design", "Scripting"];
-const OPENAI_PRESETS = [["OpenAI", "https://api.openai.com/v1"], ["OpenRouter", "https://openrouter.ai/api/v1"], ["Groq", "https://api.groq.com/openai/v1"], ["Ollama (local)", "http://localhost:11434/v1"], ["LM Studio (local)", "http://localhost:1234/v1"]];
 
 /* ---------------- state ---------------- */
 let S = null;
 let desktop = false;
-const ui = {
-  route: lsGet("route") || "dashboard",
-  wsSel: [], wsFocus: null, taskSel: null, taskFilter: "active", promptCat: "All", promptQ: "",
-  mcpOpen: {}, fileSel: null, fileContent: null, files: null, filesFor: null, drawer: null,
-};
-function lsGet(k) { try { return localStorage.getItem("af." + k); } catch { return null; } }
-function lsSet(k, v) { try { localStorage.setItem("af." + k, v); } catch { /* ignore */ } }
-
-const agentById = (id) => S.agents.find((a) => a.id === id);
+let IDEAS = [];
+const ui = { route: lsGet("route") || "dashboard", ideaCat: "All", ideaQ: "", ideaTab: "library", drawer: null };
+if (!PAGES.some((p) => p[0] === ui.route)) ui.route = "dashboard";
+function lsGet(k) { try { return localStorage.getItem("vy." + k); } catch { return null; } }
+function lsSet(k, v) { try { localStorage.setItem("vy." + k, v); } catch { /* ignore */ } }
 const activeProject = () => S.projects.find((p) => p.id === S.activeProjectId) || null;
+const picked = () => new Set(S.ideas.picked);
+const allIdeas = () => [...IDEAS, ...S.ideas.custom];
 
 async function call(method, ...args) {
   try { return await B.call(method, ...args); }
@@ -102,13 +96,12 @@ function toast(msg, kind = "") {
   t.className = "toast " + kind;
   t.innerHTML = `<span class="dot ${kind === "error" ? "error" : "connected"}"></span><span>${esc(msg)}</span>`;
   $("#toasts").appendChild(t);
-  setTimeout(() => { t.style.transition = "opacity .3s"; t.style.opacity = 0; setTimeout(() => t.remove(), 300); }, kind === "error" ? 6000 : 3000);
+  setTimeout(() => { t.style.transition = "opacity .3s"; t.style.opacity = 0; setTimeout(() => t.remove(), 300); }, kind === "error" ? 6000 : kind === "note" ? 9000 : 3000);
 }
 
 /* ---------------- render loop (keeps inputs, focus and scroll) ---------------- */
 let rq = false;
 function render() { if (!rq) { rq = true; requestAnimationFrame(() => { rq = false; draw(); }); } }
-
 function preserve(root) {
   const keep = {};
   $$("[id]", root).forEach((el) => {
@@ -142,51 +135,38 @@ function draw() {
   drawNav();
   const page = $("#page");
   const keep = preserve(page);
-  const sticky = $("#thread") ? $("#thread").scrollHeight - $("#thread").scrollTop - $("#thread").clientHeight < 60 : true;
+  const th0 = $("#thread");
+  const sticky = th0 ? th0.scrollHeight - th0.scrollTop - th0.clientHeight < 80 : true;
   const pageScroll = page.scrollTop;
   page.innerHTML = (VIEWS[ui.route] || VIEWS.dashboard)();
   page.scrollTop = pageScroll;
-  const projChanged = ui.lastProj !== S.activeProjectId;
-  ui.lastProj = S.activeProjectId;
-  page.classList.toggle("settled", lastRoute === ui.route && !projChanged);
+  page.classList.toggle("settled", lastRoute === ui.route);
   if (lastRoute !== ui.route) { page.classList.remove("page-in"); void page.offsetWidth; page.classList.add("page-in"); page.scrollTop = 0; lastRoute = ui.route; }
   else restore(page, keep);
   const th = $("#thread"); if (th && sticky) th.scrollTop = th.scrollHeight;
   $("#title").textContent = PAGES.find((p) => p[0] === ui.route)?.[1] || "";
   $("#subtitle").textContent = SUB[ui.route] || "";
-  $("#topActions").innerHTML = `<button class="btn sm ${S.approvals.length ? "" : "ghost"}" data-act="openApprovals" title="Approvals">${ic("bell")}${S.approvals.length ? `<b>${S.approvals.length}</b> waiting` : ""}</button>`;
-  const dr = $("#drawerRoot"), dk = preserve(dr);
-  const drawerKey = ui.drawer + ":" + (ui.drawer === "task" ? ui.taskSel : ui.drawer === "agent" ? ui.agentSel : "");
-  dr.innerHTML = drawDrawer();
-  dr.classList.toggle("settled", dr.dataset.key === drawerKey);
-  dr.dataset.key = drawerKey;
-  restore(dr, dk);
-  // Keep looping animations in phase across re-renders so nothing jumps.
+  const C = S.claude;
+  $("#topActions").innerHTML = C.busy ? `<button class="btn sm" data-go="claude"><span class="spinner"></span>Claude is working…</button>` : "";
   const t = performance.now();
   $$(".spinner").forEach((e) => (e.style.animationDelay = -(t % 800) + "ms"));
-  $$(".dot.working,.st-working .dot").forEach((e) => (e.style.animationDelay = -(t % 1800) + "ms"));
-  $$(".dot.connecting,.dot.checking").forEach((e) => (e.style.animationDelay = -(t % 1000) + "ms"));
-  $$(".bar.live i").forEach((e) => (e.style.animationDelay = -(t % 1800) + "ms"));
+  $$(".dot.working,.dot.connecting").forEach((e) => (e.style.animationDelay = -(t % 1800) + "ms"));
   $$(".typing i").forEach((e, i) => (e.style.animationDelay = -(t % 1200) + i * 150 + "ms"));
-  afterDraw();
 }
 
 function drawNav() {
-  const counts = {
-    workspace: S.tasks.filter((t) => t.kind === "chat" && ["in_progress", "waiting_approval"].includes(t.status)).length,
-    agents: S.agents.filter((a) => a.status === "working").length,
-    tasks: S.tasks.filter((t) => ["pending", "planning", "in_progress", "testing", "waiting_approval"].includes(t.status) && t.kind !== "chat").length,
-    mcp: S.mcpServers.filter((m) => m.status === "error").length,
-  };
-  $("#nav").innerHTML = PAGES.map(([k, label]) => `<div class="nav ${ui.route === k ? "on" : ""}" data-go="${k}">${ic(k === "workspace" ? "workspace" : k)}${label}${counts[k] ? `<span class="count ${k === "mcp" ? "alert" : ""}">${counts[k]}</span>` : ""}</div>`).join("");
+  const counts = { ideas: S.ideas.picked.length, claude: S.claude.busy ? "•" : 0 };
+  $("#nav").innerHTML = PAGES.map(([k, label]) => `<div class="nav ${ui.route === k ? "on" : ""}" data-go="${k}">${ic(k === "projects" ? "roblox" : k)}${label}${counts[k] ? `<span class="count">${counts[k]}</span>` : ""}</div>`).join("");
   const p = activeProject();
-  const conn = S.providers.filter((x) => x.status === "connected").length;
+  const C = S.claude;
   $("#sideFoot").innerHTML = `
-    ${p ? `<div class="mini-proj" data-go="projects">${gameIcon(p, "sm")}<div class="grow"><div class="ell" style="font-weight:600;font-size:13px">${esc(p.game?.name || p.name)}</div><div class="faint" style="font-size:11.5px"><span class="dot ${p.studioConnected ? "connected" : "unknown"}" style="display:inline-block;width:6px;height:6px;margin-right:5px"></span>${p.studioConnected ? "Studio connected" : "Studio not linked"}</div></div></div>`
+    ${p ? `<div class="mini-proj" data-go="projects">${gameIcon(p, "sm")}<div class="grow"><div class="ell" style="font-weight:600;font-size:13px">${esc(p.game?.name || p.name)}</div><div class="faint" style="font-size:11.5px"><span class="dot ${p.studioConnected ? "connected" : "unknown"}" style="display:inline-block;width:6px;height:6px;margin-right:5px"></span>${p.studioConnected ? "Open in Studio" : "Studio not linked"}</div></div></div>`
       : `<div class="mini-proj" data-go="projects"><div class="gicon sm"><div class="fallback">+</div></div><div class="faint" style="font-size:12.5px">Add a project</div></div>`}
-    <div class="faint" style="font-size:11.5px;padding:2px 4px">${conn}/${S.providers.length} providers · ${S.mcpServers.filter((m) => m.status === "connected").length}/${S.mcpServers.length} MCP</div>
+    <div class="faint" style="font-size:11.5px;padding:2px 4px"><span class="dot ${claudeDot()}" style="display:inline-block;width:6px;height:6px;margin-right:6px"></span>${claudeLine()}</div>
     ${S.auth?.user ? `<div class="row acct" data-go="settings" title="${esc(S.auth.user.email)}"><div class="av" style="margin:0;width:24px;height:24px;font-size:10px;overflow:hidden">${S.auth.user.photo ? `<img src="${esc(S.auth.user.photo)}" alt="" style="width:100%;height:100%;object-fit:cover">` : esc(initials(S.auth.user.name))}</div><span class="ell grow" style="font-size:12px">${esc(S.auth.user.email)}</span></div>` : ""}`;
 }
+const claudeDot = () => (!S.claude.found ? "error" : S.claude.busy ? "working" : S.claude.auth?.loggedIn ? "connected" : "unknown");
+const claudeLine = () => (!S.claude.found ? "Claude Code not installed" : S.claude.busy ? "Claude is working" : S.claude.auth?.loggedIn ? "Claude ready" : S.claude.auth ? "Sign in to Claude" : "Checking Claude…");
 
 /* ---------------- shared pieces ---------------- */
 function gameIcon(p, size = "") {
@@ -195,17 +175,9 @@ function gameIcon(p, size = "") {
   const img = p?.game?.iconUrl ? `<img src="${esc(p.game.iconUrl)}" alt="${esc(name)} icon" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'fallback',textContent:${esc(JSON.stringify(initials(name)))}}))">` : fb;
   return `<div class="gicon ${size}" data-key="${esc(p?.id || "")}">${img}</div>`;
 }
-function statusChip(st) { const [label, cls] = AGENT_ST[st] || [st, ""]; return `<span class="chip ${cls}"><span class="dot ${st}"></span>${label}</span>`; }
-function taskStatus(st) { return `<span class="status-pill s-${st}">${st === "in_progress" || st === "planning" || st === "testing" ? '<span class="spinner" style="width:10px;height:10px;border-width:1.5px"></span>' : ""}${TASK_ST[st] || st}</span>`; }
-function bar(v, cls = "") { return `<div class="bar ${cls}"><i style="width:${Math.max(0, Math.min(100, v * 100)).toFixed(1)}%"></i></div>`; }
 function empty(title, text, action = "") { return `<div class="empty"><b>${esc(title)}</b>${esc(text)}${action ? `<div class="sp"></div>${action}` : ""}</div>`; }
-function agentNow(a) {
-  if (a.status === "working") { const t = S.tasks.find((x) => x.id === a.currentTaskId); return t ? `${esc(t.stage || t.title)}` : "Working…"; }
-  if (a.status === "idle") return "Ready for work.";
-  if (a.status === "tokens") return a.used >= a.budget ? "Token budget used up. Reset it or raise the budget." : "The provider account is out of credits.";
-  if (a.status === "offline") return a.enabled ? "Cannot reach the AI provider." : "Switched off.";
-  return esc(a.providerError || "Not connected.");
-}
+const krFmt = new Intl.NumberFormat("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 2 });
+const kr = (robux) => krFmt.format((Number(robux) || 0) * (S.rates?.dkkPerRobux || 0.0038 * 6.8));
 
 function md(text) {
   const parts = String(text || "").split(/```/);
@@ -225,407 +197,141 @@ function md(text) {
   }).join("");
 }
 
-function lineDiff(a, b) {
-  const A = a === null || a === undefined ? [] : String(a).split("\n"), Bl = b === null || b === undefined ? [] : String(b).split("\n");
-  if (A.length * Bl.length > 3e6) return [...A.map((l) => ["del", l]), ...Bl.map((l) => ["add", l])];
-  const n = A.length, m = Bl.length, dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
-  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) dp[i][j] = A[i] === Bl[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-  const out = []; let i = 0, j = 0;
-  while (i < n && j < m) { if (A[i] === Bl[j]) { out.push(["ctx", A[i]]); i++; j++; } else if (dp[i + 1][j] >= dp[i][j + 1]) out.push(["del", A[i++]]); else out.push(["add", Bl[j++]]); }
-  while (i < n) out.push(["del", A[i++]]); while (j < m) out.push(["add", Bl[j++]]);
-  return out;
-}
-function diffView(before, after) {
-  const rows = lineDiff(before, after);
-  const keep = rows.map((r, i) => r[0] !== "ctx" || rows.slice(Math.max(0, i - 3), i + 4).some((x) => x[0] !== "ctx"));
-  let html = "", skipped = 0;
-  rows.forEach((r, i) => {
-    if (!keep[i]) { skipped++; return; }
-    if (skipped) { html += `<div class="ctx">  … ${skipped} unchanged lines</div>`; skipped = 0; }
-    html += `<div class="${r[0]}">${r[0] === "add" ? "+ " : r[0] === "del" ? "- " : "  "}${esc(r[1])}</div>`;
-  });
-  if (skipped) html += `<div class="ctx">  … ${skipped} unchanged lines</div>`;
-  return `<div class="diff">${html || '<div class="ctx">  (empty file)</div>'}</div>`;
-}
-
 /* =================== VIEWS =================== */
 const VIEWS = {};
 
+function claudeSetupCard() {
+  const C = S.claude;
+  if (!C.found) return `<div class="panel pad row" style="gap:14px;border-color:rgba(245,143,143,.35)"><span class="dot error"></span><div class="grow"><b>Claude Code isn't installed on this PC</b><div class="muted" style="font-size:12.5px">Install the Claude desktop app (it includes Claude Code), then press Check again.</div></div><button class="btn sm" data-act="openUrl" data-id="https://claude.ai/download">Get Claude</button><button class="btn sm" data-act="claudeCheck">${ic("refresh")}Check again</button></div>`;
+  if (C.auth && !C.auth.loggedIn) return `<div class="panel pad row" style="gap:14px;border-color:rgba(255,200,120,.35)"><span class="dot unknown"></span><div class="grow"><b>Sign in to Claude once</b><div class="muted" style="font-size:12.5px">A window opens where you sign in with your Claude account (in your browser). VYRON never sees your password.</div></div><button class="btn primary" data-act="claudeLogin">${ic("claude")}Sign in to Claude</button><button class="btn sm ghost" data-act="claudeCheck">${ic("refresh")}</button></div>`;
+  return "";
+}
+
 VIEWS.dashboard = () => {
   const p = activeProject();
-  const ag = S.agents;
-  const cnt = (st) => ag.filter((a) => a.status === st).length;
-  const liveTasks = S.tasks.filter((t) => ["pending", "planning", "in_progress", "testing", "waiting_approval"].includes(t.status) && t.kind !== "chat").slice(-8).reverse();
-  return `
-  <div class="grid" style="grid-template-columns:minmax(0,1.55fr) minmax(0,1fr)">
-    ${activeProjectCard(p)}
+  const C = S.claude, sm = S.revenue.summary;
+  const last = C.messages.filter((m) => m.role !== "result").slice(-6);
+  return `${claudeSetupCard()}${claudeSetupCard() ? '<div class="sp"></div>' : ""}
+  <div class="grid" style="grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)">
+    ${projectCard(p)}
     <div class="panel pad stack">
-      <div class="row"><div class="h3 grow">Build with your AI team</div><span class="faint" style="font-size:12px">${p ? esc(p.game?.name || p.name) : "No project"}</span></div>
-      <textarea class="input" id="quickBuild" placeholder="Describe a game system… e.g. “Create a simulator with pets, eggs, an inventory, a shop, currency and upgrades with a clean modern interface.”" style="min-height:118px"></textarea>
-      <div class="row"><button class="btn sm ghost" data-go="prompts">${ic("prompts")}Prompt library</button><div class="grow"></div><button class="btn primary" data-act="quickBuild">${ic("bolt")}Plan &amp; build</button></div>
+      <div class="row"><div class="h3 grow">Tell Claude what to build</div><span class="faint" style="font-size:12px">${p ? esc(p.game?.name || p.name) : "No project"}</span></div>
+      <textarea class="input" id="quickAsk" placeholder="e.g. “Add a pet egg shop with 3 rarities and a hatch animation” — Enter to send" style="min-height:110px"></textarea>
+      <div class="row"><button class="btn sm ghost" data-go="ideas">${ic("ideas")}Browse ${S.ideas.count}+ game ideas</button><div class="grow"></div><button class="btn primary" data-act="quickAsk" ${C.busy ? "disabled" : ""}>${ic("send")}Send to Claude</button></div>
     </div>
   </div>
   <div class="sp"></div>
   <div class="grid g4">
-    <div class="panel stat"><div class="label">Agents</div><div class="n">${cnt("working")}<span class="faint" style="font-size:15px"> working</span></div><div class="d">${cnt("idle")} idle · ${cnt("disconnected")} not connected · ${cnt("offline")} offline · ${cnt("tokens")} out of tokens</div></div>
-    <div class="panel stat"><div class="label">AI providers</div><div class="n">${S.providers.filter((x) => x.status === "connected").length}<span class="faint" style="font-size:15px"> / ${S.providers.length}</span></div><div class="d">${S.providers.length ? S.providers.map((x) => esc(x.name)).join(", ") : "None yet — add one on AI Agents"}</div></div>
-    <div class="panel stat"><div class="label">MCP servers</div><div class="n">${S.mcpServers.filter((m) => m.status === "connected").length}<span class="faint" style="font-size:15px"> / ${S.mcpServers.length}</span></div><div class="d">${S.mcpServers.reduce((n, m) => n + m.tools.length, 0)} tools available</div></div>
-    <div class="panel stat"><div class="label">Tasks</div><div class="n">${liveTasks.length}<span class="faint" style="font-size:15px"> active</span></div><div class="d">${S.tasks.filter((t) => t.status === "completed" && t.kind !== "chat").length} completed · ${S.tasks.filter((t) => t.status === "failed").length} failed</div></div>
+    <div class="panel stat click" data-go="claude"><div class="label">Claude</div><div class="n" style="font-size:20px"><span class="dot ${claudeDot()}" style="display:inline-block;margin-right:8px"></span>${claudeLine()}</div><div class="d">${C.messages.filter((m) => m.role === "user").length} messages in this chat</div></div>
+    <div class="panel stat click" data-go="projects"><div class="label">Roblox Studio</div><div class="n" style="font-size:20px">${S.studio.status === "connected" ? S.studios.length + " open" : "Not connected"}</div><div class="d">${esc(S.studios.map((s) => s.name).join(", ") || S.studioError || "")}</div></div>
+    <div class="panel stat click" data-go="ideas"><div class="label">Picked ideas</div><div class="n">${S.ideas.picked.length}</div><div class="d">${S.ideas.count} ideas in the library · ${S.ideas.custom.length} of your own</div></div>
+    <div class="panel stat click" data-go="revenue"><div class="label">Robux (DevEx value)</div><div class="n">${sm ? rbx(sm.balance) : "—"}</div><div class="d">${sm ? `≈ ${kr(sm.balance)} · pending ${kr(sm.pending)}` : "Link Roblox on the Revenue tab"}</div></div>
   </div>
   <div class="sp"></div>
-  <div class="grid g3">
-    <div class="panel"><div class="panel-h"><h3>Agents</h3><div class="grow"></div><button class="btn sm ghost" data-go="agents">Manage</button></div>
-      ${ag.length ? ag.map((a) => `<div class="list-row click" data-go="agents"><div class="ava" style="width:30px;height:30px;font-size:11px;border-radius:9px">${esc(initials(a.name))}</div><div class="grow"><div class="row"><b style="font-weight:600">${esc(a.name)}</b><span class="faint" style="font-size:12px">${esc(a.role)}</span></div><div class="faint ell" style="font-size:12px">${agentNow(a)}</div></div><span class="dot ${a.status}" title="${AGENT_ST[a.status][0]}"></span></div>`).join("")
-        : empty("No agents yet", "Connect an AI provider and your team is created automatically.", `<button class="btn sm" data-go="agents">${ic("plus")}Connect a provider</button>`)}
-    </div>
-    <div class="panel"><div class="panel-h"><h3>Active tasks</h3><div class="grow"></div><button class="btn sm ghost" data-go="tasks">All tasks</button></div>
-      ${liveTasks.length ? liveTasks.map((t) => `<div class="list-row click" data-act="openTask" data-id="${t.id}"><div class="grow"><div class="ell" style="font-weight:500">${esc(t.title)}</div><div class="faint ell" style="font-size:12px">${esc(agentById(t.agentId)?.name || "Unassigned")} · ${esc(t.stage || "")}</div></div>${taskStatus(t.status)}</div>`).join("")
-        : empty("Nothing running", "Describe something to build and the team will plan it.")}
-    </div>
+  <div class="grid g2">
+    <div class="panel"><div class="panel-h"><h3>Latest from Claude</h3><div class="grow"></div><button class="btn sm ghost" data-go="claude">Open chat</button></div>
+      <div style="padding:8px 14px 14px">${last.length ? last.map((m) => msgView(m, true)).join("") : empty("No chat yet", "Send Claude a message or pick some game ideas.")}</div></div>
     <div class="panel activity"><div class="panel-h"><h3>Recent activity</h3></div>
-      <div style="max-height:360px;overflow:auto" id="dashAct">${S.activity.slice(-30).reverse().map((l) => `<div class="list-row"><time>${time(l.at)}</time><div class="grow"><b class="lv-${l.level}" style="font-weight:600">${esc(l.source)}</b> <span class="muted">${esc(l.text)}</span></div></div>`).join("") || empty("Quiet so far", "")}</div>
-    </div>
-  </div>
-  ${S.projects.length > 1 ? `<div class="sp"></div><div class="panel"><div class="panel-h"><h3>Recent projects</h3></div><div class="row wrap" style="padding:14px 18px;gap:12px">${[...S.projects].sort((a, b) => (b.lastActivity || b.createdAt) - (a.lastActivity || a.createdAt)).slice(0, 6).map((p) => `<div class="mini-proj" data-act="setProject" data-id="${p.id}" style="min-width:220px">${gameIcon(p, "sm")}<div class="grow"><div class="ell" style="font-weight:600;font-size:13px">${esc(p.game?.name || p.name)}</div><div class="faint" style="font-size:11.5px">${p.id === S.activeProjectId ? "Active" : "Active " + ago(p.lastActivity)}</div></div></div>`).join("")}</div></div>` : ""}`;
+      <div style="max-height:360px;overflow:auto" id="dashAct">${S.activity.slice(-30).reverse().map((l) => `<div class="list-row"><time>${time(l.at)}</time><div class="grow"><b class="lv-${l.level}" style="font-weight:600">${esc(l.source)}</b> <span class="muted">${esc(l.text)}</span></div></div>`).join("") || empty("Quiet so far", "")}</div></div>
+  </div>`;
 };
 
-function activeProjectCard(p) {
-  if (!p) return `<div class="panel game-card"><div class="gicon"><div class="fallback">+</div></div><div class="game-meta stack grow"><h2>No project selected</h2><div class="muted">Add your Roblox game: link it from Roblox Studio, or enter its Place ID, and choose its Rojo folder.</div><div class="row"><button class="btn primary" data-act="addProject">${ic("plus")}Add project</button><button class="btn" data-go="roblox">${ic("roblox")}Connect Studio</button></div></div></div>`;
-  const agents = p.activeAgents.map(agentById).filter(Boolean);
-  const b = p.build;
-  return `<div class="panel game-card">
-    ${gameIcon(p)}
+function projectCard(p) {
+  if (!p) return `<div class="panel game-card"><div class="gicon"><div class="fallback">+</div></div><div class="game-meta stack grow"><h2>No project yet</h2><div class="muted">Add your Roblox game (or just open a place in Studio). Claude builds in the Studio window you have open.</div><div class="row"><button class="btn primary" data-act="addProject">${ic("plus")}Add project</button><button class="btn" data-go="projects">${ic("roblox")}Studio</button></div></div></div>`;
+  return `<div class="panel game-card">${gameIcon(p)}
     <div class="game-meta grow stack" style="gap:8px;min-width:0">
-      <div class="row"><div class="label">Active project</div><div class="grow"></div>
-        <button class="btn sm ghost icon" title="Refresh game info" data-act="refreshGame" data-id="${p.id}">${ic("refresh")}</button>
-        ${S.projects.length > 1 ? `<button class="btn sm" data-go="projects">Switch</button>` : ""}</div>
+      <div class="row"><div class="label">Active project</div><div class="grow"></div>${S.projects.length > 1 ? `<button class="btn sm" data-go="projects">Switch</button>` : ""}</div>
       <h2 class="ell">${esc(p.game?.name || p.name)}</h2>
-      <div class="kv">${p.universeId ? `<span>Universe <b>${esc(p.universeId)}</b></span>` : ""}${p.placeId ? `<span>Place <b>${esc(p.placeId)}</b></span>` : ""}${p.game?.creator ? `<span>by <b>${esc(p.game.creator)}</b></span>` : ""}${p.lastChange ? `<span>Last change <b>${ago(p.lastChange)}</b></span>` : ""}</div>
-      ${p.gameError ? `<div class="faint" style="font-size:12px">${esc(p.gameError)}</div>` : ""}
-      <div class="row wrap">
-        <span class="chip ${p.studioConnected ? "ok" : ""}"><span class="dot ${p.studioConnected ? "connected" : "unknown"}"></span>${p.studioConnected ? "Studio connected" + (p.studio?.mode ? " · " + esc(p.studio.mode) : "") : "Studio not connected"}</span>
-        <span class="chip ${p.rojoDir ? "" : "warn"}">${ic("folder")}${p.rojoDir ? "Rojo folder linked" : "No Rojo folder"}</span>
-        ${(() => { const rev = S.revenue.analytics[p.universeId]?.series?.revenue || []; const d = rev.length > 1 ? rev[rev.length - 2] : rev[0]; return d ? `<span class="chip" data-go="revenue" style="cursor:pointer">${rbx(d.value)} on ${esc(shortDate(d.time))}</span>` : ""; })()}
-        ${agents.length ? `<span class="chip ok"><div class="avatars">${agents.map((a) => `<div class="av working" title="${esc(a.name)}">${esc(initials(a.name))}</div>`).join("")}</div>${agents.length} working</span>` : ""}
-      </div>
-      ${b ? `<div class="stack" style="gap:6px;margin-top:4px"><div class="row"><span class="ell grow" style="font-weight:500">${esc(b.title)}</span>${taskStatus(b.status)}</div>${bar(b.progress, ["in_progress", "planning", "testing"].includes(b.status) ? "live" : b.status === "failed" ? "bad" : "")}<div class="faint ell" style="font-size:12px">${esc(b.stage || "")}</div></div>` : p.currentTask ? `<div class="faint" style="font-size:12.5px">Now: ${esc(p.currentTask.title)}</div>` : ""}
-    </div>
-  </div>`;
-}
-
-/* ---------- workspace ---------- */
-VIEWS.workspace = () => {
-  if (!S.agents.length) return `<div class="panel">${empty("No agents yet", "Connect an AI provider on the AI Agents page first.", `<button class="btn" data-go="agents">Go to AI Agents</button>`)}</div>`;
-  ui.wsSel = ui.wsSel.filter((id) => agentById(id));
-  if (!ui.wsSel.length) ui.wsSel = [S.settings.defaultAgentId && agentById(S.settings.defaultAgentId) ? S.settings.defaultAgentId : S.agents[0].id];
-  if (!ui.wsSel.includes(ui.wsFocus)) ui.wsFocus = ui.wsSel[0];
-  const focus = agentById(ui.wsFocus);
-  const conv = S.conversations[focus.id] || [];
-  const busy = S.tasks.some((t) => t.kind === "chat" && t.agentId === focus.id && ["pending", "in_progress", "waiting_approval"].includes(t.status));
-  const apr = S.approvals.filter((a) => ui.wsSel.includes(a.agentId));
-  const compare = ui.wsCompare && ui.wsSel.length > 1;
-  const compareView = () => `<div class="compare">${ui.wsSel.map((id) => {
-    const a = agentById(id); if (!a) return "";
-    const c = S.conversations[id] || [];
-    const lastUser = [...c].reverse().find((m) => m.role === "user");
-    const reply = lastUser ? c.slice(c.indexOf(lastUser) + 1).find((m) => m.role !== "user") : null;
-    const busy = S.tasks.some((t) => t.kind === "chat" && t.agentId === id && ["pending", "in_progress", "waiting_approval"].includes(t.status));
-    return `<div class="cmp-col"><div class="row" style="gap:8px;margin-bottom:8px"><b>${esc(a.name)}</b><span class="faint ell" style="font-size:11.5px">${esc(a.model)}</span><div class="grow"></div><span class="dot ${a.status}"></span></div>
-      <div class="md" style="font-size:13px">${reply ? (reply.role === "error" ? `<span style="color:var(--bad)">${esc(reply.text)}</span>` : md(reply.text)) : busy ? '<span class="typing"><i></i><i></i><i></i></span>' : '<span class="faint">No answer yet</span>'}</div></div>`;
-  }).join("")}</div>`;
-  return `<div class="ws" style="height:calc(100vh - 102px)">
-    <div class="panel ws-agents"><div class="panel-h"><h3>Agents</h3><div class="grow"></div><button class="btn sm" data-act="askAll" title="Select every connected AI and show answers side by side">Ask all</button></div>
-      <div style="padding:8px">${S.agents.map((a) => `<div class="pick ${a.id === ui.wsFocus ? "on" : ""}" data-act="wsFocus" data-id="${a.id}"><span class="check ${ui.wsSel.includes(a.id) ? "on" : ""}" data-act="wsToggle" data-id="${a.id}"></span><div class="grow" style="min-width:0"><div class="ell" style="font-weight:500">${esc(a.name)}</div><div class="faint ell" style="font-size:11.5px">${esc(a.role)}</div></div><span class="dot ${a.status}" title="${AGENT_ST[a.status][0]}"></span></div>`).join("")}</div>
-    </div>
-    <div class="panel chat">
-      <div class="panel-h"><div class="ava" style="width:30px;height:30px;font-size:11px;border-radius:9px">${esc(initials(focus.name))}</div><div><h3>${esc(focus.name)}</h3><div class="faint" style="font-size:12px">${esc(focus.role)} · ${esc(focus.model)}</div></div><div class="grow"></div>${ui.wsSel.length > 1 ? `<button class="btn sm ${compare ? "" : "ghost"}" data-act="toggleCompare">${compare ? "One chat" : "Side by side"}</button>` : ""}${statusChip(focus.status)}<button class="btn sm ghost" data-act="clearChat" data-id="${focus.id}">Clear</button></div>
-      ${compare ? `<div class="thread" id="thread">${compareView()}</div>` : `<div class="thread" id="thread">
-        ${conv.length ? conv.map((m) => msgView(m, focus)).join("") : `<div class="empty" style="margin:auto"><b>Start a conversation with ${esc(focus.name)}</b>Ask questions, give instructions or request changes. The agent can read and edit your project and use its MCP tools.</div>`}
-        ${busy ? `<div class="msg assistant"><div class="who">${esc(focus.name)}</div><span class="typing"><i></i><i></i><i></i></span> <span class="faint" style="font-size:12px">${esc(S.tasks.find((t) => t.kind === "chat" && t.agentId === focus.id && t.status !== "completed")?.stage || "")}</span></div>` : ""}
-        ${apr.map(approvalCard).join("")}
-      </div>`}
-      <div class="composer">
-        <textarea id="chatInput" placeholder="Message ${ui.wsSel.length > 1 ? ui.wsSel.length + " agents" : esc(focus.name)}…  (Enter to send, Shift+Enter for a new line)"></textarea>
-        <div class="row"><span class="faint" style="font-size:12px">${ui.wsSel.length > 1 ? "Sends to: " + ui.wsSel.map((id) => esc(agentById(id).name)).join(", ") : ""}</span><div class="grow"></div>
-          <button class="btn sm" data-act="chatBuild" title="Plan and split into tasks for the selected agents">${ic("bolt")}Build with team</button>
-          <button class="btn sm primary" data-act="chatSend">${ic("send")}Send</button></div>
-      </div>
-    </div>
-  </div>`;
-};
-function msgView(m, agent) {
-  if (m.role === "user") return `<div class="msg user">${esc(m.text).replace(/\n/g, "<br>")}</div>`;
-  if (m.role === "error") return `<div class="msg error">⚠ ${esc(m.text)}</div>`;
-  return `<div class="msg assistant"><div class="who"><b style="color:var(--text);font-weight:600">${esc(agent.name)}</b>${time(m.at)}</div><div class="md">${md(m.text)}</div>
-    ${m.changes?.length ? `<div class="row wrap" style="margin-top:6px">${m.changes.map((c) => `<button class="chip" style="cursor:pointer" data-act="viewChange" data-id="${c.id}">${ic("edit")}${esc(c.op)} ${esc(c.path)}</button>`).join("")}</div>` : ""}</div>`;
-}
-function approvalCard(a) {
-  const d = a.detail || {};
-  return `<div class="panel pad" style="border-color:rgba(243,197,111,.35)"><div class="row"><span class="dot disconnected"></span><b>${esc(a.agentName)}</b><span class="muted grow">wants to: ${esc(a.title)}</span><span class="faint" style="font-size:12px">${time(a.at)}</span></div>
-    <div class="sp" style="height:10px"></div>
-    ${a.kind === "tool" ? `<div class="code"><div class="ch">${esc(d.server)} → ${esc(d.tool)}</div><pre>${esc(JSON.stringify(d.args, null, 2))}</pre></div>` : diffView(d.before, d.after)}
-    ${d.reason ? `<div class="muted" style="font-size:12.5px;margin-top:8px">Reason: ${esc(d.reason)}</div>` : ""}
-    <div class="row" style="margin-top:10px"><input class="input" id="note-${a.id}" placeholder="Optional note to the agent"><button class="btn danger" data-act="reject" data-id="${a.id}">Reject</button><button class="btn primary" data-act="approve" data-id="${a.id}">Approve</button></div></div>`;
-}
-
-/* ---------- agents ---------- */
-VIEWS.agents = () => `
-  <div class="panel"><div class="panel-h"><h3>AI providers</h3><span class="faint" style="font-size:12px">API keys are encrypted on this PC and never shown in the app.</span><div class="grow"></div><button class="btn sm primary" data-act="addProvider">${ic("plus")}Add provider</button></div>
-    ${S.providers.length ? S.providers.map((p) => `<div class="list-row"><span class="dot ${p.status}"></span><div class="grow"><div class="row"><b style="font-weight:600">${esc(p.name)}</b><span class="tag">${esc(S.providerTypes[p.type]?.label.split(" (")[0] || p.type)}</span>${p.hasKey ? '<span class="tag">key saved</span>' : ""}</div>
-      <div class="faint" style="font-size:12px">${p.status === "connected" ? `Connected · ${p.models.length} models` : p.status === "checking" ? "Checking connection…" : esc(p.error || "Not tested")}${p.baseURL ? " · " + esc(p.baseURL) : ""}</div></div>
-      <button class="btn sm" data-act="testProvider" data-id="${p.id}">${ic("refresh")}Reconnect</button><button class="btn sm" data-act="editProvider" data-id="${p.id}">${ic("edit")}Edit</button><button class="btn sm ghost danger" data-act="removeProvider" data-id="${p.id}">${ic("trash")}</button></div>`).join("")
-      : empty("No AI provider connected", "Add Anthropic Claude or any OpenAI-compatible provider (OpenAI, OpenRouter, Groq, Ollama, LM Studio).")}
-  </div>
-  <div class="sp"></div>
-  <div class="row"><div class="h3 grow">Team · ${S.agents.length} agents</div>${S.providers.length && !S.agents.length ? `<button class="btn sm" data-act="defaultTeam">Create default team</button>` : ""}<button class="btn sm primary" data-act="addAgent" ${S.providers.length ? "" : "disabled"}>${ic("plus")}Add agent</button></div>
-  <div class="sp" style="height:12px"></div>
-  <div class="cards">${S.agents.map(agentCard).join("") || ""}</div>`;
-
-function agentCard(a) {
-  const pct = a.used / a.budget;
-  const mcpNames = S.mcpServers.filter((s) => s.status === "connected" && (a.tools?.mcp?.[s.id] ?? "all") !== "none").map((s) => s.name);
-  return `<div class="panel agent st-${a.status}">
-    <div class="row"><div class="ava">${esc(initials(a.name))}</div><div class="grow" style="min-width:0"><h4 class="ell">${esc(a.name)}</h4><div class="faint ell" style="font-size:12px">${esc(a.role)}</div></div>${statusChip(a.status)}</div>
-    <div class="now">${agentNow(a)}</div>
-    <div class="kv" style="margin-bottom:6px"><span>Provider <b>${esc(a.providerName)}</b></span><span>Model <b>${esc(a.model)}</b></span></div>
-    <div style="margin-bottom:10px">${accountCell(a)}</div>
-    <div class="faint" style="font-size:12px;margin-bottom:10px">${esc(S.roles[a.role] || "")}</div>
-    <div class="row wrap" style="margin-bottom:12px"><span class="tag">${a.toolCount} tools</span>${a.tools?.files !== false ? '<span class="tag">project files</span>' : ""}${mcpNames.map((n) => `<span class="tag">${esc(n)}</span>`).join("")}</div>
-    <div class="row" style="font-size:11.5px;margin-bottom:6px"><span class="faint grow">Tokens</span><span class="muted">${fmtN(a.used)} / ${fmtN(a.budget)}</span></div>
-    ${bar(pct, pct >= 1 ? "bad" : pct > 0.8 ? "warn" : "")}
-    <div class="row" style="margin-top:14px"><button class="btn sm" data-act="editAgent" data-id="${a.id}">${ic("settings")}Configure</button>
-      ${a.status === "tokens" ? `<button class="btn sm" data-act="agentAct" data-op="reset_budget" data-id="${a.id}">Reset tokens</button>` : ""}
-      ${["disconnected", "offline"].includes(a.status) && a.enabled ? `<button class="btn sm" data-act="agentAct" data-op="reconnect" data-id="${a.id}">${ic("refresh")}Reconnect</button>` : ""}
-      <div class="grow"></div>
-      <button class="btn sm ghost" data-act="agentAct" data-op="${a.enabled ? "disable" : "enable"}" data-id="${a.id}">${a.enabled ? "Switch off" : "Switch on"}</button>
-      <button class="btn sm ghost danger icon" title="Remove" data-act="removeAgent" data-id="${a.id}">${ic("trash")}</button></div>
-  </div>`;
-}
-
-/* ---------- Connect AIs ---------- */
-const ONLINE = [
-  { id: "gemini", name: "Google Gemini", type: "openai", base: "https://generativelanguage.googleapis.com/v1beta/openai", keyUrl: "https://aistudio.google.com/apikey", free: "Free key (daily limits)" },
-  { id: "groq", name: "Groq", type: "openai", base: "https://api.groq.com/openai/v1", keyUrl: "https://console.groq.com/keys", free: "Free tier" },
-  { id: "openrouter", name: "OpenRouter", type: "openai", base: "https://openrouter.ai/api/v1", keyUrl: "https://openrouter.ai/keys", free: "Some free models" },
-  { id: "openai", name: "ChatGPT (OpenAI)", type: "openai", base: "https://api.openai.com/v1", keyUrl: "https://platform.openai.com/api-keys", free: "" },
-  { id: "claude", name: "Claude (Anthropic)", type: "anthropic", base: "", keyUrl: "https://console.anthropic.com/settings/keys", free: "" },
-  { id: "deepseek", name: "DeepSeek", type: "openai", base: "https://api.deepseek.com/v1", keyUrl: "https://platform.deepseek.com/api_keys", free: "" },
-  { id: "mistral", name: "Mistral", type: "openai", base: "https://api.mistral.ai/v1", keyUrl: "https://console.mistral.ai/api-keys", free: "" },
-];
-const WEB = [["chatgpt", "ChatGPT"], ["gemini", "Gemini"], ["claude", "Claude"], ["copilot", "Copilot"], ["perplexity", "Perplexity"], ["deepseek", "DeepSeek"]];
-
-VIEWS.connect = () => {
-  const L = S.local || { servers: [], recommended: [], pulls: {} };
-  if (!ui.scannedOnce) { ui.scannedOnce = true; call("scanLocal").catch(() => {}); }
-  const ollama = L.servers.find((s) => s.id === "ollama");
-  const found = L.servers.filter((s) => s.running && s.id !== "ollama");
-  const connected = (s) => S.providers.find((p) => p.local && p.baseURL === s.baseURL);
-  const installed = new Set((ollama?.models || []).map((m) => m.id));
-  const gb = (b) => (b ? (b / 1e9).toFixed(1) + " GB" : "");
-  const pull = (m) => L.pulls[m];
-
-  const ollamaCard = !ollama ? "" : `<div class="panel pad stack" style="gap:12px"><div class="row"><div class="ava" style="width:36px;height:36px">${ic("chip")}</div><div class="grow"><div class="h3">Ollama</div><div class="faint" style="font-size:12.5px">The easiest way to run free AI models on your PC.</div></div>
-      ${ollama.running ? `<span class="chip ok"><span class="dot connected"></span>Running · ${ollama.models.length} models</span>` : L.ollamaInstalled ? `<button class="btn sm primary" data-act="startOllama">${ic("play")}Start Ollama</button>` : `<button class="btn sm primary" data-act="openUrl" data-id="${ollama.site}">${ic("download")}Get Ollama (free)</button>`}</div>
-    ${!ollama.running && !L.ollamaInstalled ? `<div class="muted" style="font-size:12.5px">Install Ollama from ollama.com, open it, then press <b>Scan</b>. Then download models below with one click.</div>` : ""}
-    ${ollama.running && ollama.models.length ? `<div class="label">Downloaded models</div>${ollama.models.map((m) => `<div class="row" style="padding:6px 0;border-top:1px solid var(--border)"><span class="mono grow">${esc(m.id)}</span><span class="faint" style="font-size:12px">${esc(m.params)} ${gb(m.size)}</span><button class="btn sm" data-act="localAgent" data-server="ollama" data-id="${esc(m.id)}">${ic("plus")}Add as AI</button><button class="btn sm ghost danger icon" title="Delete model" data-act="deleteModel" data-id="${esc(m.id)}">${ic("trash")}</button></div>`).join("")}` : ""}
-  </div>`;
-
-  const recommended = `<div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">${L.recommended.map((r) => {
-    const p = pull(r.model), has = installed.has(r.model);
-    return `<div class="panel pad stack" style="gap:6px"><div class="row"><b class="mono grow" style="font-size:13px">${esc(r.model)}</b><span class="tag">${esc(r.size)}</span></div>
-      <div class="faint" style="font-size:12px">by ${esc(r.maker)} · ${r.tools ? "can use tools" : "chat only"}</div>
-      <div class="muted" style="font-size:12.5px;min-height:36px">${esc(r.goodFor)}</div>
-      <div class="faint" style="font-size:11.5px">Best roles: ${r.roles.map(esc).join(", ")}</div>
-      ${has ? `<div class="row"><span class="chip ok">Downloaded</span><div class="grow"></div><button class="btn sm primary" data-act="localAgent" data-server="ollama" data-id="${esc(r.model)}" data-role="${esc(r.roles[0])}">${ic("plus")}Add as AI</button></div>`
-        : p && !p.error && !p.done ? `<div class="stack" style="gap:4px"><div class="faint" style="font-size:12px">${esc(p.status)}${p.pct != null ? " · " + p.pct + "%" : ""}</div>${bar((p.pct || 0) / 100, "live")}</div>`
-        : `<div class="row">${p?.error ? `<span class="faint grow" style="font-size:12px;color:var(--bad)">${esc(p.status)}</span>` : '<div class="grow"></div>'}<button class="btn sm" data-act="pullModel" data-id="${esc(r.model)}" ${ollama?.running ? "" : 'disabled title="Start Ollama first"'}>${ic("download")}Download</button></div>`}
-    </div>`;
-  }).join("")}</div>`;
-
-  const others = found.map((s) => `<div class="panel pad row" style="gap:12px"><div class="ava" style="width:36px;height:36px">${ic("chip")}</div><div class="grow"><div class="h3">${esc(s.name)}</div><div class="faint" style="font-size:12px">${s.models.length} models · ${esc(s.baseURL)}</div></div>
-    ${connected(s) ? '<span class="chip ok">Connected</span>' : `<button class="btn sm primary" data-act="connectLocal" data-id="${s.id}">Connect</button>`}
-    ${s.models.slice(0, 1).map((m) => `<button class="btn sm" data-act="localAgent" data-server="${s.id}" data-id="${esc(m.id)}">${ic("plus")}Add as AI</button>`).join("")}</div>`).join("");
-
-  const img = L.image;
-  const forge = !img ? "" : `<div class="panel pad row" style="gap:12px"><div class="ava" style="width:36px;height:36px">${ic("image")}</div><div class="grow"><div class="h3">Forge / AUTOMATIC1111 <span class="faint" style="font-weight:400">· free image AI on your PC</span></div>
-      <div class="faint" style="font-size:12.5px">${img.running ? `Running with ${img.models.length} model(s). The Image Creator can use it for icons and thumbnails.` : img.apiOff ? "Found, but its API is off. Start it with the --api option, then Scan." : "Not found. Install Forge, start it with --api, then Scan."}</div></div>
-      ${img.running ? `<span class="row" style="gap:8px"><span class="faint" style="font-size:12px">Use for images</span><div class="toggle ${L.imageBackend ? "on" : ""}" data-act="toggleForge"></div></span>` : `<button class="btn sm" data-act="openUrl" data-id="${img.site}">Get Forge</button>`}</div>`;
-
-  return `<div class="row"><div class="h3 grow">${ic("chip", "mi")} Free AIs on this PC <span class="faint" style="font-weight:400;font-size:12.5px">· private: nothing leaves your computer</span></div><span class="faint" style="font-size:12px">${L.scannedAt ? "Scanned " + ago(L.scannedAt) : ""}</span><button class="btn sm" data-act="scanLocal">${ic("refresh")}Scan</button></div>
-  <div class="sp" style="height:12px"></div>
-  <div class="stack" style="gap:14px">${ollamaCard}${others}${forge}</div>
-  <div class="faint" style="font-size:12px;margin-top:8px">Also looked for: ${L.servers.filter((s) => s.id !== "ollama" && !s.running).map((s) => esc(s.name)).join(", ")}.</div>
-  <div class="sp"></div>
-  <div class="row"><div class="h3 grow">Recommended free models</div><span class="faint" style="font-size:12px">Open models from well-known makers, from Ollama's official library. 7–8B models run well on an RTX 4060.</span></div>
-  <div class="sp" style="height:12px"></div>${recommended}
-  <div class="sp"></div>
-  <div class="h3">${ic("globe", "mi")} Online AIs <span class="faint" style="font-weight:400;font-size:12.5px">· get a key on their site, paste it, done</span></div>
-  <div class="sp" style="height:12px"></div>
-  <div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(230px,1fr))">${ONLINE.map((o) => {
-    const has = S.providers.find((p) => (o.base && p.baseURL === o.base) || (!o.base && p.type === o.type && o.type === "anthropic"));
-    return `<div class="panel pad stack" style="gap:8px"><div class="row"><b class="grow">${esc(o.name)}</b>${o.free ? `<span class="chip ok">${esc(o.free)}</span>` : '<span class="chip">Paid</span>'}</div>
-      <div class="row">${has ? `<span class="chip ok"><span class="dot ${has.status}"></span>${has.status === "connected" ? "Connected" : esc(has.status)}</span>` : `<button class="btn sm" data-act="openUrl" data-id="${o.keyUrl}">Get key</button><button class="btn sm primary" data-act="connectOnline" data-id="${o.id}">Connect</button>`}</div></div>`;
-  }).join("")}</div>
-  <div class="sp"></div>
-  <div class="h3">AI websites <span class="faint" style="font-weight:400;font-size:12.5px">· use your own accounts by hand — VYRON doesn't read or control them</span></div>
-  <div class="sp" style="height:12px"></div>
-  <div class="row wrap" style="gap:10px">${WEB.map(([id, n]) => `<div class="panel pad row" style="gap:8px;padding:10px 12px"><b style="font-size:13px">${n}</b><button class="btn sm" data-act="openWeb" data-id="${id}" ${desktop ? "" : "disabled"}>Open</button></div>`).join("")}</div>`;
-};
-
-function localAgentModal(server, model, role) {
-  const rec = (S.local?.recommended || []).find((r) => r.model === model);
-  const r = role || rec?.roles[0] || "Luau Developer";
-  modal("Add an AI on " + esc(model), `
-    <div class="grid g2" style="gap:12px"><label class="field"><span>Name</span><input class="input" id="laName" value="${esc(NAME_POOL.find((n) => !S.agents.some((x) => x.name === n)) || "")}"></label>
-    <label class="field"><span>Role</span><select class="select" id="laRole">${roleOptions(r)}</select></label></div>
-    <div class="faint" style="font-size:12.5px">Runs free on your PC with <span class="mono">${esc(model)}</span>${rec && !rec.tools ? " — this model can only chat, so give it a talking role (ideas, research, marketing)" : ""}.</div>
-    <input type="hidden" id="laServer" value="${esc(server)}"><input type="hidden" id="laModel" value="${esc(model)}">`,
-    `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="saveLocalAgent">Add AI</button>`);
-}
-
-/* ---------- Team & Permissions ---------- */
-const aOrAn = (w) => (/^[aeiou]/i.test(w) ? "an" : "a");
-const PERM_ORDER = ["read", "write", "delete", "studio", "mcp", "web", "images", "delegate", "stats"];
-const roleOptions = (sel) => S.roleGroups.map((g) => `<optgroup label="${esc(g)}">${Object.entries(S.roleInfo).filter(([, v]) => v.group === g).map(([k]) => `<option ${k === sel ? "selected" : ""}>${esc(k)}</option>`).join("")}</optgroup>`).join("");
-function permChips(a, small) {
-  return PERM_ORDER.map((k) => {
-    const on = a.perms[k], custom = k in (a.permOverrides || {});
-    return `<button class="perm ${on ? "on" : ""} ${custom ? "custom" : ""} ${small ? "sm" : ""}" data-act="togglePerm" data-id="${a.id}" data-perm="${k}" title="${esc(S.permInfo[k].label)}: ${esc(S.permInfo[k].desc)}${custom ? " (changed from the role default)" : ""}">${esc(S.permInfo[k].label)}</button>`;
-  }).join("");
-}
-function accountCell(a) {
-  return a.accountEmail ? `<span class="row" style="gap:6px;font-size:12.5px">${ic("mail", "mi")}<span class="ell">${esc(a.accountEmail)}</span></span>` : `<span class="faint" style="font-size:12.5px">No email set</span>`;
-}
-
-VIEWS.team = () => {
-  const groups = S.roleGroups;
-  const by = (g) => S.agents.filter((a) => a.group === g);
-  return `<div class="row wrap" style="gap:8px">${groups.map((g) => `<span class="chip">${esc(g)} · ${by(g).length}</span>`).join("")}<div class="grow"></div><button class="btn primary" data-act="addAgent" ${S.providers.length ? "" : "disabled"}>${ic("plus")}Add AI</button></div>
-  <div class="sp"></div>
-  <div class="panel"><div class="panel-h"><h3>Your AIs · ${S.agents.length}</h3><span class="faint" style="font-size:12px">Click a permission to switch it on or off. Changes apply to the AI's next step.</span></div>
-    ${S.agents.length ? S.agents.map((a) => `<div class="team-row">
-      <div class="row" style="gap:10px;min-width:0"><div class="ava" style="width:34px;height:34px;font-size:12px;border-radius:10px">${esc(initials(a.name))}</div>
-        <div style="min-width:0"><div class="row" style="gap:6px"><b class="ell">${esc(a.name)}</b><span class="dot ${a.status}" title="${AGENT_ST[a.status][0]}"></span></div>
-        <select class="select role-sel" data-change="agentRole" data-id="${a.id}">${roleOptions(a.role)}</select></div></div>
-      <div style="min-width:0"><div class="ell" style="font-size:12.5px">${esc(a.providerName)} · <span class="mono">${esc(a.model)}</span></div>${accountCell(a)}</div>
-      <div class="perm-wrap">${permChips(a, true)}</div>
-      <div class="row" style="justify-content:flex-end"><button class="btn sm" data-act="viewAgent" data-id="${a.id}">View</button></div>
-    </div>`).join("") : empty("No AIs yet", "Add an AI provider on the AI Agents page, then add AIs here.")}
-  </div>
-  <div class="sp"></div>
-  <div class="row"><div class="h3 grow">Roles</div><span class="faint" style="font-size:12px">Each role comes with its own instructions and default permissions. AIs only do the work their role is for.</span></div>
-  <div class="sp" style="height:12px"></div>
-  ${groups.map((g) => `<div class="label" style="margin:14px 0 10px">${esc(g)}</div><div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(270px,1fr))">${Object.entries(S.roleInfo).filter(([, v]) => v.group === g).map(([k, v]) => {
-    const holders = S.agents.filter((a) => a.role === k);
-    return `<div class="panel pad stack" style="gap:8px"><div class="row"><b class="grow" style="font:600 14px var(--f-head)">${esc(k)}</b>${holders.length ? `<span class="chip ok">${holders.map((h) => esc(h.name)).join(", ")}</span>` : '<span class="chip">Nobody</span>'}</div>
-      <div class="muted" style="font-size:12.5px;min-height:36px">${esc(v.short)}</div>
-      <div class="row wrap" style="gap:4px">${PERM_ORDER.filter((p) => v.perms[p]).map((p) => `<span class="tag">${esc(S.permInfo[p].label)}</span>`).join("")}</div>
-      <div><button class="btn sm" data-act="addAgentRole" data-id="${esc(k)}" ${S.providers.length ? "" : "disabled"}>${ic("plus")}Add ${aOrAn(k)} ${esc(k)}</button></div></div>`;
-  }).join("")}</div>`).join("")}`;
-};
-
-function agentDrawer(a) {
-  const tasks = S.tasks.filter((t) => t.agentId === a.id && t.kind !== "chat").slice(-8).reverse();
-  const pct = a.used / a.budget;
-  return `<div class="dscrim" data-act="closeDrawer"></div><div class="drawer"><div class="panel-h"><div class="ava" style="width:38px;height:38px">${esc(initials(a.name))}</div><div class="grow" style="min-width:0"><h3 class="ell">${esc(a.name)}</h3><div class="faint" style="font-size:12px">${esc(a.role)} · ${esc(a.group)}</div></div>${statusChip(a.status)}<button class="btn sm ghost icon" data-act="closeDrawer">${ic("x")}</button></div>
-    <div class="body stack" id="agentBody" style="gap:18px">
-      <div class="muted" style="font-size:13px">${esc(S.roles[a.role] || "")}</div>
-      <div class="kvgrid">
-        <div><div class="label">Name</div><div>${esc(a.name)}</div></div>
-        <div><div class="label">Role</div><select class="select" style="height:32px" data-change="agentRole" data-id="${a.id}">${roleOptions(a.role)}</select></div>
-        <div><div class="label">Provider</div><div>${esc(a.providerName)}</div></div>
-        <div><div class="label">Model</div><div class="mono">${esc(a.model)}</div></div>
-        <div style="grid-column:1/-1"><div class="label">Account email</div><div class="row" style="gap:8px">${accountCell(a)}<span class="faint" style="font-size:11.5px">${a.accountEmail ? (a.ownEmail ? "set on this AI" : "from its provider") : ""}</span></div></div>
-        <div><div class="label">Tasks done</div><div>${a.tasksDone}</div></div>
-        <div><div class="label">Tokens</div><div>${fmtN(a.used)} / ${fmtN(a.budget)}</div>${bar(pct, pct >= 1 ? "bad" : pct > 0.8 ? "warn" : "")}</div>
-      </div>
-      <div><div class="row" style="margin-bottom:8px"><div class="label grow">Permissions</div>${Object.keys(a.permOverrides || {}).length ? `<button class="btn sm ghost" data-act="resetPerms" data-id="${a.id}">Reset to role defaults</button>` : `<span class="faint" style="font-size:11.5px">Role defaults</span>`}</div>
-        ${PERM_ORDER.map((k) => `<div class="row perm-line"><div class="grow"><div style="font-weight:500">${esc(S.permInfo[k].label)}${k in (a.permOverrides || {}) ? ' <span class="tag">changed</span>' : ""}</div><div class="faint" style="font-size:12px">${esc(S.permInfo[k].desc)}</div></div><div class="toggle ${a.perms[k] ? "on" : ""}" data-act="togglePerm" data-id="${a.id}" data-perm="${k}"></div></div>`).join("")}</div>
-      <div><div class="label" style="margin-bottom:8px">Tools it can use now · ${a.toolCount}</div><div class="faint" style="font-size:12px">${a.toolCount ? "Based on its permissions, project and connected MCP servers." : "None yet — give it permissions, a project and connections."}</div></div>
-      <div><div class="label" style="margin-bottom:8px">Recent tasks</div>${tasks.length ? tasks.map((t) => `<div class="list-row click" style="padding:8px 0" data-act="openTask" data-id="${t.id}"><span class="grow ell">${esc(t.title)}</span>${taskStatus(t.status)}</div>`).join("") : '<div class="faint" style="font-size:12.5px">No tasks yet.</div>'}</div>
-      <div class="row"><button class="btn" data-act="editAgent" data-id="${a.id}">${ic("settings")}Configure</button><button class="btn" data-act="chatWith" data-id="${a.id}">${ic("workspace")}Chat</button><div class="grow"></div><button class="btn ghost" data-act="agentAct" data-op="${a.enabled ? "disable" : "enable"}" data-id="${a.id}">${a.enabled ? "Switch off" : "Switch on"}</button><button class="btn ghost danger" data-act="removeAgent" data-id="${a.id}">${ic("trash")}</button></div>
+      <div class="kv">${p.placeId ? `<span>Place <b>${esc(p.placeId)}</b></span>` : "<span>Not published</span>"}${p.game?.creator ? `<span>by <b>${esc(p.game.creator)}</b></span>` : ""}${p.game?.playing != null ? `<span><b>${fmtN(p.game.playing)}</b> playing</span>` : ""}</div>
+      <div class="row wrap"><span class="chip ${p.studioConnected ? "ok" : ""}"><span class="dot ${p.studioConnected ? "connected" : "unknown"}"></span>${p.studioConnected ? "Open in Studio" : "Not open in Studio"}</span>${p.rojoDir ? `<span class="chip">${ic("folder")}Folder linked</span>` : ""}</div>
     </div></div>`;
 }
 
-/* ---------- MCP ---------- */
-VIEWS.mcp = () => {
-  const hasStudio = S.mcpServers.some((s) => s.kind === "roblox-studio");
-  return `<div class="row"><div class="muted grow" style="font-size:13px">Agents can use tools from these servers. Read-only tools run automatically; other tools ask you first (change this per tool or in Settings → Permissions).</div>
-    ${hasStudio ? "" : `<button class="btn" data-act="addStudioServer">${ic("roblox")}Add Roblox Studio</button>`}<button class="btn primary" data-act="addServer">${ic("plus")}Add server</button></div>
-  <div class="sp"></div>
-  <div class="stack" style="gap:16px">${S.mcpServers.length ? S.mcpServers.map(serverPanel).join("") : `<div class="panel">${empty("No MCP servers yet", "Add the Roblox Studio server to let agents work directly in Studio, or add any other MCP server.")}</div>`}</div>`;
-};
-function serverPanel(s) {
-  const open = ui.mcpOpen[s.id];
-  const tools = open ? s.tools : s.tools.slice(0, 6);
-  const st = { connected: ["Connected", "ok"], connecting: ["Connecting…", "warn"], error: ["Error", "bad"], disconnected: ["Disconnected", ""] }[s.status] || [s.status, ""];
-  return `<div class="panel">
-    <div class="panel-h"><span class="dot ${s.status}"></span><h3>${esc(s.name)}</h3><span class="tag">${s.kind === "roblox-studio" ? "Roblox Studio" : s.transport.toUpperCase()}</span><span class="chip ${st[1]}">${st[0]}</span><div class="grow"></div>
-      ${s.status === "connected" ? `<button class="btn sm" data-act="refreshServer" data-id="${s.id}">${ic("refresh")}Refresh tools</button><button class="btn sm" data-act="disconnectServer" data-id="${s.id}">Disconnect</button>` : `<button class="btn sm primary" data-act="connectServer" data-id="${s.id}" ${s.status === "connecting" ? "disabled" : ""}>${s.status === "connecting" ? '<span class="spinner"></span>' : ic("link")}${s.status === "error" ? "Reconnect" : "Connect"}</button>`}
-      <button class="btn sm" data-act="editServer" data-id="${s.id}">${ic("edit")}Edit</button><button class="btn sm ghost danger icon" data-act="removeServer" data-id="${s.id}">${ic("trash")}</button></div>
-    <div class="panel-b"><div class="mono faint ell">${esc(s.transport === "stdio" ? [s.command, ...(s.args || [])].join(" ") : s.url)}</div>
-      ${s.description ? `<div class="muted" style="font-size:12.5px;margin-top:6px">${esc(s.description)}</div>` : ""}
-      ${s.envKeys.length || s.headerKeys.length ? `<div class="row wrap" style="margin-top:8px">${[...s.envKeys, ...s.headerKeys].map((k) => `<span class="tag">${esc(k)} = ••••</span>`).join("")}</div>` : ""}
-      ${s.error ? `<div class="chip bad" style="height:auto;padding:8px 10px;margin-top:10px;white-space:normal;border-radius:10px">${esc(s.error)}</div>` : ""}
-      ${s.stderr && s.status !== "connected" ? `<details style="margin-top:8px"><summary class="faint" style="font-size:12px;cursor:pointer">Server output</summary><pre class="steps" style="margin-top:6px">${esc(s.stderr)}</pre></details>` : ""}
-    </div>
-    ${s.tools.length ? `<div class="tool-row" style="padding-top:8px;padding-bottom:8px"><span class="label">${s.tools.length} tools</span><span class="label">Permission</span></div>` + tools.map((t) => `<div class="tool-row"><div style="min-width:0"><div class="row"><b class="mono" style="font-weight:500">${esc(t.name)}</b>${t.readOnly ? '<span class="tag">read-only</span>' : ""}${t.destructive ? '<span class="tag" style="color:var(--bad)">destructive</span>' : ""}</div><p>${esc(t.description)}</p></div>
-      <select class="select" style="height:30px;font-size:12px" data-change="toolPolicy" data-id="${s.id}" data-tool="${esc(t.name)}">${[["default", "Default (" + ({ auto: "auto", ask: "ask" }[t.policy === "default" ? t.effective : "ask"] || "ask") + ")"], ["auto", "Run automatically"], ["ask", "Ask me first"], ["off", "Disabled"]].map(([v, l]) => `<option value="${v}" ${t.policy === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>`).join("")
-      + (s.tools.length > 6 ? `<div class="tool-row" style="grid-template-columns:1fr"><button class="btn sm ghost" data-act="toggleTools" data-id="${s.id}">${open ? "Show less" : "Show all " + s.tools.length + " tools"}</button></div>` : "") : ""}
-  </div>`;
+/* ---------- Claude ---------- */
+function msgView(m, compact) {
+  if (m.role === "user") return `<div class="msg user"><div class="who">You · ${time(m.at)}</div><div class="md">${md(m.text.replace(/^\[Active VYRON project:[^\]]*\]\n/, ""))}</div></div>`;
+  if (m.role === "assistant") return `<div class="msg assistant"><div class="who">Claude · ${time(m.at)}</div><div class="md">${md(compact && m.text.length > 400 ? m.text.slice(0, 400) + "…" : m.text)}</div></div>`;
+  if (m.role === "tool") return `<div class="tool-step ${m.tool === "error" ? "bad" : ""}">${ic(m.tool === "error" ? "x" : /roblox_studio/.test(m.tool) ? "roblox" : /vyron/.test(m.tool) ? "dashboard" : "bolt")}<span class="ell">${esc(m.text)}</span></div>`;
+  if (m.role === "result") return compact ? "" : `<div class="tool-step done">${ic("check")}<span>${esc(m.text)}</span></div>`;
+  return `<div class="msg error"><div class="who">Problem</div>${esc(m.text)}</div>`;
 }
 
-/* ---------- Roblox ---------- */
-VIEWS.roblox = () => {
-  const srv = S.mcpServers.find((s) => s.kind === "roblox-studio");
+VIEWS.claude = () => {
+  const C = S.claude;
   const p = activeProject();
-  if (p && p.rojoDir && ui.filesFor !== p.id) { ui.filesFor = p.id; ui.files = null; ui.fileSel = null; loadFiles(p.id); }
-  return `<div class="grid" style="grid-template-columns:minmax(0,1fr) minmax(0,1.4fr)">
-    <div class="stack" style="gap:16px">
-      <div class="panel"><div class="panel-h"><h3>Roblox Studio connection</h3><div class="grow"></div>${srv ? `<span class="chip ${srv.status === "connected" ? "ok" : srv.status === "error" ? "bad" : ""}"><span class="dot ${srv.status}"></span>MCP ${esc(srv.status)}</span>` : ""}</div>
-        <div class="panel-b stack">
-          ${!srv ? `<div class="muted" style="font-size:13px">Roblox Studio comes with an official MCP server. Add it so agents can read your place, edit scripts and instances, run play tests and read the output.</div><div><button class="btn primary" data-act="addStudioServer">${ic("roblox")}Add Roblox Studio MCP</button></div>`
-          : srv.status !== "connected" ? `<div class="muted" style="font-size:13px">${esc(srv.error || "The Studio MCP server is not running.")}</div><div><button class="btn primary" data-act="connectServer" data-id="${srv.id}">${ic("link")}Connect</button></div>`
-          : `<div class="row"><div class="muted grow" style="font-size:13px">${S.studios.length ? `${S.studios.length} Studio window${S.studios.length > 1 ? "s" : ""} open` : esc(S.studioError || "No Studio window found.")}</div><button class="btn sm" data-act="detectStudios">${ic("refresh")}Detect</button></div>
-             ${S.studios.map((st) => { const linked = S.projects.find((x) => x.studio?.id === st.id); return `<div class="mini-proj" style="cursor:default"><div class="gicon sm"><div class="fallback">${esc(initials(st.name))}</div></div><div class="grow" style="min-width:0"><div class="ell" style="font-weight:600;font-size:13px">${esc(st.name)}</div><div class="faint" style="font-size:11.5px">${esc(st.mode)}${st.placeId ? " · Place " + esc(st.placeId) : st.file ? " · " + esc(st.file) : " · not published"}</div></div>${linked ? `<span class="chip ok">${esc(linked.game?.name || linked.name)}</span>` : `${p ? `<button class="btn sm" data-act="linkStudio" data-id="${esc(st.id)}">Link to active</button>` : ""}<button class="btn sm" data-act="projectFromStudio" data-id="${esc(st.id)}">New project</button>`}</div>`; }).join("")}`}
-        </div></div>
-      <div class="panel pad"><div class="h3" style="margin-bottom:8px">How agents reach your game</div>
-        <div class="muted" style="font-size:12.5px;line-height:1.7"><b>Studio MCP</b> — open your place in Roblox Studio and turn on the MCP / AI assistant connection in Studio. Agents can then inspect instances, read and edit scripts, play-test and read the output (changes that aren't read-only ask you first).<br><b>Rojo folder</b> — agents write Luau files into the project folder. Run <span class="mono">rojo serve</span> there and connect the Rojo plugin in Studio to sync. Every file change is backed up and can be undone on the Projects page.</div></div>
-    </div>
-    <div class="panel" style="display:flex;flex-direction:column;min-height:520px"><div class="panel-h"><h3>Project files</h3><span class="faint" style="font-size:12px">${p?.rojoDir ? esc(p.rojoDir) : ""}</span><div class="grow"></div>${p?.rojoDir ? `<button class="btn sm" data-act="reloadFiles">${ic("refresh")}</button>${desktop ? `<button class="btn sm" data-act="openFolder">${ic("folder")}Open</button>` : ""}` : ""}</div>
-      ${!p ? empty("No project selected", "Add a project first.") : !p.rojoDir ? empty("No Rojo folder", "Set a Rojo folder on the Projects page to browse files here.") :
-        `<div style="display:grid;grid-template-columns:260px 1fr;flex:1;min-height:0"><div class="tree" style="border-right:1px solid var(--border);padding:8px" id="tree">${ui.files === null ? '<div class="faint">Loading…</div>' : ui.files.length ? ui.files.map((f) => `<div class="${ui.fileSel === f.path ? "on" : ""}" data-act="openFile" data-id="${esc(f.path)}" title="${esc(f.path)}">${esc(f.path)}</div>`).join("") : '<div class="faint" style="cursor:default">Folder is empty</div>'}</div>
-         <div style="min-width:0;overflow:auto">${ui.fileSel ? `<div class="code" style="margin:12px;border-radius:10px"><div class="ch">${esc(ui.fileSel)}</div><pre id="fileView">${esc(ui.fileContent ?? "")}</pre></div>` : empty("Pick a file", "Read-only view of the files the agents work on.")}</div></div>`}
-    </div>
-  </div>`;
+  return `<div class="chat-wrap" style="height:calc(100vh - 102px)">
+    ${claudeSetupCard()}
+    <div class="panel chat" style="flex:1;min-height:0">
+      <div class="panel-h"><div class="ava" style="width:32px;height:32px;border-radius:10px">${ic("claude")}</div><div><h3>Claude</h3><div class="faint" style="font-size:12px">${S.settings.claudeAccess === "full" ? "Full access" : "Studio + VYRON + project files"}${S.settings.claudeModel ? " · " + esc(S.settings.claudeModel) : ""} · works in ${esc(p ? p.game?.name || p.name : "VYRON's Games folder")}</div></div><div class="grow"></div>
+        <span class="chip ${S.studio.status === "connected" && S.studios.length ? "ok" : ""}"><span class="dot ${S.studio.status === "connected" && S.studios.length ? "connected" : "unknown"}"></span>Studio</span>
+        ${C.busy ? `<button class="btn sm danger" data-act="claudeStop">${ic("stop")}Stop</button>` : `<button class="btn sm ghost" data-act="claudeNewChat">${ic("plus")}New chat</button>`}</div>
+      <div class="thread" id="thread">
+        ${C.messages.length ? C.messages.map((m) => msgView(m)).join("") : `<div class="empty" style="margin:auto;max-width:520px"><b>You control Claude from here</b>Ask for anything in your game — Claude builds it in Roblox Studio, and can use VYRON too (your projects, picked ideas, revenue). Try: “Make an obby with 20 stages and checkpoints”.</div>`}
+        ${C.busy ? `<div class="msg assistant"><div class="who">Claude</div><span class="typing"><i></i><i></i><i></i></span></div>` : ""}
+      </div>
+      <div class="composer">
+        <textarea id="claudeInput" placeholder="Message Claude…  (Enter to send, Shift+Enter for a new line)"></textarea>
+        <div class="row"><button class="btn sm ghost" data-go="ideas">${ic("ideas")}Ideas</button><span class="faint" style="font-size:12px">${S.ideas.picked.length ? S.ideas.picked.length + " idea(s) picked" : ""}</span><div class="grow"></div>
+          <button class="btn sm primary" data-act="claudeSend" ${C.busy ? "disabled" : ""}>${ic("send")}Send</button></div>
+      </div>
+    </div></div>`;
 };
-async function loadFiles(id) { try { ui.files = await call("listFiles", id); } catch { ui.files = []; } render(); }
 
-/* ---------- projects ---------- */
-function imagesPanel(p) {
-  const key = p.id + ":" + S.imageCount;
-  if (ui.imagesKey !== key) { ui.imagesKey = key; ui.images = null; call("listImages", p.id).then((r) => { ui.images = r; render(); }).catch(() => { ui.images = []; }); }
-  const imgs = ui.images;
-  return `<div class="sp"></div><div class="panel"><div class="panel-h"><h3>${ic("image", "mi")} Images — ${esc(p.game?.name || p.name)}</h3><span class="faint" style="font-size:12px">Gamepass icons, thumbnails and badges made by your Image Creator</span><div class="grow"></div>${desktop ? `<button class="btn sm" data-act="openImages">${ic("folder")}Open folder</button>` : ""}</div>
-    ${imgs === null ? '<div class="empty">Loading…</div>' : imgs.length ? `<div class="img-grid">${imgs.map((i) => `<div class="img-card"><div class="img-frame ${i.kind === "thumbnail" ? "wide" : ""}" data-act="viewImage" data-id="${i.id}">${i.dataUrl ? `<img src="${i.dataUrl}" alt="${esc(i.name)}">` : '<span class="faint">File missing</span>'}</div>
-        <div class="row" style="margin-top:8px"><div class="grow" style="min-width:0"><div class="ell" style="font-weight:500;font-size:13px">${esc(i.name)}</div><div class="faint" style="font-size:11.5px">${esc(i.kind.replace("_", " "))} · ${i.w}×${i.h} · ${esc(i.agent || "")}</div></div><button class="btn sm ghost danger icon" data-act="deleteImage" data-id="${i.id}">${ic("trash")}</button></div></div>`).join("")}</div>`
-      : empty("No images yet", "Add an AI with the Image Creator role and ask it for a gamepass icon or a thumbnail.")}</div>`;
-}
+/* ---------- Ideas ---------- */
+VIEWS.ideas = () => {
+  const P = picked();
+  const tabs = `<div class="seg">${[["library", `Library (${IDEAS.length})`], ["custom", `Custom (${S.ideas.custom.length})`], ["picked", `Picked (${P.size})`]].map(([k, l]) => `<button class="${ui.ideaTab === k ? "on" : ""}" data-act="ideaTab" data-id="${k}">${l}</button>`).join("")}</div>`;
+  const card = (i) => `<div class="panel pad idea ${P.has(i.id) ? "on" : ""}" data-act="toggleIdea" data-id="${esc(i.id)}">
+      <div class="row" style="align-items:flex-start"><span class="check ${P.has(i.id) ? "on" : ""}"></span><div class="grow" style="min-width:0"><b style="font:600 14px var(--f-head)">${esc(i.title)}</b><div><span class="tag">${esc(i.category)}</span></div></div>
+      ${i.custom ? `<button class="btn sm ghost danger icon" data-act="removeIdea" data-id="${esc(i.id)}" title="Delete">${ic("trash")}</button>` : ""}</div>
+      <div class="muted" style="font-size:12.5px;margin-top:8px">${esc(i.pitch)}</div>
+      ${i.features ? `<div class="faint" style="font-size:11.5px;margin-top:6px">${esc(i.features)}</div>` : ""}</div>`;
+  let body;
+  if (ui.ideaTab === "custom") {
+    body = `<div class="grid" style="grid-template-columns:minmax(0,1fr) minmax(0,1.2fr)">
+      <div class="panel pad stack" style="align-self:start"><div class="h3">Your own idea</div>
+        <label class="field"><span>Name</span><input class="input" id="ciTitle" placeholder="e.g. Cat Cafe Wars"></label>
+        <label class="field"><span>Describe the game</span><textarea class="input" id="ciPitch" style="min-height:150px" placeholder="What do players do? What's fun about it? How does it make Robux?"></textarea></label>
+        <label class="field"><span>Key features (optional)</span><input class="input" id="ciFeat" placeholder="e.g. trading, rebirths, pets, daily rewards"></label>
+        <div class="row"><button class="btn" data-act="saveIdea">Save idea</button><div class="grow"></div><button class="btn primary" data-act="saveIdeaBuild">${ic("claude")}Save &amp; build with Claude</button></div></div>
+      <div class="cards" style="grid-template-columns:1fr;align-content:start">${S.ideas.custom.map(card).join("") || `<div class="panel">${empty("No ideas of your own yet", "Write one on the left. It's saved here so you can build it any time.")}</div>`}</div></div>`;
+  } else {
+    const q = ui.ideaQ.toLowerCase();
+    const pool = ui.ideaTab === "picked" ? allIdeas().filter((i) => P.has(i.id)) : IDEAS;
+    const list = pool.filter((i) => (ui.ideaTab === "picked" || ui.ideaCat === "All" || i.category === ui.ideaCat) && (!q || (i.title + i.pitch + i.features + i.category).toLowerCase().includes(q)));
+    const cats = ui.ideaTab === "library" ? `<div class="row wrap" style="gap:6px">${["All", ...S.ideas.categories].map((c) => `<button class="btn sm ${ui.ideaCat === c ? "primary" : "ghost"}" data-act="ideaCat" data-id="${esc(c)}">${esc(c)} <span class="faint" style="margin-left:4px">${c === "All" ? IDEAS.length : IDEAS.filter((i) => i.category === c).length}</span></button>`).join("")}</div><div class="sp" style="height:12px"></div>` : "";
+    body = `${cats}<div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(270px,1fr))">${list.map(card).join("") || `<div class="panel">${empty(ui.ideaTab === "picked" ? "Nothing picked yet" : "No ideas match", ui.ideaTab === "picked" ? "Click ideas in the Library to pick them." : "Try another search.")}</div>`}</div>`;
+  }
+  return `<div class="row">${tabs}<div class="grow"></div>${ui.ideaTab !== "custom" ? `<div class="search" style="width:280px">${ic("search")}<input class="input" id="ideaSearch" placeholder="Search ideas" value="${esc(ui.ideaQ)}"></div>` : ""}</div>
+    <div class="sp" style="height:14px"></div>${body}<div style="height:90px"></div>
+    ${P.size ? `<div class="pickbar panel"><b>${P.size} picked</b><span class="faint ell" style="max-width:340px;font-size:12px">${esc(allIdeas().filter((i) => P.has(i.id)).map((i) => i.title).join(", "))}</span><button class="btn sm ghost" data-act="clearPicked">Clear</button>
+      <input class="input grow" id="ideaExtra" placeholder="Extra wishes (optional), e.g. make it multiplayer with trading"><button class="btn primary" data-act="buildIdeas" ${S.claude.busy ? "disabled" : ""}>${ic("claude")}Build with Claude</button></div>` : ""}`;
+};
 
+/* ---------- Projects & Studio ---------- */
 VIEWS.projects = () => {
+  const st = S.studio;
   const p = activeProject();
-  return `<div class="row"><div class="grow"></div>${p ? `<button class="btn" data-act="snapshot">Save snapshot</button>` : ""}<button class="btn primary" data-act="addProject">${ic("plus")}Add project</button></div><div class="sp"></div>
-  <div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(340px,1fr))">${S.projects.map((x) => `<div class="panel pad" style="${x.id === S.activeProjectId ? "border-color:var(--border-2);box-shadow:var(--hl),var(--shadow),var(--glow)" : ""}">
-    <div class="row" style="align-items:flex-start;gap:14px">${gameIcon(x, "md")}<div class="grow" style="min-width:0"><div class="row"><b class="ell" style="font:600 15px var(--f-head)">${esc(x.game?.name || x.name)}</b>${x.id === S.activeProjectId ? '<span class="chip ok">Active</span>' : ""}</div>
-      <div class="kv" style="margin-top:4px">${x.universeId ? `<span>Universe <b>${esc(x.universeId)}</b></span>` : ""}${x.placeId ? `<span>Place <b>${esc(x.placeId)}</b></span>` : "<span>Not published</span>"}</div>
-      <div class="faint ell mono" style="margin-top:4px">${esc(x.rojoDir || "No Rojo folder")}</div>
-      <div class="row wrap" style="margin-top:8px"><span class="chip ${x.studioConnected ? "ok" : ""}"><span class="dot ${x.studioConnected ? "connected" : "unknown"}"></span>${x.studioConnected ? "Studio connected" : "Studio not connected"}</span>${x.activeAgents.length ? `<span class="chip ok">${x.activeAgents.length} agents working</span>` : ""}</div>
-      ${x.gameError ? `<div class="faint" style="font-size:12px;margin-top:6px">${esc(x.gameError)}</div>` : ""}</div></div>
-    <div class="row" style="margin-top:14px">${x.id === S.activeProjectId ? "" : `<button class="btn sm primary" data-act="setProject" data-id="${x.id}">Make active</button>`}<button class="btn sm" data-act="editProject" data-id="${x.id}">${ic("edit")}Edit</button><button class="btn sm" data-act="refreshGame" data-id="${x.id}">${ic("refresh")}Game info</button><div class="grow"></div><button class="btn sm ghost danger icon" data-act="removeProject" data-id="${x.id}">${ic("trash")}</button></div>
-  </div>`).join("") || `<div class="panel">${empty("No projects yet", "Add your Roblox game to get started.")}</div>`}</div>
-  ${p ? `<div class="sp"></div><div class="panel"><div class="panel-h"><h3>Change history — ${esc(p.game?.name || p.name)}</h3><span class="faint" style="font-size:12px">Every file change by an agent is backed up. Undo restores the previous version.</span></div>
-    ${S.history.length ? S.history.map((h) => `<div class="list-row"><span class="faint" style="width:90px;font-size:12px">${ago(h.at)}</span><span class="tag">${esc(h.op === "delete" ? "delete" : h.lines.before ? "edit" : "create")}</span><span class="mono grow ell">${esc(h.path)}</span><span class="faint" style="font-size:12px">${esc(h.agent || "")}</span>${h.status === "undone" ? '<span class="chip">Undone</span>' : `<button class="btn sm" data-act="viewChange" data-id="${h.id}">View</button><button class="btn sm" data-act="undo" data-id="${h.id}">${ic("undo")}Undo</button>`}</div>`).join("")
-      : empty("No changes yet", "Changes made by agents will show here.")}</div>${imagesPanel(p)}` : ""}`;
+  return `<div class="grid" style="grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)">
+    <div><div class="row"><div class="h3 grow">Projects</div><button class="btn primary" data-act="addProject">${ic("plus")}Add project</button></div><div class="sp" style="height:12px"></div>
+      <div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">${S.projects.map((x) => `<div class="panel pad" style="${x.id === S.activeProjectId ? "border-color:var(--border-2);box-shadow:var(--hl),var(--shadow),var(--glow)" : ""}">
+        <div class="row" style="align-items:flex-start;gap:14px">${gameIcon(x, "md")}<div class="grow" style="min-width:0"><div class="row"><b class="ell" style="font:600 15px var(--f-head)">${esc(x.game?.name || x.name)}</b>${x.id === S.activeProjectId ? '<span class="chip ok">Active</span>' : ""}</div>
+          <div class="kv" style="margin-top:4px">${x.placeId ? `<span>Place <b>${esc(x.placeId)}</b></span>` : "<span>Not published</span>"}</div>
+          <div class="faint ell mono" style="margin-top:4px">${esc(x.rojoDir || "No folder (Claude works in Studio)")}</div>
+          <div class="row wrap" style="margin-top:8px"><span class="chip ${x.studioConnected ? "ok" : ""}"><span class="dot ${x.studioConnected ? "connected" : "unknown"}"></span>${x.studioConnected ? "Open in Studio" : "Not open in Studio"}</span></div>
+          ${x.gameError ? `<div class="faint" style="font-size:12px;margin-top:6px">${esc(x.gameError)}</div>` : ""}</div></div>
+        <div class="row" style="margin-top:14px">${x.id === S.activeProjectId ? "" : `<button class="btn sm primary" data-act="setProject" data-id="${x.id}">Make active</button>`}<button class="btn sm" data-act="editProject" data-id="${x.id}">${ic("edit")}Edit</button><button class="btn sm" data-act="refreshGame" data-id="${x.id}">${ic("refresh")}Game info</button><div class="grow"></div><button class="btn sm ghost danger icon" data-act="removeProject" data-id="${x.id}">${ic("trash")}</button></div>
+      </div>`).join("") || `<div class="panel">${empty("No projects yet", "Add your Roblox game, or make one from an open Studio window.")}</div>`}</div></div>
+    <div class="stack" style="gap:16px">
+      <div class="panel"><div class="panel-h"><h3>Roblox Studio</h3><div class="grow"></div><span class="chip ${st.status === "connected" ? "ok" : st.status === "error" ? "bad" : ""}"><span class="dot ${st.status}"></span>${esc(st.status)}</span></div>
+        <div class="panel-b stack">
+          ${st.status !== "connected" ? `<div class="muted" style="font-size:13px">${esc(S.studioError || st.error || "Not connected yet.")}</div><div><button class="btn primary" data-act="connectStudio">${ic("link")}Connect to Studio</button></div>`
+          : `<div class="row"><div class="muted grow" style="font-size:13px">${S.studios.length ? `${S.studios.length} Studio window${S.studios.length > 1 ? "s" : ""} open` : esc(S.studioError || "No Studio window found.")}</div><button class="btn sm" data-act="detectStudios">${ic("refresh")}Detect</button></div>
+             ${S.studios.map((w) => { const linked = S.projects.find((x) => x.studio?.id === w.id); return `<div class="mini-proj" style="cursor:default"><div class="gicon sm"><div class="fallback">${esc(initials(w.name))}</div></div><div class="grow" style="min-width:0"><div class="ell" style="font-weight:600;font-size:13px">${esc(w.name)}</div><div class="faint" style="font-size:11.5px">${esc(w.mode || "")}${w.placeId ? " · Place " + esc(w.placeId) : " · not published"}</div></div>${linked ? `<span class="chip ok">${esc(linked.game?.name || linked.name)}</span>` : `${p ? `<button class="btn sm" data-act="linkStudio" data-id="${esc(w.id)}">Link</button>` : ""}<button class="btn sm" data-act="projectFromStudio" data-id="${esc(w.id)}">New project</button>`}</div>`; }).join("")}`}
+        </div></div>
+      <div class="panel pad"><div class="h3" style="margin-bottom:8px">How it works</div>
+        <div class="muted" style="font-size:12.5px;line-height:1.7">Open your place in <b>Roblox Studio</b> and turn on its AI / MCP connection (Assistant settings). Claude then builds right in that window: scripts, parts, UI and play tests. If a project has a folder (e.g. Rojo), Claude can also edit the files there.</div></div>
+    </div></div>`;
 };
 
 /* ---------- revenue ---------- */
@@ -673,10 +379,10 @@ VIEWS.revenue = () => {
       <button class="btn sm ghost danger" data-act="unlinkRoblox">Unlink &amp; sign out</button></div>`;
 
   const tiles = sm ? `<div class="grid g4">
-      <div class="panel stat"><div class="label">Robux balance</div><div class="n">${rbx(sm.balance)}</div><div class="d">Available now</div></div>
-      <div class="panel stat"><div class="label">Pending Robux</div><div class="n">${rbx(sm.pending)}</div><div class="d">On hold before it's paid out</div></div>
-      <div class="panel stat"><div class="label">Sales today</div><div class="n">${rbx(sm.day.sales)}</div><div class="d">${rbx(sm.week.sales)} this week</div></div>
-      <div class="panel stat"><div class="label">Incoming this month</div><div class="n">${rbx(sm.month.incoming)}</div><div class="d">${rbx(sm.month.outgoing)} spent this month</div></div></div><div class="sp"></div>` : "";
+      <div class="panel stat"><div class="label">Robux balance</div><div class="n">${rbx(sm.balance)}</div><div class="d">≈ ${kr(sm.balance)} at the DevEx rate</div></div>
+      <div class="panel stat"><div class="label">Pending Robux</div><div class="n">${rbx(sm.pending)}</div><div class="d">≈ ${kr(sm.pending)} · on hold before payout</div></div>
+      <div class="panel stat"><div class="label">Sales today</div><div class="n">${rbx(sm.day.sales)}</div><div class="d">≈ ${kr(sm.day.sales)} · ${rbx(sm.week.sales)} this week</div></div>
+      <div class="panel stat"><div class="label">Incoming this month</div><div class="n">${rbx(sm.month.incoming)}</div><div class="d">≈ ${kr(sm.month.incoming)} · ${rbx(sm.month.outgoing)} spent</div></div></div><div class="sp"></div>` : "";
 
   const lines = (out) => frame.lines.filter((l) => !!l.outgoing === out);
   const breakdown = sm ? `<div class="grid" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
@@ -708,7 +414,7 @@ VIEWS.revenue = () => {
       const lastFull = rev.length > 1 ? rev[rev.length - 2] : rev[0];
       const latest = (k) => { const s = m?.series?.[k] || []; return s.length ? s[s.length - (s.length > 1 ? 2 : 1)].value : null; };
       return `<div class="panel"><div class="panel-h">${gameIcon({ id: g.universeId, name: g.name, game: { name: g.name, iconUrl: g.iconUrl } }, "sm")}<div class="grow" style="min-width:0"><h3 class="ell">${esc(g.name)}</h3><div class="faint" style="font-size:12px">Universe ${esc(g.universeId)}${g.projectId ? " · VYRON project" : ""}</div></div>
-        ${m && !m.fatal ? `<div style="text-align:right"><div class="label">30-day revenue</div><div style="font:600 18px var(--f-head)">${rbx(total)}</div></div>` : ""}</div>
+        ${m && !m.fatal ? `<div style="text-align:right"><div class="label">30-day revenue</div><div style="font:600 18px var(--f-head)">${rbx(total)}</div><div class="faint" style="font-size:11.5px">≈ ${kr(total)}</div></div>` : ""}</div>
         <div class="panel-b">${!m ? `<div class="row faint" style="font-size:12.5px">${R.busy && !keyErr ? '<span class="spinner"></span>Loading analytics…' : keyErr ? "Waiting for a working API key." : "Not loaded yet — click Refresh."}</div>`
           : m.fatal ? `<div class="chip bad" style="height:auto;padding:8px 10px;white-space:normal;border-radius:10px">${esc(m.fatal)}</div>`
           : `<div class="grid g4" style="gap:10px;margin-bottom:12px">
@@ -720,118 +426,72 @@ VIEWS.revenue = () => {
             ${Object.keys(m.errors || {}).length ? `<div class="faint" style="font-size:11.5px;margin-top:8px">Some metrics unavailable: ${esc(Object.entries(m.errors).map(([k, v]) => k + " (" + v + ")").join(", "))}</div>` : ""}`}</div></div>`; }).join("")}</div>`
       : `<div class="panel">${empty("No games to show", "Link your Roblox account, or add a project with a Place ID on the Projects page.")}</div>`}` : "";
 
-  return head + account + `<div class="sp"></div>` + tiles + breakdown + keyCard + gameCards;
+  return head + account + `<div class="sp"></div>` + tiles + devexPanel() + breakdown + keyCard + gameCards;
 };
 
-/* ---------- prompts ---------- */
-VIEWS.prompts = () => {
-  const q = ui.promptQ.toLowerCase();
-  const list = S.prompts.filter((p) => (ui.promptCat === "All" || (ui.promptCat === "Favorites" ? p.favorite : p.category === ui.promptCat)) && (!q || (p.title + p.body + p.category).toLowerCase().includes(q)));
-  const cats = ["All", "Favorites", ...CATEGORIES];
-  return `<div class="grid" style="grid-template-columns:220px 1fr">
-    <div class="panel" style="padding:8px;align-self:start">${cats.map((c) => `<div class="pick ${ui.promptCat === c ? "on" : ""}" data-act="promptCat" data-id="${esc(c)}"><span class="grow">${esc(c)}</span><span class="faint" style="font-size:12px">${c === "All" ? S.prompts.length : c === "Favorites" ? S.prompts.filter((p) => p.favorite).length : S.prompts.filter((p) => p.category === c).length}</span></div>`).join("")}</div>
-    <div><div class="row"><div class="search grow">${ic("search")}<input class="input" id="promptSearch" placeholder="Search prompts" value="${esc(ui.promptQ)}"></div><button class="btn" data-act="improveIdea">${ic("sparkle")}Improve an idea with AI</button><button class="btn primary" data-act="newPrompt">${ic("plus")}New prompt</button></div>
-      <div class="sp"></div>
-      <div class="cards">${list.map((p) => `<div class="panel pad stack" style="gap:8px"><div class="row"><b class="grow ell" style="font:600 14px var(--f-head)">${esc(p.title)}</b><button class="btn sm ghost icon" title="Favorite" data-act="favPrompt" data-id="${p.id}" style="${p.favorite ? "color:#ffd76a" : ""}">${ic("star")}</button></div>
-        <span class="tag" style="align-self:flex-start">${esc(p.category)}</span>
-        <div class="muted" style="font-size:12.5px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden">${esc(p.body)}</div>
-        <div class="row wrap" style="margin-top:4px"><button class="btn sm primary" data-act="promptBuild" data-id="${p.id}">${ic("bolt")}Build</button><button class="btn sm" data-act="promptSend" data-id="${p.id}">${ic("send")}Send to agent</button><div class="grow"></div><button class="btn sm ghost icon" title="Copy" data-act="copyPrompt" data-id="${p.id}">${ic("copy")}</button><button class="btn sm ghost icon" title="Edit" data-act="editPrompt" data-id="${p.id}">${ic("edit")}</button><button class="btn sm ghost danger icon" title="Delete" data-act="deletePrompt" data-id="${p.id}">${ic("trash")}</button></div></div>`).join("") || `<div class="panel">${empty("No prompts here", "Create one or change the filter.")}</div>`}</div></div>
-  </div>`;
-};
+/** DevEx value in Danish kroner, from the official sources. */
+function devexPanel() {
+  const x = S.rates, sm = S.revenue.summary;
+  const min = x?.minRobux || 30000;
+  const bal = sm?.balance || 0;
+  const calc = Number(ui.calcRobux || 0);
+  const pct = Math.min(1, bal / min);
+  return `<div class="panel"><div class="panel-h"><h3>DevEx in Danish kroner</h3><span class="faint" style="font-size:12px">What your earned Robux are worth if you cash out with the Developer Exchange</span><div class="grow"></div><button class="btn sm" data-act="refreshRates">${ic("refresh")}Update rates</button></div>
+    <div class="panel-b">
+      ${!x ? `<div class="faint">Loading the official rates…</div>` : `<div class="grid g4" style="gap:12px">
+        <div><div class="label">1 Robux</div><div style="font:600 18px var(--f-head);margin-top:4px">${x.dkkPerRobux.toLocaleString("da-DK", { maximumFractionDigits: 4 })} kr.</div><div class="faint" style="font-size:11.5px">$${x.usdPerRobux} × ${x.dkkPerUsd.toFixed(4)} kr/$</div></div>
+        <div><div class="label">1,000 Robux</div><div style="font:600 18px var(--f-head);margin-top:4px">${kr(1000)}</div></div>
+        <div><div class="label">Cash-out minimum</div><div style="font:600 18px var(--f-head);margin-top:4px">${rbx(min)}</div><div class="faint" style="font-size:11.5px">= ${kr(min)}</div></div>
+        <div><div class="label">Your balance</div><div style="font:600 18px var(--f-head);margin-top:4px">${sm ? kr(bal) : "—"}</div><div class="faint" style="font-size:11.5px">${sm ? (bal >= min ? "Enough to cash out" : `${(min - bal).toLocaleString()} R$ to go`) : "Link Roblox to see it"}</div></div></div>
+        ${sm ? `<div style="margin-top:14px"><div class="bar ${bal >= min ? "" : "live"}"><i style="width:${(pct * 100).toFixed(1)}%"></i></div></div>` : ""}
+        <div class="row" style="margin-top:16px;gap:10px"><span class="grow muted" style="font-size:13px">Calculator</span><input class="input" id="calcRobux" type="number" min="0" step="1000" placeholder="Robux" style="width:160px" value="${calc || ""}"><span style="font:600 16px var(--f-head);min-width:130px;text-align:right" id="calcOut">${calc ? kr(calc) : "0,00 kr."}</span></div>
+        <hr class="sep">
+        <div class="faint" style="font-size:11.5px;line-height:1.7">
+          DevEx rate <b>$${x.usdPerRobux}</b> per earned Robux ${x.devexLive ? "read from" : "(last known — couldn't reach)"} <a data-act="openUrl" data-id="${esc(x.sources.devex)}" style="cursor:pointer">Roblox's official DevEx page</a>.
+          Dollar → krone <b>${x.dkkPerUsd.toFixed(4)}</b> from the <a data-act="openUrl" data-id="https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html" style="cursor:pointer">European Central Bank</a>${x.ecbDate ? ` (${esc(x.ecbDate)})` : ""}${x.ecbLive ? "" : " — last known"}.
+          Updated ${ago(x.fetchedAt)}. Only earned Robux can be exchanged, and Roblox pays in US dollars — your bank's exchange rate and fees decide the final kroner amount.</div>`}
+    </div></div><div class="sp"></div>`;
+}
 
-/* ---------- tasks ---------- */
-VIEWS.tasks = () => {
-  const f = ui.taskFilter;
-  const match = (t) => f === "all" || (f === "active" ? !["completed", "failed", "cancelled"].includes(t.status) : f === "completed" ? t.status === "completed" : ["failed", "cancelled"].includes(t.status));
-  const tops = S.tasks.filter((t) => !t.parentId && t.kind !== "chat").filter((t) => match(t) || S.tasks.some((k) => k.parentId === t.id && match(k))).reverse();
-  const row = (t, child) => `<div class="task-row ${child ? "child" : ""}" data-act="openTask" data-id="${t.id}">
-    <div style="min-width:0"><div class="t ell">${t.kind === "build" ? ic("bolt", "") .replace("<svg", '<svg style="width:13px;height:13px;vertical-align:-2px;margin-right:6px"') : ""}${esc(t.title)}</div><div class="s ell">${esc(t.stage || t.description.slice(0, 120))}</div></div>
-    <div class="ell muted" style="font-size:12.5px">${esc(agentById(t.agentId)?.name || (t.role ? t.role : "Any agent"))}</div>
-    <div>${taskStatus(t.status)}</div>
-    <div><span class="tag">${esc(t.priority)}</span></div>
-    <div>${t.kind === "build" ? bar(t.progress || 0, ["in_progress", "planning"].includes(t.status) ? "live" : t.status === "failed" ? "bad" : "") : `<span class="faint" style="font-size:12px">${ago(t.finishedAt || t.startedAt || t.createdAt)}</span>`}</div></div>`;
-  return `<div class="row"><div class="seg">${[["active", "Active"], ["all", "All"], ["completed", "Completed"], ["failed", "Failed"]].map(([k, l]) => `<button class="${ui.taskFilter === k ? "on" : ""}" data-act="taskFilter" data-id="${k}">${l}</button>`).join("")}</div><div class="grow"></div><button class="btn" data-act="clearTasks">Clear finished</button><button class="btn primary" data-act="newTask">${ic("plus")}New task</button></div>
-  <div class="sp"></div>
-  <div class="panel"><div class="task-row" style="cursor:default;border-top:0"><span class="label">Task</span><span class="label">Agent</span><span class="label">Status</span><span class="label">Priority</span><span class="label">Progress</span></div>
-    ${tops.length ? tops.map((t) => row(t) + S.tasks.filter((k) => k.parentId === t.id).map((k) => row(k, true)).join("")).join("") : empty("No tasks here", "Start a build from the Dashboard or create a task.")}</div>`;
-};
 
 /* ---------- settings ---------- */
 VIEWS.settings = () => {
-  const s = S.settings;
-  const modes = [["ask_all", "Ask before every change", "Every file write and every non-read-only tool needs your approval."], ["ask_destructive", "Ask before risky actions (recommended)", "File edits are applied and backed up (undo any time). Deleting files and Studio/MCP actions that are not read-only ask first."], ["autonomous", "Autonomous", "Agents work on their own. Only deletes and tools marked destructive ask first."]];
+  const s = S.settings, C = S.claude;
   const A = S.auth;
   const u = A?.user;
   const account = !A ? "" : u
-    ? `<div class="panel pad" style="margin-bottom:16px"><div class="row" style="gap:14px"><div class="ava" style="border-radius:50%;overflow:hidden">${u.photo ? `<img src="${esc(u.photo)}" alt="" style="width:100%;height:100%;object-fit:cover">` : esc(initials(u.name))}</div>
-        <div class="grow"><div class="h3">${esc(u.name)}</div><div class="faint" style="font-size:12.5px">${esc(u.email)} · signed in with ${String(u.provider).startsWith("google") ? "Google" : "email"}${A.offline ? " · offline" : ""}</div></div>
+    ? `<div class="panel pad"><div class="row" style="gap:14px"><div class="ava" style="border-radius:50%;overflow:hidden">${u.photo ? `<img src="${esc(u.photo)}" alt="" style="width:100%;height:100%;object-fit:cover">` : esc(initials(u.name))}</div>
+        <div class="grow"><div class="h3">${esc(u.name)}</div><div class="faint" style="font-size:12.5px">${esc(u.email)} · signed in to VYRON</div></div>
         <button class="btn sm" data-act="editSignIn">Sign-in settings</button><button class="btn sm danger" data-act="authSignOut">Sign out</button></div>
         <hr class="sep"><div class="row"><div class="grow"><div style="font-weight:500">Require sign-in when VYRON opens</div><div class="faint" style="font-size:12.5px">Off: VYRON opens straight away. On: it stays locked until you sign in.</div></div><div class="toggle ${A.required ? "on" : ""}" data-act="toggleRequire"></div></div></div>`
-    : `<div class="panel pad row" style="margin-bottom:16px;gap:14px"><div class="ava" style="border-radius:50%">?</div>
-        <div class="grow"><div class="h3">Not signed in</div><div class="faint" style="font-size:12.5px">Signing in is optional — VYRON works without an account.</div></div>
+    : `<div class="panel pad row" style="gap:14px"><div class="ava" style="border-radius:50%">?</div>
+        <div class="grow"><div class="h3">VYRON account (optional)</div><div class="faint" style="font-size:12.5px">Only needed if you want VYRON to be locked with your Google account.</div></div>
         ${A.waitingForGoogle ? `<span class="chip"><span class="spinner"></span>Finish signing in in your browser</span><button class="btn sm" data-act="authCancelGoogleSettings">Cancel</button>`
           : A.googleEnabled ? `<button class="btn sm google" data-act="authGoogleSettings">${GOOGLE_G}Sign in with Google</button><button class="btn sm ghost" data-act="editSignIn">Settings</button>`
           : `<button class="btn sm" data-act="editSignIn">Set up Google sign-in</button>`}</div>`;
-  const C = S.control;
-  const controlPanel = !C ? "" : `<div class="panel pad" style="margin-bottom:16px"><div class="row" style="gap:14px"><img src="icon.svg" alt="" style="width:34px;height:34px">
-      <div class="grow"><div class="h3">Control VYRON from Claude</div><div class="faint" style="font-size:12.5px">Lets Claude on this PC (Claude Code / the Claude app) see your AIs and tasks, start builds, give tasks and chat with your AIs. It can't approve risky actions or see API keys — that stays with you.</div></div>
-      <div class="toggle ${C.enabled ? "on" : ""}" data-act="controlToggle"></div></div>
-      ${C.enabled ? `<hr class="sep"><div class="row wrap" style="gap:10px"><span class="chip ${C.running ? "ok" : "bad"}"><span class="dot ${C.running ? "connected" : "error"}"></span>${C.running ? "On · " + esc(C.url) : esc(C.error || "Not running")}</span>
-        <span class="faint" style="font-size:12px">Only this PC can connect, with a secret key saved in VYRON's data folder.</span><div class="grow"></div><button class="btn sm" data-act="controlNewKey">New key</button></div>` : ""}</div>`;
-  return `${account}${controlPanel}
-  <div class="grid g2">
-    <div class="panel pad"><div class="h3" style="margin-bottom:14px">Appearance</div>
-      <div class="row" style="margin-bottom:14px"><span class="grow">Theme</span><div class="seg">${[["dark", "Dark"], ["light", "Light"]].map(([k, l]) => `<button class="${(s.theme || "dark") === k ? "on" : ""}" data-act="setting" data-key="theme" data-val="${k}">${l}</button>`).join("")}</div></div>
-      <div class="row" style="margin-bottom:14px"><span class="grow">Animations</span><div class="toggle ${s.animations !== false ? "on" : ""}" data-act="setting" data-key="animations" data-val="${s.animations === false}"></div></div>
-      <div class="row"><span class="grow">Reduce effects (no background animation)</span><div class="toggle ${s.reduceEffects ? "on" : ""}" data-act="setting" data-key="reduceEffects" data-val="${!s.reduceEffects}"></div></div>
+  const X = S.control;
+  return `<div class="grid g2">
+    <div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("claude")}</div><div class="grow" style="min-width:0"><div class="h3">Claude</div><div class="faint ell mono" style="font-size:11.5px" title="${esc(C.exe || "")}">${C.found ? esc(C.exe) : "Claude Code not found"}</div></div>
+        <span class="chip ${C.auth?.loggedIn ? "ok" : ""}"><span class="dot ${claudeDot()}"></span>${claudeLine()}</span></div>
+      <div class="row">${C.found ? `<button class="btn sm ${C.auth?.loggedIn ? "" : "primary"}" data-act="claudeLogin">${C.auth?.loggedIn ? "Sign in again / switch account" : "Sign in to Claude"}</button>` : `<button class="btn sm" data-act="openUrl" data-id="https://claude.ai/download">Get Claude</button>`}<button class="btn sm ghost" data-act="claudeCheck">${ic("refresh")}Check</button></div>
+      <div class="label" style="margin-top:6px">What Claude may do</div>
+      ${[["safe", "Studio, VYRON and project files (recommended)", "Claude builds in Roblox Studio, uses VYRON, and reads/edits files in the project folder. No shell commands."], ["full", "Full access", "Claude may also run commands on this PC without asking. Only turn this on if you trust what you ask for."]].map(([k, t, d]) => `<div class="radio-card ${(s.claudeAccess || "safe") === k ? "on" : ""}" data-act="setting" data-key="claudeAccess" data-val="${k}"><span class="dot ${(s.claudeAccess || "safe") === k ? "connected" : "unknown"}"></span><div><b style="font-weight:600">${t}</b><div class="faint" style="font-size:12.5px">${d}</div></div></div>`).join("")}
+      <label class="field"><span>Model</span><select class="select" data-change="setting" data-key="claudeModel">${[["", "Default (your plan's default)"], ["opus", "Opus — strongest"], ["sonnet", "Sonnet — balanced"], ["haiku", "Haiku — fastest"]].map(([k, l]) => `<option value="${k}" ${(s.claudeModel || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
     </div>
-    <div class="panel pad"><div class="h3" style="margin-bottom:14px">AI defaults</div>
-      <label class="field"><span>Default agent (chat and prompt improvement)</span><select class="select" data-change="setting" data-key="defaultAgentId"><option value="">First available</option>${S.agents.map((a) => `<option value="${a.id}" ${s.defaultAgentId === a.id ? "selected" : ""}>${esc(a.name)} — ${esc(a.role)} (${esc(a.model)})</option>`).join("")}</select></label>
-      <label class="field"><span>Agents working at the same time</span><select class="select" data-change="setting" data-key="maxParallel">${[1, 2, 3, 4, 5, 6, 8].map((n) => `<option ${s.maxParallel === n ? "selected" : ""}>${n}</option>`).join("")}</select><small>More parallel agents finish faster but use tokens faster.</small></label>
+    <div class="stack" style="gap:16px">
+      ${X ? `<div class="panel pad"><div class="row" style="gap:14px"><img src="icon.svg" alt="" style="width:34px;height:34px"><div class="grow"><div class="h3">Claude controls VYRON</div><div class="faint" style="font-size:12.5px">The connector Claude uses to see and change VYRON (projects, ideas, revenue, messages to you). Only this PC can connect, with a secret key.</div></div><div class="toggle ${X.enabled ? "on" : ""}" data-act="controlToggle"></div></div>
+        ${X.enabled ? `<hr class="sep"><div class="row wrap" style="gap:10px"><span class="chip ${X.running ? "ok" : "bad"}"><span class="dot ${X.running ? "connected" : "error"}"></span>${X.running ? "On · " + esc(X.url) : esc(X.error || "Not running")}</span><div class="grow"></div><button class="btn sm" data-act="controlNewKey">New key</button></div>` : ""}</div>` : ""}
+      <div class="panel pad"><div class="h3" style="margin-bottom:14px">Appearance</div>
+        <div class="row" style="margin-bottom:14px"><span class="grow">Theme</span><div class="seg">${[["dark", "Dark"], ["light", "Light"]].map(([k, l]) => `<button class="${(s.theme || "dark") === k ? "on" : ""}" data-act="setting" data-key="theme" data-val="${k}">${l}</button>`).join("")}</div></div>
+        <div class="row" style="margin-bottom:14px"><span class="grow">Animations</span><div class="toggle ${s.animations !== false ? "on" : ""}" data-act="setting" data-key="animations" data-val="${s.animations === false}"></div></div>
+        <div class="row"><span class="grow">Reduce effects (no background animation)</span><div class="toggle ${s.reduceEffects ? "on" : ""}" data-act="setting" data-key="reduceEffects" data-val="${!s.reduceEffects}"></div></div></div>
+      ${account}
     </div>
-    <div class="panel pad"><div class="h3" style="margin-bottom:14px">Permissions</div>${modes.map(([k, t, d]) => `<div class="radio-card ${s.permissionMode === k ? "on" : ""}" data-act="setting" data-key="permissionMode" data-val="${k}"><span class="dot ${s.permissionMode === k ? "connected" : "unknown"}"></span><div><b style="font-weight:600">${t}</b><div class="faint" style="font-size:12.5px">${d}</div></div></div>`).join("")}</div>
-    <div class="panel pad"><div class="h3" style="margin-bottom:14px">Connections</div>
-      <div class="list-row click" data-go="agents" style="padding:10px 0"><span class="grow">AI providers and API keys</span><span class="faint">${S.providers.length} configured</span></div>
-      <div class="list-row click" data-go="mcp" style="padding:10px 0"><span class="grow">MCP servers</span><span class="faint">${S.mcpServers.length} configured</span></div>
-      <div class="list-row click" data-go="roblox" style="padding:10px 0"><span class="grow">Roblox Studio</span><span class="faint">${S.studios.length} window(s)</span></div>
-      <div class="list-row click" data-go="projects" style="padding:10px 0"><span class="grow">Projects</span><span class="faint">${S.projects.length}</span></div>
-      <div class="faint" style="font-size:12px;margin-top:10px">API keys and MCP secrets are encrypted with Windows data protection and stay inside the app's backend — the interface never receives them.</div></div>
   </div>
   <div class="sp"></div>
   <div class="panel activity"><div class="panel-h"><h3>Diagnostics log</h3><div class="grow"></div><button class="btn sm" data-act="copyLog">${ic("copy")}Copy log</button></div>
-    <div style="max-height:380px;overflow:auto" id="diagLog">${S.activity.slice().reverse().map((l) => `<div class="list-row"><time>${time(l.at)}</time><div class="grow"><b class="lv-${l.level}">${esc(l.source)}</b> <span class="muted">${esc(l.text)}</span></div></div>`).join("")}</div></div>`;
+    <div style="max-height:320px;overflow:auto" id="diagLog">${S.activity.slice().reverse().map((l) => `<div class="list-row"><time>${time(l.at)}</time><div class="grow"><b class="lv-${l.level}">${esc(l.source)}</b> <span class="muted">${esc(l.text)}</span></div></div>`).join("")}</div></div>`;
 };
-
-/* ---------------- drawers ---------------- */
-function drawDrawer() {
-  if (ui.drawer === "agent") { const a = agentById(ui.agentSel); return a ? agentDrawer(a) : ""; }
-  if (ui.drawer === "approvals") {
-    return `<div class="dscrim" data-act="closeDrawer"></div><div class="drawer"><div class="panel-h"><h3>Approvals</h3><div class="grow"></div><button class="btn sm ghost icon" data-act="closeDrawer">${ic("x")}</button></div>
-      <div class="body stack" id="aprBody">${S.approvals.length ? S.approvals.map(approvalCard).join("") : empty("Nothing waiting", "When an agent wants to do something that needs your OK, it shows up here.")}</div></div>`;
-  }
-  if (ui.drawer === "task") {
-    const t = S.tasks.find((x) => x.id === ui.taskSel);
-    if (!t) return "";
-    const done = ["completed", "failed", "cancelled"].includes(t.status);
-    const kids = S.tasks.filter((k) => k.parentId === t.id);
-    const deps = t.deps.map((d) => S.tasks.find((x) => x.id === d)).filter(Boolean);
-    return `<div class="dscrim" data-act="closeDrawer"></div><div class="drawer"><div class="panel-h"><div class="grow" style="min-width:0"><h3 class="ell">${esc(t.title)}</h3><div class="row" style="margin-top:4px">${taskStatus(t.status)}<span class="faint" style="font-size:12px">${esc(agentById(t.agentId)?.name || t.role || "")}</span></div></div>
-      ${!done ? `<button class="btn sm danger" data-act="cancelTask" data-id="${t.id}">Cancel</button>` : ""}${["failed", "cancelled"].includes(t.status) ? `<button class="btn sm primary" data-act="retryTask" data-id="${t.id}">${ic("refresh")}Retry</button>` : ""}<button class="btn sm ghost icon" data-act="closeDrawer">${ic("x")}</button></div>
-      <div class="body stack" id="taskBody" style="gap:16px">
-        ${t.kind === "build" ? `<div>${bar(t.progress || 0, done ? "" : "live")}<div class="faint" style="font-size:12px;margin-top:6px">${esc(t.stage || "")}</div></div>` : t.stage ? `<div class="faint" style="font-size:12.5px">${esc(t.stage)}</div>` : ""}
-        <div><div class="label" style="margin-bottom:6px">Description</div><div class="md muted" style="font-size:13px">${md(t.description)}</div></div>
-        ${t.plan ? `<div><div class="label" style="margin-bottom:6px">Plan</div><div class="muted" style="font-size:13px">${esc(t.plan)}</div></div>` : ""}
-        ${kids.length ? `<div><div class="label" style="margin-bottom:6px">Sub-tasks</div>${kids.map((k) => `<div class="list-row click" style="padding:8px 0" data-act="openTask" data-id="${k.id}"><span class="grow ell">${esc(k.title)}</span><span class="faint" style="font-size:12px">${esc(agentById(k.agentId)?.name || k.role)}</span>${taskStatus(k.status)}</div>`).join("")}</div>` : ""}
-        ${deps.length ? `<div><div class="label" style="margin-bottom:6px">Depends on</div>${deps.map((d) => `<div class="row" style="font-size:13px"><span class="grow ell">${esc(d.title)}</span>${taskStatus(d.status)}</div>`).join("")}</div>` : ""}
-        ${t.error ? `<div class="chip bad" style="height:auto;padding:10px 12px;white-space:pre-wrap;border-radius:10px">${esc(t.error)}</div>` : ""}
-        ${t.changes?.length ? `<div><div class="label" style="margin-bottom:6px">Changed files</div><div class="row wrap">${t.changes.map((c) => `<button class="chip" style="cursor:pointer" data-act="viewChange" data-id="${c.id}">${esc(c.op)} ${esc(c.path)}</button>`).join("")}</div></div>` : ""}
-        ${t.notes?.length ? `<div><div class="label" style="margin-bottom:6px">Team notes</div>${t.notes.map((n) => `<div style="font-size:13px;margin-bottom:6px"><b>${esc(n.agent)}</b> <span class="muted">${esc(n.text)}</span></div>`).join("")}</div>` : ""}
-        ${t.result ? `<div><div class="label" style="margin-bottom:6px">Result</div><div class="md" style="font-size:13px">${md(t.result)}</div></div>` : ""}
-        ${t.steps?.length ? `<div><div class="label" style="margin-bottom:6px">Steps</div><div class="steps" id="stepsLog">${t.steps.map((s) => `<div><span class="faint">${time(s.at)}</span> ${esc(s.text)}</div>`).join("")}</div></div>` : ""}
-      </div></div>`;
-  }
-  return "";
-}
 
 /* ---------------- modals ---------------- */
 function modal(title, body, foot, wide) {
@@ -841,118 +501,14 @@ function modal(title, body, foot, wide) {
 const closeModal = () => ($("#modalRoot").innerHTML = "");
 const val = (id) => $("#" + id)?.value ?? "";
 
-function providerModal(p, preset) {
-  const type = p?.type || preset?.type || "anthropic";
-  modal(p ? "Edit provider" : preset ? "Connect " + esc(preset.name) : "Add AI provider", `
-    ${p ? "" : `<label class="field"><span>Provider type</span><select class="select" id="pType">${Object.entries(S.providerTypes).map(([k, v]) => `<option value="${k}" ${k === type ? "selected" : ""}>${esc(v.label)}</option>`).join("")}</select></label>`}
-    ${preset ? `<div class="faint" style="font-size:12.5px;margin:-4px 0 12px">Get a key at <a data-act="openUrl" data-id="${esc(preset.keyUrl)}" style="cursor:pointer">${esc(new URL(preset.keyUrl).hostname)}</a>, then paste it below.${preset.free ? " " + esc(preset.free) + "." : ""}</div>` : ""}
-    <label class="field"><span>Name</span><input class="input" id="pName" value="${esc(p?.name || preset?.name || "")}" placeholder="${type === "anthropic" ? "Claude" : "OpenAI"}"></label>
-    <div id="pBaseWrap" style="${type === "openai" ? "" : "display:none"}"><label class="field"><span>Base URL</span><input class="input" id="pBase" value="${esc(p?.baseURL || preset?.base || "https://api.openai.com/v1")}" list="pBaseList"><datalist id="pBaseList">${OPENAI_PRESETS.map(([n, u]) => `<option value="${u}">${n}</option>`).join("")}</datalist><small>Local servers like Ollama or LM Studio don't need a key.</small></label></div>
-    <label class="field"><span>API key</span><input class="input" type="password" id="pKey" placeholder="${p?.hasKey ? "Saved — leave blank to keep it" : "Paste your API key"}" autocomplete="off"><small>${type === "anthropic" ? 'Get one at console.anthropic.com → API Keys.' : ""} Stored encrypted on this PC.</small></label>
-    <label class="field"><span>Account email <span class="faint">(which account this key belongs to)</span></span><input class="input" type="email" id="pEmail" value="${esc(p?.accountEmail || "")}" placeholder="you@gmail.com"><small>Shown on every AI that uses this provider, so you know which account it runs on.</small></label>`,
-    `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="saveProvider" data-id="${p?.id || ""}">${p ? "Save & reconnect" : "Connect"}</button>`);
-  $("#pType")?.addEventListener("change", (e) => { $("#pBaseWrap").style.display = e.target.value === "openai" ? "" : "none"; });
-}
-
-const NAME_POOL = ["Orion", "Vega", "Lyra", "Nova", "Atlas", "Iris", "Echo", "Rune", "Sol", "Kai", "Mira", "Zed", "Juno", "Pax", "Ember", "Quill", "Onyx", "Sage", "Wren", "Axel"];
-function agentModal(a, presetRole) {
-  const provs = S.providers;
-  const pid = a?.providerId || provs.find((p) => p.status === "connected")?.id || provs[0]?.id;
-  const models = (id) => (S.providers.find((p) => p.id === id)?.models || []);
-  const role = a?.role || presetRole || "Luau Developer";
-  const suggestName = NAME_POOL.find((n) => !S.agents.some((x) => x.name === n)) || "";
-  modal(a ? "Configure " + esc(a.name) : presetRole ? `Add ${aOrAn(presetRole)} ` + esc(presetRole) : "Add AI", `
-    <div class="grid g2" style="gap:12px"><label class="field"><span>Name</span><input class="input" id="aName" value="${esc(a?.name || suggestName)}" placeholder="e.g. Orion"></label>
-    <label class="field"><span>Role</span><select class="select" id="aRole">${roleOptions(role)}</select></label></div>
-    <div class="faint" id="aRoleDesc" style="font-size:12px;margin:-6px 0 14px">${esc(S.roles[role])}</div>
-    <label class="field"><span>Account email <span class="faint">(which account this AI uses)</span></span><input class="input" id="aEmail" type="email" value="${esc(a?.ownEmail ? a.accountEmail : "")}" placeholder="${esc(S.providers.find((p) => p.id === pid)?.accountEmail || "Leave empty to use the provider's email")}"></label>
-    <div class="grid g2" style="gap:12px"><label class="field"><span>Provider</span><select class="select" id="aProv">${provs.map((p) => `<option value="${p.id}" ${p.id === pid ? "selected" : ""}>${esc(p.name)}${p.status === "connected" ? "" : " (not connected)"}</option>`).join("")}</select></label>
-    <label class="field"><span>Model</span><input class="input" id="aModel" list="aModels" value="${esc(a?.model || models(pid)[0] || "")}"><datalist id="aModels">${models(pid).map((m) => `<option value="${esc(m)}">`).join("")}</datalist></label></div>
-    <label class="field"><span>Token budget</span><input class="input" id="aBudget" type="number" step="100000" min="20000" value="${a?.budget || 1000000}"><small>The agent stops and shows “Out of tokens” when it reaches this.</small></label>
-    <label class="field"><span>Extra instructions (optional)</span><textarea class="input" id="aInstr" placeholder="e.g. Always use our UI theme module in ReplicatedStorage.Theme">${esc(a?.instructions || "")}</textarea></label>
-    <div class="label" style="margin:4px 0 8px">Tools</div>
-    <div class="row" style="margin-bottom:10px"><span class="grow">Project files (read, write, search)</span><div class="toggle ${a?.tools?.files === false ? "" : "on"}" id="aFiles" data-act="toggleEl"></div></div>
-    ${S.mcpServers.map((s) => { const v = a?.tools?.mcp?.[s.id] ?? "all"; return `<div class="row" style="margin-bottom:10px"><span class="grow">${esc(s.name)} <span class="faint" style="font-size:12px">(${s.tools.length} tools${s.status === "connected" ? "" : ", not connected"})</span></span><select class="select" style="width:170px;height:32px" data-mcp="${s.id}">${[["all", "All tools"], ["none", "No access"], ["custom", "Chosen tools"]].map(([k, l]) => `<option value="${k}" ${(Array.isArray(v) ? "custom" : v) === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
-      <div class="mcp-pick" data-for="${s.id}" style="${Array.isArray(v) ? "" : "display:none"};max-height:150px;overflow:auto;margin:-4px 0 10px;padding:8px;border:1px solid var(--border);border-radius:10px">${s.tools.map((t) => `<label class="row" style="font-size:12.5px;padding:2px 0;cursor:pointer"><input type="checkbox" value="${esc(t.name)}" ${Array.isArray(v) && v.includes(t.name) ? "checked" : ""}> <span class="mono">${esc(t.name)}</span></label>`).join("") || '<span class="faint">Connect the server to list its tools.</span>'}</div>`; }).join("")}`,
-    `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="saveAgent" data-id="${a?.id || ""}">${a ? "Save" : "Add agent"}</button>`);
-  $("#aRole").addEventListener("change", (e) => ($("#aRoleDesc").textContent = S.roles[e.target.value]));
-  $("#aProv").addEventListener("change", (e) => { const m = models(e.target.value); $("#aModels").innerHTML = m.map((x) => `<option value="${esc(x)}">`).join(""); if (m[0]) $("#aModel").value = m[0]; });
-  $$("#modalRoot [data-mcp]").forEach((sel) => sel.addEventListener("change", () => { $(`#modalRoot .mcp-pick[data-for="${sel.dataset.mcp}"]`).style.display = sel.value === "custom" ? "" : "none"; }));
-}
-
-function serverModal(s) {
-  const tr = s?.transport || "stdio";
-  modal(s ? "Edit MCP server" : "Add MCP server", `
-    <label class="field"><span>Name</span><input class="input" id="sName" value="${esc(s?.name || "")}" placeholder="e.g. Filesystem"></label>
-    <div class="field"><span>Transport</span><div class="seg" id="sTr">${[["stdio", "Local command (stdio)"], ["http", "HTTP (streamable)"], ["sse", "HTTP + SSE (legacy)"]].map(([k, l]) => `<button class="${tr === k ? "on" : ""}" data-tr="${k}">${l}</button>`).join("")}</div></div>
-    <div id="sStdio" style="${tr === "stdio" ? "" : "display:none"}">
-      <label class="field"><span>Command</span><input class="input mono" id="sCmd" value="${esc(s?.command || "")}" placeholder="npx"></label>
-      <label class="field"><span>Arguments</span><input class="input mono" id="sArgs" value="${esc((s?.args || []).map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" "))}" placeholder="-y @modelcontextprotocol/server-filesystem C:\\path"></label>
-      <label class="field"><span>Working folder (optional)</span><input class="input mono" id="sCwd" value="${esc(s?.cwd || "")}"></label></div>
-    <div id="sHttp" style="${tr === "stdio" ? "display:none" : ""}"><label class="field"><span>URL</span><input class="input mono" id="sUrl" value="${esc(s?.url || "")}" placeholder="https://example.com/mcp"></label></div>
-    <label class="field"><span>${tr === "stdio" ? "Environment variables" : "Headers"} — one per line, KEY=value (stored encrypted)</span><textarea class="input mono" id="sSecrets" style="min-height:70px" placeholder="${tr === "stdio" ? "API_TOKEN=..." : "Authorization=Bearer ..."}"></textarea>
-      ${s && (s.envKeys.length || s.headerKeys.length) ? `<small>Saved: ${[...s.envKeys, ...s.headerKeys].map((k) => `<label style="margin-right:10px"><input type="checkbox" data-rm="${esc(k)}"> remove ${esc(k)}</label>`).join("")}</small>` : ""}</label>
-    <div class="row"><span class="grow">Connect automatically when the app starts</span><div class="toggle ${s?.autoConnect === false ? "" : "on"}" id="sAuto" data-act="toggleEl"></div></div>`,
-    `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="saveServer" data-id="${s?.id || ""}">${s ? "Save & reconnect" : "Add & connect"}</button>`);
-  $$("#sTr button").forEach((b) => b.addEventListener("click", () => {
-    $$("#sTr button").forEach((x) => x.classList.toggle("on", x === b));
-    $("#sStdio").style.display = b.dataset.tr === "stdio" ? "" : "none";
-    $("#sHttp").style.display = b.dataset.tr === "stdio" ? "none" : "";
-  }));
-}
-
 function projectModal(p) {
   modal(p ? "Edit project" : "Add project", `
     ${!p && S.studios.length ? `<label class="field"><span>From an open Roblox Studio window (optional)</span><select class="select" id="prStudio"><option value="">—</option>${S.studios.map((st) => `<option value="${esc(st.id)}">${esc(st.name)}${st.placeId ? " · Place " + esc(st.placeId) : ""}</option>`).join("")}</select></label>` : ""}
     <label class="field"><span>Name</span><input class="input" id="prName" value="${esc(p?.name || "")}" placeholder="Filled in from Roblox when you give a Place ID"></label>
-    <label class="field"><span>Rojo project folder</span><div class="row"><input class="input mono" id="prDir" value="${esc(p?.rojoDir || "")}" placeholder="C:\\Users\\you\\Documents\\MyGame">${desktop ? `<button class="btn" data-act="browseDir">Browse</button>` : ""}</div><small>Agents read and write Luau files here. Leave empty to work only through Roblox Studio MCP.</small></label>
-    <div class="grid g2" style="gap:12px"><label class="field"><span>Place ID</span><input class="input mono" id="prPlace" value="${esc(p?.placeId || "")}" placeholder="from the game URL"></label>
-    <label class="field"><span>Universe ID (optional)</span><input class="input mono" id="prUni" value="${esc(p?.universeId || "")}"></label></div>
-    <small class="faint">The game's real icon and name are loaded from Roblox using these IDs.</small>`,
+    <label class="field"><span>Place ID (optional)</span><input class="input mono" id="prPlace" value="${esc(p?.placeId || "")}" placeholder="from the game URL"></label>
+    <label class="field"><span>Project folder (optional)</span><div class="row"><input class="input mono" id="prDir" value="${esc(p?.rojoDir || "")}" placeholder="e.g. a Rojo folder">${desktop ? `<button class="btn" data-act="browseDir">Browse</button>` : ""}</div><small>Claude works in this folder. Leave empty to build only in Roblox Studio.</small></label>
+    <input type="hidden" id="prUni" value="${esc(p?.universeId || "")}">`,
     `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="saveProject" data-id="${p?.id || ""}">${p ? "Save" : "Add project"}</button>`);
-}
-
-function promptModal(p) {
-  modal(p ? "Edit prompt" : "New prompt", `
-    <label class="field"><span>Title</span><input class="input" id="pmTitle" value="${esc(p?.title || "")}"></label>
-    <label class="field"><span>Category</span><select class="select" id="pmCat">${CATEGORIES.map((c) => `<option ${p?.category === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
-    <label class="field"><span>Prompt</span><textarea class="input" id="pmBody" style="min-height:200px">${esc(p?.body || "")}</textarea></label>`,
-    `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="savePrompt" data-id="${p?.id || ""}">Save</button>`, true);
-}
-
-function agentPickModal(text, label) {
-  modal(label, `<div class="muted" style="font-size:12.5px;margin-bottom:12px;max-height:120px;overflow:auto">${esc(text)}</div>
-    <label class="field"><span>Agent</span><select class="select" id="pickAgent">${S.agents.map((a) => `<option value="${a.id}" ${a.status === "idle" ? "" : ""}>${esc(a.name)} — ${esc(a.role)} (${AGENT_ST[a.status][0]})</option>`).join("")}</select></label>
-    <input type="hidden" id="pickText" value="${esc(text)}">`,
-    `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="doSendPrompt">Send</button>`);
-}
-
-function improveModal() {
-  modal("Improve an idea with AI", `
-    <label class="field"><span>Your idea</span><textarea class="input" id="impIdea" placeholder="e.g. a fishing game with rare fish and a market"></textarea></label>
-    <div class="row" style="margin-bottom:12px"><span class="grow">Research Roblox documentation on the web <span class="faint" style="font-size:12px">(Claude providers)</span></span><div class="toggle" id="impResearch" data-act="toggleEl"></div></div>
-    <label class="field"><span>Agent</span><select class="select" id="impAgent">${S.agents.map((a) => `<option value="${a.id}">${esc(a.name)} — ${esc(a.model)}</option>`).join("")}</select></label>
-    <div id="impOut"></div>`,
-    `<button class="btn" data-act="closeModal">Close</button><button class="btn primary" data-act="runImprove">${ic("sparkle")}Improve</button>`, true);
-}
-
-function taskModal() {
-  modal("New task", `
-    <label class="field"><span>Title (optional)</span><input class="input" id="tkTitle"></label>
-    <label class="field"><span>What should be done?</span><textarea class="input" id="tkDesc" style="min-height:130px"></textarea></label>
-    <div class="grid g2" style="gap:12px"><label class="field"><span>Assign to</span><select class="select" id="tkAgent"><option value="">Best agent for the role</option>${S.agents.map((a) => `<option value="${a.id}">${esc(a.name)} — ${esc(a.role)}</option>`).join("")}</select></label>
-    <label class="field"><span>Role</span><select class="select" id="tkRole"><option value="">Any</option>${Object.keys(S.roles).map((r) => `<option>${esc(r)}</option>`).join("")}</select></label></div>
-    <div class="grid g2" style="gap:12px"><label class="field"><span>Priority</span><select class="select" id="tkPrio"><option value="normal">Normal</option><option value="high">High</option><option value="low">Low</option></select></label>
-    <label class="field"><span>Start after (optional)</span><select class="select" id="tkDep"><option value="">—</option>${S.tasks.filter((t) => !["completed", "failed", "cancelled"].includes(t.status) && t.kind !== "chat").map((t) => `<option value="${t.id}">${esc(t.title)}</option>`).join("")}</select></label></div>`,
-    `<button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="saveTask">Create task</button>`);
-}
-
-async function showChange(id) {
-  const p = activeProject();
-  const c = p && (await call("getChange", p.id, id));
-  if (!c) return toast("That change is not in the active project's history", "error");
-  modal(`${esc(c.path)}`, `<div class="row" style="margin-bottom:10px"><span class="tag">${esc(c.op)}</span><span class="faint" style="font-size:12px">${esc(c.agent || "")} · ${new Date(c.at).toLocaleString()}${c.task ? " · " + esc(c.task) : ""}</span></div>${diffView(c.before, c.after)}`,
-    `${c.status !== "undone" ? `<button class="btn" data-act="undo" data-id="${c.id}">${ic("undo")}Undo this change</button>` : '<span class="chip">Undone</span>'}<button class="btn primary" data-act="closeModal">Close</button>`, true);
 }
 
 /* ---------------- sign-in (lock screen) ---------------- */
@@ -1043,15 +599,44 @@ async function authCall(btn, method, ...args) {
 }
 
 /* ---------------- actions ---------------- */
+async function sendClaude(text) {
+  text = String(text || "").trim();
+  if (!text) return false;
+  await call("claudeSend", text);
+  return true;
+}
 const ACT = {
   closeModal, closeModalScrim: (el, e) => { if (e.target === el) closeModal(); },
-  closeDrawer: () => { ui.drawer = null; render(); },
-  openApprovals: () => { ui.drawer = "approvals"; render(); },
-  openTask: (el) => { ui.taskSel = el.dataset.id; ui.drawer = "task"; render(); },
-  toggleEl: (el) => el.classList.toggle("on"),
   copyCode: (el) => { navigator.clipboard.writeText(el.closest(".code").querySelector("pre").textContent); toast("Copied"); },
+  openUrl: (el) => B.host("openUrl", el.dataset.id),
 
-  async quickBuild() { const t = val("quickBuild").trim(); if (!t) return toast("Describe what to build first", "error"); await call("build", t); $("#quickBuild").value = ""; toast("The Lead Developer is planning it"); },
+  async quickAsk() { if (await sendClaude(val("quickAsk"))) { $("#quickAsk").value = ""; go("claude"); } },
+  async claudeSend() { if (await sendClaude(val("claudeInput"))) $("#claudeInput").value = ""; },
+  async claudeStop() { await call("claudeStop"); },
+  async claudeNewChat() { if (confirm("Start a new chat? Claude forgets this conversation (your game stays as it is).")) await call("claudeNewChat"); },
+  async claudeLogin() { await call("claudeLogin"); toast("Sign in in the window that opened — VYRON checks automatically"); },
+  async claudeCheck() { const a = await call("claudeCheck"); toast(a?.loggedIn ? "Claude is ready" : S.claude.found ? "Not signed in to Claude yet" : "Claude Code not found", a?.loggedIn ? "" : "error"); },
+
+  ideaTab: (el) => { ui.ideaTab = el.dataset.id; render(); },
+  ideaCat: (el) => { ui.ideaCat = el.dataset.id; render(); },
+  async toggleIdea(el, e) {
+    if (e.target.closest("[data-act=removeIdea]")) return;
+    const P = picked(), id = el.dataset.id;
+    if (P.has(id)) P.delete(id); else P.add(id);
+    S.ideas.picked = [...P]; render();
+    await call("setPicked", [...P]);
+  },
+  async clearPicked() { S.ideas.picked = []; render(); await call("setPicked", []); },
+  async removeIdea(el) { if (confirm("Delete this idea?")) await call("removeCustomIdea", el.dataset.id); },
+  async saveIdea() {
+    const id = await call("addCustomIdea", { title: val("ciTitle"), pitch: val("ciPitch"), features: val("ciFeat") });
+    ["ciTitle", "ciPitch", "ciFeat"].forEach((k) => ($("#" + k).value = ""));
+    toast("Idea saved");
+    return id;
+  },
+  async saveIdeaBuild() { const id = await ACT.saveIdea(); if (id) { await call("buildIdeas", [id], ""); go("claude"); } },
+  async buildIdeas() { await call("buildIdeas", S.ideas.picked, val("ideaExtra")); toast("Sent to Claude"); go("claude"); },
+
   async setProject(el) { await call("setActiveProject", el.dataset.id); },
   async refreshGame(el) { await call("refreshGame", el.dataset.id); toast("Game info refreshed"); },
   addProject: () => projectModal(),
@@ -1063,124 +648,11 @@ const ACT = {
     if (el.dataset.id) await call("updateProject", el.dataset.id, data); else await call("addProject", data);
     closeModal(); toast("Project saved");
   },
-  async removeProject(el) { if (confirm("Remove this project from VYRON? Files on disk are not deleted.")) await call("removeProject", el.dataset.id); },
-  async snapshot() { const r = await call("snapshotProject", S.activeProjectId); toast(`Snapshot saved (${r.files} files)`); },
-  async undo(el) { if (!confirm("Restore the previous version of this file?")) return; await call("undoChange", S.activeProjectId, el.dataset.id); closeModal(); toast("Change undone"); },
-  viewChange: (el) => showChange(el.dataset.id),
-
-  addProvider: () => providerModal(),
-  editProvider: (el) => providerModal(S.providers.find((p) => p.id === el.dataset.id)),
-  async saveProvider(el) {
-    const b = el; b.disabled = true; b.innerHTML = '<span class="spinner"></span>Connecting…';
-    try {
-      if (el.dataset.id) await call("updateProvider", el.dataset.id, { name: val("pName"), baseURL: val("pBase"), apiKey: val("pKey"), accountEmail: val("pEmail") });
-      else await call("addProvider", { type: val("pType"), name: val("pName"), baseURL: val("pType") === "openai" ? val("pBase") : "", apiKey: val("pKey"), accountEmail: val("pEmail") });
-      closeModal();
-    } catch { b.disabled = false; b.textContent = "Try again"; }
-  },
-  async testProvider(el) { const r = await call("testProvider", el.dataset.id); toast(r.status === "connected" ? "Connected" : r.error, r.status === "connected" ? "" : "error"); },
-  async removeProvider(el) { if (confirm("Remove this provider? Agents using it will show as not connected.")) await call("removeProvider", el.dataset.id); },
-  async defaultTeam() { await call("createDefaultTeam", S.providers.find((p) => p.status === "connected")?.id || S.providers[0].id); },
-  addAgent: () => agentModal(),
-  addAgentRole: (el) => agentModal(null, el.dataset.id),
-  editAgent: (el) => agentModal(agentById(el.dataset.id)),
-  viewAgent: (el) => { ui.agentSel = el.dataset.id; ui.drawer = "agent"; render(); },
-  chatWith: (el) => { ui.wsSel = [el.dataset.id]; ui.wsFocus = el.dataset.id; ui.drawer = null; go("workspace"); },
-  async togglePerm(el) {
-    const a = agentById(el.dataset.id), k = el.dataset.perm;
-    const next = !a.perms[k];
-    const roleDefault = !!S.roleInfo[a.role]?.perms[k];
-    await call("updateAgent", a.id, { perms: { [k]: next === roleDefault ? null : next } });
-    toast(`${a.name}: ${S.permInfo[k].label} ${next ? "on" : "off"}`);
-  },
-  async resetPerms(el) { await call("updateAgent", el.dataset.id, { resetPerms: true }); toast("Permissions back to the role defaults"); },
-  async openImages() { const p = await call("openImageFolder", S.activeProjectId); if (p) B.host("openPath", p); },
-  async deleteImage(el) { if (confirm("Delete this image file?")) { await call("deleteImage", el.dataset.id); ui.images = null; render(); } },
-  viewImage: (el) => { const i = (ui.images || []).find((x) => x.id === el.dataset.id); if (i?.dataUrl) modal(esc(i.name), `<img src="${i.dataUrl}" alt="" style="width:100%;border-radius:12px;display:block;background:repeating-conic-gradient(#222 0 25%,#2c2c2c 0 50%) 50%/20px 20px"><div class="faint" style="font-size:12px;margin-top:10px">${esc(i.kind.replace("_", " "))} · ${i.w}×${i.h} · by ${esc(i.agent || "you")} · ${esc(i.file)}</div>`, `<button class="btn primary" data-act="closeModal">Close</button>`, true); },
-  async saveAgent(el) {
-    const mcp = {};
-    $$("#modalRoot [data-mcp]").forEach((sel) => {
-      mcp[sel.dataset.mcp] = sel.value === "custom" ? $$(`#modalRoot .mcp-pick[data-for="${sel.dataset.mcp}"] input:checked`).map((c) => c.value) : sel.value;
-    });
-    const data = { name: val("aName") || "Agent", role: val("aRole"), providerId: val("aProv"), model: val("aModel"), budget: Number(val("aBudget")), instructions: val("aInstr"), accountEmail: val("aEmail"), tools: { files: $("#aFiles").classList.contains("on"), mcp } };
-    if (el.dataset.id) await call("updateAgent", el.dataset.id, data);
-    else { const id = await call("addAgent", data); if (id) await call("updateAgent", id, { tools: data.tools }); }
-    closeModal();
-  },
-  async agentAct(el) { await call("agentAction", el.dataset.id, el.dataset.op); },
-  async removeAgent(el) { if (confirm("Remove this agent? Its running task is cancelled.")) await call("removeAgent", el.dataset.id); },
-
-  async addStudioServer() { toast("Starting the Roblox Studio MCP server…"); await call("addServer", { preset: "roblox-studio" }); },
-  addServer: () => serverModal(),
-  editServer: (el) => serverModal(S.mcpServers.find((s) => s.id === el.dataset.id)),
-  async saveServer(el) {
-    const tr = $("#sTr button.on").dataset.tr;
-    const secrets = {};
-    val("sSecrets").split("\n").map((l) => l.trim()).filter(Boolean).forEach((l) => { const i = l.indexOf("="); if (i > 0) secrets[l.slice(0, i).trim()] = l.slice(i + 1).trim(); });
-    const rm = $$("#modalRoot [data-rm]:checked").map((c) => c.dataset.rm);
-    const cfg = { name: val("sName") || "MCP server", transport: tr, command: val("sCmd"), args: val("sArgs"), cwd: val("sCwd"), url: val("sUrl"), autoConnect: $("#sAuto").classList.contains("on"),
-      [tr === "stdio" ? "envSet" : "headersSet"]: secrets, envRemove: rm, headersRemove: rm };
-    el.disabled = true; el.innerHTML = '<span class="spinner"></span>Connecting…';
-    try { if (el.dataset.id) await call("updateServer", el.dataset.id, cfg); else await call("addServer", cfg); closeModal(); }
-    catch { el.disabled = false; el.textContent = "Try again"; }
-  },
-  async connectServer(el) { await call("connectServer", el.dataset.id); },
-  async disconnectServer(el) { await call("disconnectServer", el.dataset.id); },
-  async refreshServer(el) { await call("refreshServer", el.dataset.id); toast("Tools refreshed"); },
-  async removeServer(el) { if (confirm("Remove this MCP server?")) await call("removeServer", el.dataset.id); },
-  toggleTools: (el) => { ui.mcpOpen[el.dataset.id] = !ui.mcpOpen[el.dataset.id]; render(); },
-
+  async removeProject(el) { if (confirm("Remove this project from VYRON? Nothing in Roblox or on disk is deleted.")) await call("removeProject", el.dataset.id); },
+  async connectStudio(el) { el.disabled = true; el.innerHTML = '<span class="spinner"></span>Connecting…'; const r = await call("connectStudio").catch(() => null); toast(r === "connected" ? "Connected to Roblox Studio" : "Couldn't connect — is Studio open with its AI connection on?", r === "connected" ? "" : "error"); },
   async detectStudios() { try { const r = await call("detectStudios"); toast(r.length ? `Found ${r.length} Studio window(s)` : "No Studio window found"); } catch { /* toasted */ } },
   async linkStudio(el) { await call("updateProject", S.activeProjectId, { studioId: el.dataset.id }); toast("Linked to the active project"); },
   async projectFromStudio(el) { const id = await call("addProject", { studioId: el.dataset.id }); await call("setActiveProject", id); toast("Project created"); },
-  async openFile(el) { ui.fileSel = el.dataset.id; ui.fileContent = "Loading…"; render(); try { ui.fileContent = await call("readFile", S.activeProjectId, el.dataset.id); } catch { ui.fileContent = ""; } render(); },
-  reloadFiles: () => { ui.filesFor = null; render(); },
-  openFolder: () => B.host("openPath", activeProject()?.rojoDir),
-
-  wsFocus: (el, e) => { if (e.target.closest("[data-act=wsToggle]")) return; ui.wsFocus = el.dataset.id; if (!ui.wsSel.includes(el.dataset.id)) ui.wsSel = [el.dataset.id]; render(); },
-  wsToggle: (el) => { const id = el.dataset.id; ui.wsSel = ui.wsSel.includes(id) ? ui.wsSel.filter((x) => x !== id) : [...ui.wsSel, id]; if (!ui.wsSel.length) ui.wsSel = [id]; render(); },
-  async chatSend() { const t = val("chatInput").trim(); if (!t) return; await call("sendChat", { agentIds: ui.wsSel, text: t }); $("#chatInput").value = ""; },
-  async chatBuild() { const t = val("chatInput").trim(); if (!t) return toast("Write what to build first", "error"); await call("build", t, { agentIds: ui.wsSel.length > 1 ? ui.wsSel : null }); $("#chatInput").value = ""; toast("Build started — follow it in Task Manager"); },
-  async clearChat(el) { await call("clearChat", el.dataset.id); },
-  async approve(el) { await call("resolveApproval", el.dataset.id, true, val("note-" + el.dataset.id)); },
-  async reject(el) { await call("resolveApproval", el.dataset.id, false, val("note-" + el.dataset.id)); },
-
-  promptCat: (el) => { ui.promptCat = el.dataset.id; render(); },
-  newPrompt: () => promptModal(),
-  editPrompt: (el) => promptModal(S.prompts.find((p) => p.id === el.dataset.id)),
-  async savePrompt(el) { await call("savePrompt", { id: el.dataset.id || undefined, title: val("pmTitle"), category: val("pmCat"), body: val("pmBody") }); closeModal(); toast("Prompt saved"); },
-  async deletePrompt(el) { if (confirm("Delete this prompt?")) await call("deletePrompt", el.dataset.id); },
-  async favPrompt(el) { await call("toggleFavorite", el.dataset.id); },
-  copyPrompt: (el) => { navigator.clipboard.writeText(S.prompts.find((p) => p.id === el.dataset.id).body); toast("Copied"); },
-  async promptBuild(el) { await call("build", S.prompts.find((p) => p.id === el.dataset.id).body); toast("Build started — the Lead Developer is planning"); },
-  promptSend: (el) => agentPickModal(S.prompts.find((p) => p.id === el.dataset.id).body, "Send prompt to an agent"),
-  async doSendPrompt() { const id = val("pickAgent"); await call("sendChat", { agentIds: [id], text: val("pickText") }); closeModal(); ui.wsSel = [id]; ui.wsFocus = id; go("workspace"); },
-  improveIdea: () => improveModal(),
-  async runImprove(el) {
-    const idea = val("impIdea").trim(); if (!idea) return;
-    el.disabled = true; el.innerHTML = '<span class="spinner"></span>Thinking…';
-    try {
-      const out = await call("improvePrompt", idea, val("impAgent"), $("#impResearch").classList.contains("on"));
-      $("#impOut").innerHTML = `<label class="field"><span>Improved prompt (you can edit it)</span><textarea class="input" id="impText" style="min-height:260px">${esc(out)}</textarea></label>
-        <div class="row"><select class="select" id="impCat" style="width:200px">${CATEGORIES.map((c) => `<option>${c}</option>`).join("")}</select><button class="btn" data-act="saveImproved">Save to library</button><div class="grow"></div><button class="btn primary" data-act="buildImproved">${ic("bolt")}Build it</button></div>`;
-    } finally { el.disabled = false; el.innerHTML = ic("sparkle") + "Improve again"; }
-  },
-  async saveImproved() { await call("savePrompt", { title: val("impIdea").slice(0, 80), category: val("impCat"), body: val("impText") }); toast("Saved to the library"); },
-  async buildImproved() { await call("build", val("impText")); closeModal(); toast("Build started"); go("tasks"); },
-
-  async scanLocal() { await call("scanLocal"); toast("Scan finished"); },
-  async startOllama(el) { el.disabled = true; el.innerHTML = '<span class="spinner"></span>Starting…'; try { await call("startOllama"); toast("Ollama is running"); } catch { /* toasted */ } },
-  openUrl: (el) => B.host("openUrl", el.dataset.id),
-  async pullModel(el) { await call("pullModel", el.dataset.id); toast("Downloading " + el.dataset.id + " — this can take a few minutes"); },
-  async deleteModel(el) { if (confirm(`Delete ${el.dataset.id} from your PC?`)) await call("deleteModel", el.dataset.id); },
-  localAgent: (el) => localAgentModal(el.dataset.server, el.dataset.id, el.dataset.role),
-  async saveLocalAgent() { await call("addLocalAgent", { serverId: val("laServer"), model: val("laModel"), role: val("laRole"), name: val("laName") }); closeModal(); toast("AI added — it runs free on your PC"); },
-  async connectLocal(el) { await call("connectLocal", el.dataset.id); toast("Connected"); },
-  async toggleForge() { await call("setImageBackend", S.local.imageBackend ? null : S.local.image.url); },
-  connectOnline: (el) => providerModal(null, ONLINE.find((o) => o.id === el.dataset.id)),
-  openWeb: (el) => B.host("openWeb", el.dataset.id),
-  askAll: () => { ui.wsSel = S.agents.filter((a) => a.enabled && a.status !== "disconnected").map((a) => a.id); if (!ui.wsSel.length) return toast("No connected AIs yet", "error"); ui.wsFocus = ui.wsSel[0]; ui.wsCompare = true; render(); setTimeout(() => $("#chatInput")?.focus(), 50); },
-  toggleCompare: () => { ui.wsCompare = !ui.wsCompare; render(); },
   authMode: (el) => { ui.authMode = el.dataset.id; ui.authErr = ""; ui.authInfo = ""; render(); },
   async authSetup(el) {
     await authCall(el, "authSetup", { googleClientId: val("suGid"), googleClientSecret: val("suGsec"), allowedEmails: val("suAllow") });
@@ -1203,8 +675,8 @@ const ACT = {
   async authResend(el) { await authCall(el, "authResendVerify"); if (!ui.authErr) { ui.authInfo = "Email sent again. Check your spam folder too."; render(); } },
   async authCheck(el) { await authCall(el, "authCheckVerified"); },
   async authCancelVerify(el) { await authCall(el, "authCancelVerify"); },
-  async authSignOut() { if (confirm(S.auth?.required ? "Sign out of VYRON? Running agents are stopped." : "Sign out of your Google account in VYRON?")) await B.call("authSignOut"); },
-  async controlToggle() { const r = await call("controlSetEnabled", !S.control.enabled); toast(r.enabled ? (r.running ? "Claude can now control VYRON" : "Could not start: " + r.error) : "Claude control is off"); },
+  async authSignOut() { if (confirm(S.auth?.required ? "Sign out of VYRON?" : "Sign out of your Google account in VYRON?")) await B.call("authSignOut"); },
+  async controlToggle() { const r = await call("controlSetEnabled", !S.control.enabled); toast(r.enabled ? (r.running ? "Claude can control VYRON again" : "Could not start: " + r.error) : "Claude control is off"); },
   async controlNewKey() { if (confirm("Make a new control key? Claude has to reconnect.")) { await call("controlNewKey"); toast("New key made"); } },
   async toggleRequire() { await call("authSetup", { requireSignIn: !S.auth.required }); toast(S.auth.required ? "Sign-in is no longer required" : "VYRON now requires sign-in when it opens"); },
   async authGoogleSettings() { toast("Finish signing in in your browser"); try { await call("authGoogle"); toast("Signed in"); } catch { /* toasted */ } },
@@ -1229,19 +701,12 @@ const ACT = {
   revTf: (el) => { ui.revTf = el.dataset.id; render(); },
   async saveRbxKey() { const k = val("rbxKey"); if (!k.trim()) return; await call("setRobloxApiKey", k); $("#rbxKey").value = ""; toast("API key saved — loading game analytics"); },
   async clearRbxKey() { if (confirm("Remove the Open Cloud API key?")) await call("clearRobloxApiKey"); },
-
-  taskFilter: (el) => { ui.taskFilter = el.dataset.id; render(); },
-  newTask: () => taskModal(),
-  async saveTask() { await call("createTask", { title: val("tkTitle"), description: val("tkDesc"), agentId: val("tkAgent") || null, role: val("tkRole") || null, priority: val("tkPrio"), deps: val("tkDep") ? [val("tkDep")] : [] }); closeModal(); toast("Task created"); },
-  async cancelTask(el) { await call("cancelTask", el.dataset.id); },
-  async retryTask(el) { await call("retryTask", el.dataset.id); },
-  async clearTasks() { await call("clearFinishedTasks"); },
-
+  async refreshRates() { await call("refreshRates"); toast("Rates updated from Roblox and the ECB"); },
   async setting(el) { let v = el.dataset.val; if (v === "true") v = true; else if (v === "false") v = false; await call("saveSettings", { [el.dataset.key]: v }); },
   copyLog: () => { navigator.clipboard.writeText(S.activity.map((l) => `${new Date(l.at).toISOString()} [${l.level}] ${l.source}: ${l.text}`).join("\n")); toast("Log copied"); },
 };
 
-function go(route) { ui.route = route; lsSet("route", route); ui.drawer = ui.drawer === "approvals" ? null : ui.drawer; render(); }
+function go(route) { ui.route = route; lsSet("route", route); render(); if (route === "claude") setTimeout(() => $("#claudeInput")?.focus(), 60); }
 
 document.addEventListener("click", (e) => {
   const g = e.target.closest("[data-go]");
@@ -1253,17 +718,17 @@ document.addEventListener("click", (e) => {
 });
 document.addEventListener("change", async (e) => {
   const el = e.target.closest("[data-change]");
-  if (!el) return;
-  if (el.dataset.change === "toolPolicy") await call("setToolPolicy", el.dataset.id, el.dataset.tool, el.value).catch(() => {});
-  if (el.dataset.change === "agentRole") { await call("updateAgent", el.dataset.id, { role: el.value }).catch(() => {}); toast(`Role changed to ${el.value}`); }
-  if (el.dataset.change === "setting") await call("saveSettings", { [el.dataset.key]: el.dataset.key === "maxParallel" ? Number(el.value) : el.value || null }).catch(() => {});
+  if (el?.dataset.change === "setting") await call("saveSettings", { [el.dataset.key]: el.value }).catch(() => {});
 });
-document.addEventListener("input", (e) => { if (e.target.id === "promptSearch") { ui.promptQ = e.target.value; render(); } });
+document.addEventListener("input", (e) => {
+  if (e.target.id === "ideaSearch") { ui.ideaQ = e.target.value; render(); }
+  if (e.target.id === "calcRobux") { ui.calcRobux = e.target.value; const o = $("#calcOut"); if (o) o.textContent = kr(e.target.value); }
+});
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { if ($("#modalRoot").innerHTML) closeModal(); else if (ui.drawer) { ui.drawer = null; render(); } }
-  if (e.target.id === "chatInput" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ACT.chatSend(); }
+  if (e.key === "Escape" && $("#modalRoot").innerHTML) closeModal();
+  if (e.target.id === "claudeInput" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ACT.claudeSend(); }
+  if (e.target.id === "quickAsk" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ACT.quickAsk(); }
   if (e.key === "Enter" && e.target.closest?.("#lockRoot") && e.target.tagName === "INPUT") { e.preventDefault(); $("#lockRoot [data-primary]")?.click(); }
-  if (e.target.id === "quickBuild" && e.key === "Enter" && (e.ctrlKey || e.metaKey)) ACT.quickBuild();
 });
 $("#top").addEventListener("dblclick", (e) => { if (!e.target.closest("button")) B.host("toggleMaximize"); });
 
@@ -1292,13 +757,6 @@ document.addEventListener("pointerdown", (e) => {
   t.appendChild(s);
   setTimeout(() => s.remove(), 650);
 });
-
-let lastApprovals = 0;
-function afterDraw() {
-  if (S.approvals.length > lastApprovals) toast(`${S.approvals.at(-1).agentName} is waiting for your approval`);
-  lastApprovals = S.approvals.length;
-}
-
 /* ---------------- background: quiet light field ---------------- */
 (() => {
   const cv = $("#bg"), cx = cv.getContext("2d");
@@ -1332,10 +790,15 @@ function afterDraw() {
     if (type === "state") {
       const first = !S;
       S = payload;
+      if (!S.locked && !IDEAS.length) B.call("listIdeas").then((r) => { IDEAS = r; render(); }).catch(() => {});
       render();
       if (first) setTimeout(() => $("#boot").classList.add("gone"), 350);
     }
+    if (type === "notify") toast("Claude: " + payload.text, "note");
   });
-  try { S = await B.call("publicState"); render(); setTimeout(() => $("#boot").classList.add("gone"), 450); }
-  catch (e) { $("#bootMsg").textContent = "Could not start: " + e.message; }
+  try {
+    S = await B.call("publicState");
+    if (!S.locked) IDEAS = await B.call("listIdeas");
+    render(); setTimeout(() => $("#boot").classList.add("gone"), 450);
+  } catch (e) { $("#bootMsg").textContent = "Could not start: " + e.message; }
 })();
