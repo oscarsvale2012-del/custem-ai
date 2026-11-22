@@ -8,6 +8,8 @@ const fs = require("fs");
 const path = require("path");
 
 const now = () => Date.now();
+/** Messages that mean the Claude plan's usage limit (or API credit) ran out. */
+const USAGE = /usage limit|rate.?limit|limit (?:reached|exceeded)|out of (?:usage|credits?)|credit balance|quota|too many requests|\b429\b/i;
 const uid = () => "t_" + require("crypto").randomBytes(4).toString("hex");
 const clip = (s, n) => (s && s.length > n ? s.slice(0, n) + "…" : s || "");
 
@@ -194,6 +196,7 @@ class ClaudeRunner extends EventEmitter {
 
   start(t, text, cwd) {
     t.busy = true;
+    t.outcome = null; t.why = null;
     const sp = this.o.spawnImpl || spawn;
     let p;
     try { p = sp(this.exe, this.args(t), { cwd, windowsHide: true, env: { ...process.env } }); }
@@ -211,8 +214,14 @@ class ClaudeRunner extends EventEmitter {
       if (buf.trim()) this.onLine(t, buf.trim(), () => (gotResult = true));
       this.procs.delete(t.id);
       t.busy = false;
-      if (t.stopped) { this.push(t, { role: "error", text: "Stopped." }); t.stopped = false; }
-      else if (!gotResult && code) this.push(t, { role: "error", text: clip(err.trim(), 800) || "Claude stopped (code " + code + ")." });
+      if (t.stopped) { this.push(t, { role: "error", text: "Stopped." }); t.stopped = false; t.outcome = "stopped"; }
+      else if (!gotResult) {
+        const why = clip(err.trim(), 800) || (code ? "Claude stopped (code " + code + ")." : "Claude ended without an answer.");
+        this.push(t, { role: "error", text: why });
+        t.outcome = USAGE.test(why) ? "usage" : "failed"; t.why = why;
+      }
+      const last = [...t.messages].reverse().find((m) => m.role === "assistant");
+      this.emit("finished", { id: t.id, title: t.title, outcome: t.outcome || "done", why: t.why, text: clip(last?.text || "", 200) });
       this.save();
       this.emit("done", t.id);
       this.pump();
@@ -237,10 +246,12 @@ class ClaudeRunner extends EventEmitter {
       if (j.session_id) t.sessionId = j.session_id;
       if (j.is_error) {
         const msg = String(j.result || j.subtype || "Claude reported an error");
-        this.push(t, { role: "error", text: /not logged in|\/login/i.test(msg) ? "You're not signed in to Claude yet. Press “Sign in to Claude”." : msg });
+        this.push(t, { role: "error", text: /not logged in|\/login/i.test(msg) ? "You're not signed in to Claude yet. Press “Sign in to Claude”." : USAGE.test(msg) ? "You've run out of Claude usage for now. " + msg : msg });
+        t.outcome = /not logged in|\/login/i.test(msg) ? "login" : USAGE.test(msg) ? "usage" : "failed"; t.why = msg;
         if (/not logged in|\/login/i.test(msg)) this.auth = { loggedIn: false };
         return;
       }
+      t.outcome = "done";
       this.push(t, { role: "result", text: `Done in ${Math.round((j.duration_ms || 0) / 1000)} s${j.num_turns ? ` · ${j.num_turns} steps` : ""}` });
     }
   }
@@ -291,4 +302,4 @@ function toolLabel(name, input = {}) {
   return clip(n + (hint ? " — " + String(hint) : ""), 160);
 }
 
-module.exports = { modelName, ClaudeRunner, findClaude, studioServer, SYSTEM };
+module.exports = { USAGE, modelName, ClaudeRunner, findClaude, studioServer, SYSTEM };

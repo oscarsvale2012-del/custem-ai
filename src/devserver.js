@@ -36,6 +36,7 @@ const sendState = () => send("state", !auth.locked && started ? backend.publicSt
 backend.on("state", (s) => !auth.locked && send("state", s));
 backend.on("log", (l) => !auth.locked && send("log", l));
 backend.on("notify", (n) => send("notify", n));
+backend.on("alert", (a) => send("alert", a));
 auth.on("change", sendState);
 auth.on("signedIn", async () => { await startBackend(); sendState(); });
 auth.on("signedOut", () => sendState());

@@ -1,5 +1,5 @@
 // VYRON — Electron main process. Hosts the backend and the window.
-const { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, session } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, session, Tray, Menu, Notification, nativeImage, screen } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { Backend } = require("./src/core");
@@ -86,6 +86,60 @@ const robloxHost = {
 // Links the app may open in the normal browser.
 const SAFE_LINK = /^https:\/\/(create\.roblox\.com|www\.roblox\.com|www\.ecb\.europa\.eu|claude\.ai|github\.com|console\.firebase\.google\.com|console\.cloud\.google\.com)\//;
 
+let tray = null;
+let forceQuit = false;
+let hintShown = false;
+const ICON = path.join(__dirname, "renderer", "icon.png");
+function showWindow() { if (!win) return; if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+function desktopNote(title, body, onClick) {
+  if (!Notification.isSupported()) return;
+  const n = new Notification({ title, body, icon: ICON, silent: true }); // VYRON plays its own sound
+  n.on("click", () => { showWindow(); onClick?.(); });
+  n.show();
+}
+/* VYRON-style pop-up in the bottom-right corner (shown even when VYRON is in the tray). */
+let popup = null;
+const POP_W = 400, POP_H = 116, POP_MS = 7000;
+function showPopup(a) {
+  const look = backend?.d.settings.themeLook || {};
+  const data = { title: a.title, body: a.body, kind: a.kind, taskId: a.taskId || "", bg: look.bg, accent: look.accent, light: !!look.light, ms: POP_MS };
+  const wa = screen.getPrimaryDisplay().workArea;
+  if (!popup || popup.isDestroyed()) {
+    popup = new BrowserWindow({
+      width: POP_W, height: POP_H, x: wa.x + wa.width - POP_W - 12, y: wa.y + wa.height - POP_H - 12,
+      frame: false, transparent: true, resizable: false, movable: false, minimizable: false, maximizable: false, fullscreenable: false,
+      skipTaskbar: true, alwaysOnTop: true, focusable: false, show: false, hasShadow: false,
+      webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true },
+    });
+    popup.setAlwaysOnTop(true, "screen-saver");
+    popup.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    popup.webContents.on("will-navigate", (e) => e.preventDefault());
+    popup.on("closed", () => (popup = null));
+  }
+  popup.loadFile(path.join(__dirname, "renderer", "popup.html"), { hash: encodeURIComponent(JSON.stringify(data)) }).then(() => popup && !popup.isDestroyed() && popup.showInactive()).catch(() => {});
+}
+function hidePopup() { if (popup && !popup.isDestroyed()) popup.hide(); }
+
+/** Tell the user, the way they chose in Settings: VYRON pop-up, Windows notification, or nothing. */
+function alertUser(a) {
+  const style = backend?.d.settings.notifyStyle || "vyron";
+  if (style === "off") return;
+  if (style === "windows") return desktopNote(a.title, a.body, () => a.taskId && win.webContents.send("event", "openTask", a.taskId));
+  showPopup(a);
+}
+
+function createTray() {
+  tray = new Tray(nativeImage.createFromPath(ICON).resize({ width: 16, height: 16 }));
+  tray.setToolTip("VYRON");
+  const menu = () => Menu.buildFromTemplate([
+    { label: "Open VYRON", click: showWindow },
+    { type: "separator" },
+    { label: "Quit VYRON (stops Claude's tasks)", click: () => { forceQuit = true; app.quit(); } },
+  ]);
+  tray.setContextMenu(menu());
+  tray.on("click", showWindow);
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1480,
@@ -97,13 +151,20 @@ function createWindow() {
     title: "VYRON",
     icon: path.join(__dirname, "renderer", "icon.png"),
     show: false,
-    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true },
+    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false },
   });
   win.loadFile(path.join(__dirname, "renderer", "index.html"));
   win.once("ready-to-show", () => win.show());
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (SAFE_LINK.test(url)) shell.openExternal(url);
     return { action: "deny" };
+  });
+  // Closing the window keeps VYRON (and Claude's tasks) running in the tray.
+  win.on("close", (e) => {
+    if (forceQuit || !backend || backend.d.settings.keepRunning === false) return;
+    e.preventDefault();
+    win.hide();
+    if (!hintShown) { hintShown = true; alertUser({ kind: "message", title: "VYRON is still running", body: "Claude keeps working in the background. Click the VYRON icon by the clock to open it, or right-click it to quit." }); }
   });
   win.on("maximize", () => win.webContents.send("event", "window", { maximized: true }));
   win.on("unmaximize", () => win.webContents.send("event", "window", { maximized: false }));
@@ -126,6 +187,9 @@ ipcMain.handle("host", async (_e, cmd, arg) => {
   if (cmd === "toggleMaximize") (win.isMaximized() ? win.unmaximize() : win.maximize());
   if (cmd === "close") win.close();
   if (cmd === "isDesktop") return true;
+  if (cmd === "popupClose") return hidePopup();
+  if (cmd === "popupOpen") { hidePopup(); showWindow(); if (arg) win.webContents.send("event", "openTask", String(arg)); return null; }
+  if (cmd === "testPopup") return showPopup({ kind: "done", title: "Claude finished", body: "This is how VYRON tells you when a task is done." });
   if (cmd === "openUrl" && SAFE_LINK.test(String(arg))) return shell.openExternal(arg);
   return null;
 });
@@ -144,7 +208,16 @@ app.whenReady().then(async () => {
   const send = (type, payload) => win && !win.isDestroyed() && win.webContents.send("event", type, payload);
   control = new ControlServer({ dataDir, getCtx: () => ({ backend, auth, control }), log: (t, l, s) => backend.log(t, l, s), version: app.getVersion() });
   backend.controlInfo = (withKey) => (withKey ? { ...control.status(), token: control.cfg.token } : control.status());
-  backend.on("notify", (n) => { send("notify", n); if (win && !win.isFocused()) win.flashFrame(true); });
+  backend.on("notify", (n) => { send("notify", n); if (win && !win.isFocused()) win.flashFrame(true); if (win && (!win.isVisible() || !win.isFocused())) alertUser({ kind: "message", title: "Message from Claude", body: n.text }); });
+  // Task done / failed / out of usage / needs your OK: sound in the app + a Windows notification.
+  backend.on("alert", (a) => {
+    send("alert", a);
+    if (!win || !win.isVisible() || !win.isFocused()) alertUser(a);
+    if (win && !win.isFocused()) win.flashFrame(true);
+  });
+  const C = backend.claude;
+  const tip = () => tray && tray.setToolTip(C.running() ? `VYRON — Claude: ${C.running()} working${C.tasks.some((t) => t.queued) ? ", more waiting" : ""}` : "VYRON");
+  C.on("change", tip);
   const startBackend = async () => {
     if (started) return;
     started = true;
@@ -163,12 +236,14 @@ app.whenReady().then(async () => {
     try { await backend.shutdown(); } finally { app.relaunch(); app.exit(0); }
   });
   createWindow();
+  createTray();
   await auth.restore();
   if (!auth.locked) await startBackend();
   sendState();
 });
 
 app.on("before-quit", async (e) => {
+  forceQuit = true;
   if (quitting || !backend) return;
   e.preventDefault();
   quitting = true;

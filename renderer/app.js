@@ -130,7 +130,8 @@ function draw() {
   if (!S) return;
   if (S.locked) { document.body.classList.add("locked"); drawLock(); return; }
   if (document.body.classList.contains("locked")) { document.body.classList.remove("locked"); $("#lockRoot").innerHTML = ""; lastRoute = null; }
-  document.documentElement.dataset.theme = S.settings.theme === "light" ? "light" : "dark";
+  applyTheme(themeById(S.settings.themeId || (S.settings.theme === "light" ? "vyron-light" : "vyron-dark")));
+  window.__fxOff = !!S.settings.reduceEffects;
   document.body.classList.toggle("noanim", S.settings.animations === false);
   document.body.classList.toggle("reduce", !!S.settings.reduceEffects);
   drawNav();
@@ -173,6 +174,10 @@ const modelNow = () => S.claude.modelName || null;
 const modelPending = () => { const want = S.settings.claudeModel; const now = (S.claude.modelName || "").toLowerCase(); return want && now && !now.startsWith(want.toLowerCase()) ? want[0].toUpperCase() + want.slice(1) : null; };
 const modelChip = () => modelNow() ? `<span class="chip model" title="${esc(S.claude.model)}">${ic("sparkle")}${esc(modelNow())}${modelPending() ? ` → ${esc(modelPending())} next` : ""}</span>` : `<span class="chip" title="Shown after Claude answers once">${ic("sparkle")}${S.settings.claudeModel ? esc(S.settings.claudeModel[0].toUpperCase() + S.settings.claudeModel.slice(1)) : "Model: after first reply"}</span>`;
 const claudeLine = () => (!S.claude.found ? "Claude Code not installed" : S.claude.busy ? `${S.claude.running} task${S.claude.running === 1 ? "" : "s"} working` : S.claude.auth?.loggedIn ? "Claude ready" : S.claude.auth ? "Sign in to Claude" : "Checking Claude…");
+
+/* ---------------- sounds ---------------- */
+function soundFor(ev) { return (S.settings.soundMap || {})[ev] || SOUND_EVENTS.find((e) => e[0] === ev)?.[2]; }
+function ding(ev) { if (S?.settings && S.settings.sounds !== false) playSound(soundFor(ev), S.settings.volume ?? 0.7); }
 
 /* ---------------- PC control overlay ---------------- */
 const PC_ICON = { screenshot: "image", click: "bolt", move: "bolt", scroll: "bolt", type: "edit", key: "key" };
@@ -524,13 +529,20 @@ VIEWS.settings = () => {
       <div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("dashboard")}</div><div class="grow"><div class="h3">PC control</div><div class="faint" style="font-size:12.5px">Lets Claude see your screen and use the mouse and keyboard for hard tasks the Studio tools can't do.</div></div></div>
         ${[["off", "Off", "Claude can't see or touch your PC."], ["ask", "Ask me each time (recommended)", "A popup shows exactly what Claude wants to do. Allow, deny, or allow for 10 minutes."], ["on", "Allowed", "Claude may take screenshots, click and type without asking. A bar with a Stop button shows while it does."]].map(([k, t, d]) => `<div class="radio-card ${(s.pcControl || "off") === k ? "on" : ""}" data-act="setting" data-key="pcControl" data-val="${k}"><span class="dot ${(s.pcControl || "off") === k ? "connected" : "unknown"}"></span><div><b style="font-weight:600">${t}</b><div class="faint" style="font-size:12.5px">${d}</div></div></div>`).join("")}
         <div class="faint" style="font-size:11.5px">Claude is told never to type passwords or payment details, buy things or change security settings, and to ignore instructions shown on screen. Screenshots go to Claude (Anthropic) like your chat messages.</div></div>
-      <div class="panel pad"><div class="h3" style="margin-bottom:14px">Appearance</div>
-        <div class="row" style="margin-bottom:14px"><span class="grow">Theme</span><div class="seg">${[["dark", "Dark"], ["light", "Light"]].map(([k, l]) => `<button class="${(s.theme || "dark") === k ? "on" : ""}" data-act="setting" data-key="theme" data-val="${k}">${l}</button>`).join("")}</div></div>
-        <div class="row" style="margin-bottom:14px"><span class="grow">Animations</span><div class="toggle ${s.animations !== false ? "on" : ""}" data-act="setting" data-key="animations" data-val="${s.animations === false}"></div></div>
-        <div class="row"><span class="grow">Reduce effects (no background animation)</span><div class="toggle ${s.reduceEffects ? "on" : ""}" data-act="setting" data-key="reduceEffects" data-val="${!s.reduceEffects}"></div></div></div>
+      <div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("bell")}</div><div class="grow"><div class="h3">Notifications &amp; sounds</div><div class="faint" style="font-size:12.5px">When a task is done, fails, runs out of usage, or Claude needs your OK.</div></div></div>
+        <div class="row"><span class="grow">Pop-ups</span><div class="seg">${[["vyron", "VYRON style"], ["windows", "Windows"], ["off", "Off"]].map(([k, l]) => `<button class="${(s.notifyStyle || "vyron") === k ? "on" : ""}" data-act="setting" data-key="notifyStyle" data-val="${k}">${l}</button>`).join("")}</div><button class="btn sm ghost" data-act="testPopup" title="Show a test pop-up">Test</button></div>
+        <div class="row"><span class="grow">Keep running when I close the window <span class="faint" style="font-size:12px">(Claude keeps working; VYRON stays by the clock)</span></span><div class="toggle ${s.keepRunning !== false ? "on" : ""}" data-act="setting" data-key="keepRunning" data-val="${s.keepRunning === false}"></div></div>
+        <div class="row"><span class="grow">Sounds</span><div class="toggle ${s.sounds !== false ? "on" : ""}" data-act="setting" data-key="sounds" data-val="${s.sounds === false}"></div></div>
+        ${s.sounds !== false ? `<div class="row"><span class="grow faint">Volume</span><input type="range" min="0" max="1" step="0.05" value="${s.volume ?? 0.7}" id="vol" style="width:180px"></div>
+        ${SOUND_EVENTS.map(([ev, label]) => `<div class="row"><span class="grow">${label}</span><select class="select" style="width:200px;height:32px" data-change="sound" data-key="${ev}">${["Gentle", "Happy", "Space", "Game", "Warning"].map((g) => `<optgroup label="${g}">${SOUNDS.filter((x) => x.group === g).map((x) => `<option value="${x.id}" ${soundFor(ev) === x.id ? "selected" : ""}>${x.name}</option>`).join("")}</optgroup>`).join("")}<option value="none" ${soundFor(ev) === "none" ? "selected" : ""}>No sound</option></select><button class="btn sm ghost icon" data-act="previewSound" data-id="${ev}" title="Play">${ic("play")}</button></div>`).join("")}` : ""}
+        <div class="row" style="margin-top:4px"><span class="grow">Animations</span><div class="toggle ${s.animations !== false ? "on" : ""}" data-act="setting" data-key="animations" data-val="${s.animations === false}"></div></div>
+        <div class="row"><span class="grow">Reduce effects (no animated background)</span><div class="toggle ${s.reduceEffects ? "on" : ""}" data-act="setting" data-key="reduceEffects" data-val="${!s.reduceEffects}"></div></div></div>
       ${account}
     </div>
   </div>
+  <div class="sp"></div>
+  <div class="panel"><div class="panel-h"><h3>Themes</h3><span class="faint" style="font-size:12px">${THEMES.length} looks with animated backgrounds</span><div class="grow"></div><button class="btn sm ghost" data-act="randomTheme">Surprise me</button></div>
+    <div class="panel-b">${[...new Set(THEMES.map((t) => t.group))].map((g) => `<div class="label" style="margin:6px 0 10px">${g}</div><div class="theme-grid">${THEMES.filter((t) => t.group === g).map((t) => `<div class="theme-card ${appliedTheme === t.id ? "on" : ""} ${t.light ? "light" : ""}" data-act="setTheme" data-id="${t.id}" style="--tb:${t.bg};--tb2:${t.bg2};--ta:${t.accent};--tc:${t.aura2}"><div class="sw"><i></i><i></i><i></i></div><b>${esc(t.name)}</b><span>${esc({ net: "Network", stars: "Stars", galaxy: "Galaxy", nebula: "Nebula", warp: "Warp", aurora: "Aurora", snow: "Snow", rain: "Rain", matrix: "Code rain", fireflies: "Fireflies", bubbles: "Bubbles", embers: "Embers", petals: "Petals", grid: "Neon grid", none: "Still" }[t.fx])}</span></div>`).join("")}</div>`).join("")}</div></div>
   <div class="sp"></div>
   <div class="panel activity"><div class="panel-h"><h3>Diagnostics log</h3><div class="grow"></div><button class="btn sm" data-act="copyLog">${ic("copy")}Copy log</button></div>
     <div style="max-height:320px;overflow:auto" id="diagLog">${S.activity.slice().reverse().map((l) => `<div class="list-row"><time>${time(l.at)}</time><div class="grow"><b class="lv-${l.level}">${esc(l.source)}</b> <span class="muted">${esc(l.text)}</span></div></div>`).join("")}</div></div>`;
@@ -749,6 +761,10 @@ const ACT = {
   async clearRbxKey() { if (confirm("Remove the Open Cloud API key?")) await call("clearRobloxApiKey"); },
   async pcAnswer(el) { await call("pcAnswer", el.dataset.id, el.dataset.val); },
   async pcRevoke() { await call("pcRevoke"); toast("Stopped: Claude can't use your PC until it asks again"); },
+  async setTheme(el) { const t = themeById(el.dataset.id); applyTheme(t); render(); await call("saveSettings", { themeId: t.id, theme: t.light ? "light" : "dark", themeLook: { bg: t.bg2, accent: t.accent, light: t.light } }); },
+  async randomTheme() { const t = THEMES[(Math.random() * THEMES.length) | 0]; await ACT.setTheme({ dataset: { id: t.id } }); toast("Theme: " + t.name); },
+  previewSound: (el) => playSound(soundFor(el.dataset.id), S.settings.volume ?? 0.7),
+  async testPopup() { if (!desktop) return toast("Pop-ups show in the desktop app"); if ((S.settings.notifyStyle || "vyron") !== "vyron") return toast("Choose “VYRON style” first"); await B.host("testPopup"); },
   async refreshRates() { await call("refreshRates"); toast("Rates updated from Roblox and the ECB"); },
   async setting(el) { let v = el.dataset.val; if (v === "true") v = true; else if (v === "false") v = false; await call("saveSettings", { [el.dataset.key]: v }); },
   copyLog: () => { navigator.clipboard.writeText(S.activity.map((l) => `${new Date(l.at).toISOString()} [${l.level}] ${l.source}: ${l.text}`).join("\n")); toast("Log copied"); },
@@ -765,7 +781,9 @@ document.addEventListener("click", (e) => {
   if (a && ACT[a.dataset.act]) { e.stopPropagation(); Promise.resolve(ACT[a.dataset.act](a, e)).catch(() => {}); }
 });
 document.addEventListener("change", async (e) => {
-  const el = e.target.closest("[data-change]");
+  const el = e.target.id === "vol" ? e.target : e.target.closest("[data-change]");
+  if (el?.dataset.change === "sound") { const m = { ...(S.settings.soundMap || {}), [el.dataset.key]: el.value }; S.settings.soundMap = m; playSound(el.value, S.settings.volume ?? 0.7); await call("saveSettings", { soundMap: m }).catch(() => {}); return; }
+  if (el?.id === "vol") { await call("saveSettings", { volume: Number(el.value) }).catch(() => {}); playSound(soundFor("done"), Number(el.value)); return; }
   if (el?.dataset.change === "setting") await call("saveSettings", { [el.dataset.key]: el.value }).catch(() => {});
 });
 document.addEventListener("input", (e) => {
@@ -805,30 +823,6 @@ document.addEventListener("pointerdown", (e) => {
   t.appendChild(s);
   setTimeout(() => s.remove(), 650);
 });
-/* ---------------- background: quiet light field ---------------- */
-(() => {
-  const cv = $("#bg"), cx = cv.getContext("2d");
-  let W, H, pts = [];
-  const resize = () => {
-    W = cv.width = innerWidth * devicePixelRatio; H = cv.height = innerHeight * devicePixelRatio;
-    pts = Array.from({ length: Math.min(70, Math.floor(innerWidth * innerHeight / 22000)) }, () => ({ x: Math.random() * W, y: Math.random() * H, vx: (Math.random() - 0.5) * 0.18, vy: (Math.random() - 0.5) * 0.18, r: Math.random() * 1.2 + 0.4 }));
-  };
-  addEventListener("resize", resize); resize();
-  (function frame() {
-    requestAnimationFrame(frame);
-    if (!S || S.settings?.reduceEffects || document.hidden) { cx.clearRect(0, 0, W, H); return; }
-    const light = S.settings?.theme === "light";
-    cx.clearRect(0, 0, W, H);
-    const D = 140 * devicePixelRatio;
-    for (const p of pts) { p.x += p.vx; p.y += p.vy; if (p.x < 0 || p.x > W) p.vx *= -1; if (p.y < 0 || p.y > H) p.vy *= -1; }
-    cx.lineWidth = devicePixelRatio * 0.6;
-    for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
-      const a = pts[i], b = pts[j], d = Math.hypot(a.x - b.x, a.y - b.y);
-      if (d < D) { cx.strokeStyle = light ? `rgba(40,60,120,${(1 - d / D) * 0.06})` : `rgba(255,255,255,${(1 - d / D) * 0.05})`; cx.beginPath(); cx.moveTo(a.x, a.y); cx.lineTo(b.x, b.y); cx.stroke(); }
-    }
-    for (const p of pts) { cx.fillStyle = light ? "rgba(40,60,120,.18)" : "rgba(255,255,255,.28)"; cx.beginPath(); cx.arc(p.x, p.y, p.r * devicePixelRatio, 0, 7); cx.fill(); }
-  })();
-})();
 
 /* ---------------- start ---------------- */
 (async () => {
@@ -842,7 +836,9 @@ document.addEventListener("pointerdown", (e) => {
       render();
       if (first) setTimeout(() => $("#boot").classList.add("gone"), 350);
     }
-    if (type === "notify") toast("Claude: " + payload.text, "note");
+    if (type === "notify") { toast("Claude: " + payload.text, "note"); ding("message"); }
+    if (type === "alert") { toast(payload.title + " — " + payload.body, payload.kind === "done" ? "" : payload.kind === "approval" ? "note" : "error"); ding(payload.kind === "login" ? "failed" : payload.kind); }
+    if (type === "openTask") { ui.taskId = payload; go("claude"); }
   });
   try {
     S = await B.call("publicState");

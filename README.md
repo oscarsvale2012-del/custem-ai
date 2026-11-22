@@ -26,6 +26,11 @@ Claude inside VYRON; Claude controls VYRON and Roblox Studio for you.
 - **PC control** (Settings, off by default) — Claude can take screenshots and use
   mouse/keyboard for hard tasks; "Ask me each time" shows an Allow/Deny popup per
   action, and a Stop bar shows while Claude uses the PC.
+- **Background mode** — closing the window keeps VYRON in the tray so Claude keeps
+  working. VYRON-style corner pop-ups (or Windows notifications, or off) when a task
+  is done, fails, runs out of usage or needs your OK.
+- **38 themes** (galaxy, nebula, aurora, synthwave, matrix…) with animated
+  backgrounds and **41 sounds** made with Web Audio; sounds per event, on/off, volume.
 - **Settings** — Claude sign-in, what Claude may do (Studio + VYRON + project
   files, or full access), model, the connector switch, appearance, optional
   VYRON sign-in.

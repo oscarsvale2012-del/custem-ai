@@ -46,6 +46,18 @@ class Backend extends EventEmitter {
       ...(claude || {}),
     });
     this.claude.on("change", () => this.changed());
+    // Tell the user (sound + Windows notification) when a task ends.
+    this.claude.on("finished", (f) => {
+      const msg = {
+        done: ["Claude finished", f.title + (f.text ? " — " + f.text : "")],
+        failed: ["Claude couldn't finish", f.title + (f.why ? " — " + f.why : "")],
+        usage: ["Out of Claude usage", "“" + f.title + "” stopped: your Claude usage limit is reached. It resets later — check claude.ai."],
+        login: ["Sign in to Claude", "Claude isn't signed in, so “" + f.title + "” couldn't start."],
+      }[f.outcome];
+      if (!msg) return; // stopped by the user
+      this.log(msg[0] + ": " + f.title, f.outcome === "done" ? "ok" : "warn", "Claude");
+      this.emit("alert", { kind: f.outcome, title: msg[0], body: clip(msg[1], 240), taskId: f.id, at: now() });
+    });
   }
 
   /* ================= lifecycle ================= */
@@ -104,7 +116,16 @@ class Backend extends EventEmitter {
   }
 
   saveSettings(patch) {
-    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "pcControl"]) if (k in patch) this.d.settings[k] = patch[k];
+    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook"]) if (k in patch) this.d.settings[k] = patch[k];
+    const S = this.d.settings;
+    if (!["vyron", "windows", "off"].includes(S.notifyStyle)) S.notifyStyle = "vyron";
+    S.keepRunning = S.keepRunning !== false;
+    S.sounds = S.sounds !== false;
+    S.volume = Math.min(1, Math.max(0, Number(S.volume ?? 0.7)));
+    S.soundMap = Object.fromEntries(Object.entries(S.soundMap && typeof S.soundMap === "object" ? S.soundMap : {}).filter(([k, v]) => /^[a-z]{2,12}$/.test(k) && /^[a-z0-9-]{1,30}$/.test(v)).slice(0, 10));
+    S.themeId = /^[a-z0-9-]{1,40}$/.test(S.themeId || "") ? S.themeId : null;
+    const L = S.themeLook && typeof S.themeLook === "object" ? S.themeLook : {};
+    S.themeLook = { bg: /^#[0-9a-f]{6}$/i.test(L.bg) ? L.bg : null, accent: /^#[0-9a-f]{6}$/i.test(L.accent) ? L.accent : null, light: !!L.light };
     if (!["off", "ask", "on"].includes(this.d.settings.pcControl)) this.d.settings.pcControl = "off";
     if (this.d.settings.pcControl !== "on") this.pcUntil = 0;
     if (!["safe", "full"].includes(this.d.settings.claudeAccess)) this.d.settings.claudeAccess = "safe";
@@ -169,7 +190,7 @@ class Backend extends EventEmitter {
       const a = { id: uid("pc"), kind, what, at: now(), resolve, reject };
       a.timer = setTimeout(() => this.pcAnswer(a.id, "timeout"), 120000);
       this.pcAsks.push(a);
-      this.emit("notify", { id: a.id, at: now(), text: "Claude wants to " + what.charAt(0).toLowerCase() + what.slice(1) + " — answer in VYRON" });
+      this.emit("alert", { kind: "approval", title: "Claude needs your OK", body: what + " — answer in VYRON", at: now() });
       this.changed();
     });
   }

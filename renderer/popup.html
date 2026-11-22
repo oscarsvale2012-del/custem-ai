@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self'">
+<title>VYRON</title>
+<style>
+  :root { --bg: #0e1016; --accent: #a9c1ff; --text: #eef1f7; --text2: #a7aec0; --ring: rgba(255,255,255,.12); }
+  * { box-sizing: border-box; margin: 0; padding: 0 }
+  html, body { background: transparent; overflow: hidden; font: 13px/1.45 "Segoe UI", system-ui, sans-serif; color: var(--text); user-select: none }
+  .card { position: absolute; inset: 8px; display: flex; gap: 12px; align-items: flex-start; padding: 14px 14px 14px 16px; border-radius: 16px;
+    background: color-mix(in srgb, var(--bg) 92%, transparent); border: 1px solid var(--ring); box-shadow: 0 10px 30px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.06);
+    cursor: pointer; overflow: hidden; animation: in .35s cubic-bezier(.2,.8,.2,1) both }
+  .card.out { animation: out .3s ease both }
+  .card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--kind) }
+  .card::after { content: ""; position: absolute; inset: -40% -10% auto auto; width: 70%; height: 120%; background: radial-gradient(closest-side, color-mix(in srgb, var(--kind) 22%, transparent), transparent); pointer-events: none }
+  .logo { width: 34px; height: 34px; flex: none; border-radius: 10px; display: grid; place-items: center; background: color-mix(in srgb, var(--kind) 18%, transparent); color: var(--kind); font: 700 16px "Segoe UI", sans-serif }
+  .body { min-width: 0; flex: 1; position: relative; z-index: 1 }
+  .top { display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--text2); letter-spacing: .04em; text-transform: uppercase }
+  .top b { color: var(--text); letter-spacing: .14em }
+  h1 { font-size: 14px; font-weight: 600; margin: 2px 0 2px }
+  p { color: var(--text2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden }
+  .x { position: absolute; top: 8px; right: 10px; z-index: 2; border: 0; background: none; color: var(--text2); font-size: 16px; cursor: pointer; width: 22px; height: 22px; border-radius: 6px }
+  .x:hover { background: rgba(255,255,255,.08); color: var(--text) }
+  .bar { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--kind); opacity: .6; animation: bar linear both }
+  @keyframes in { from { opacity: 0; transform: translateY(14px) scale(.98) } }
+  @keyframes out { to { opacity: 0; transform: translateX(30px) } }
+  @keyframes bar { from { width: 100% } to { width: 0 } }
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <div class="logo" id="logo">V</div>
+  <div class="body"><div class="top"><b>VYRON</b><span id="when">now</span></div><h1 id="title"></h1><p id="text"></p></div>
+  <button class="x" id="x" title="Close">×</button>
+  <div class="bar" id="bar"></div>
+</div>
+<script>
+  // Data comes in the URL hash: { title, body, kind, bg, accent, light, ms }
+  const d = JSON.parse(decodeURIComponent(location.hash.slice(1) || "%7B%7D"));
+  const KIND = { done: ["#74e3ae", "✓"], failed: ["#f58f8f", "!"], usage: ["#f3c56f", "◔"], login: ["#f3c56f", "?"], approval: ["#f3c56f", "?"], message: [d.accent || "#a9c1ff", "V"] };
+  const [col, sym] = KIND[d.kind] || KIND.message;
+  const r = document.documentElement.style;
+  if (d.bg) r.setProperty("--bg", d.bg);
+  if (d.light) { r.setProperty("--text", "#12151f"); r.setProperty("--text2", "#4b5366"); r.setProperty("--ring", "rgba(15,20,40,.12)"); }
+  r.setProperty("--kind", col);
+  document.getElementById("logo").textContent = sym;
+  document.getElementById("title").textContent = d.title || "VYRON";
+  document.getElementById("text").textContent = d.body || "";
+  document.getElementById("bar").style.animationDuration = (d.ms || 7000) + "ms";
+  const B = window.forgeBridge;
+  const close = (open) => { document.getElementById("card").classList.add("out"); setTimeout(() => B.host(open ? "popupOpen" : "popupClose", d.taskId || ""), 260); };
+  document.getElementById("x").addEventListener("click", (e) => { e.stopPropagation(); close(false); });
+  document.getElementById("card").addEventListener("click", () => close(true));
+  let left = d.ms || 7000, last = Date.now(), hover = false;
+  document.getElementById("card").addEventListener("mouseenter", () => { hover = true; document.getElementById("bar").style.animationPlayState = "paused"; });
+  document.getElementById("card").addEventListener("mouseleave", () => { hover = false; last = Date.now(); document.getElementById("bar").style.animationPlayState = "running"; });
+  setInterval(() => { if (!hover) { left -= Date.now() - last; last = Date.now(); if (left <= 0) close(false); } else last = Date.now(); }, 200);
+</script>
+</body>
+</html>

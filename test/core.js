@@ -222,6 +222,37 @@ const reply = (input) => [
     await dispatch(ctx, "saveSettings", [{ claudeParallel: 3 }]);
     be.claude.o.spawnImpl = fakeSpawn(reply);
   });
+  await test("alerts: done, out of usage, failed (and nothing when you stop it)", async () => {
+    const got = [];
+    const on = (a) => got.push(a.kind);
+    be.on("alert", on);
+    const run = async (script, text) => {
+      be.claude.o.spawnImpl = script;
+      const id = await dispatch(ctx, "claudeStartTask", [text]);
+      for (let i = 0; i < 80 && be.claude.busy; i++) await wait(20);
+      return id;
+    };
+    await run(fakeSpawn(reply), "ok job");
+    const u = await run(fakeSpawn(() => [{ type: "result", is_error: true, result: "Claude AI usage limit reached|1795400000", duration_ms: 5 }]), "big job");
+    assert(be.claude.task(u).messages.some((m) => /run out of Claude usage/.test(m.text)));
+    // crashes without any answer
+    await run((exe, args) => { const p = new EventEmitter(); p.stdout = new EventEmitter(); p.stderr = new EventEmitter(); p.stdin = { end: () => setTimeout(() => { p.stderr.emit("data", Buffer.from("Error: something broke")); p.emit("close", 1); }, 5) }; p.kill = () => {}; return p; }, "bad job");
+    be.claude.o.spawnImpl = fakeSpawn(reply, 200);
+    const s = await dispatch(ctx, "claudeStartTask", ["stop me"]);
+    await dispatch(ctx, "claudeStop", [s]);
+    for (let i = 0; i < 80 && be.claude.busy; i++) await wait(20);
+    be.off("alert", on);
+    assert.deepEqual(got, ["done", "usage", "failed"]);
+    be.claude.o.spawnImpl = fakeSpawn(reply);
+  });
+  await test("look & sound settings are checked", async () => {
+    await dispatch(ctx, "saveSettings", [{ notifyStyle: "loud", volume: 5, soundMap: { done: "coin", "bad key!": "x", failed: "<script>" }, themeId: "galaxy", themeLook: { bg: "#0e0a1c", accent: "red" }, keepRunning: false }]);
+    const st = be.d.settings;
+    assert.equal(st.notifyStyle, "vyron"); assert.equal(st.volume, 1); assert.deepEqual(st.soundMap, { done: "coin" });
+    assert.equal(st.themeId, "galaxy"); assert.equal(st.themeLook.bg, "#0e0a1c"); assert.equal(st.themeLook.accent, null); assert.equal(st.keepRunning, false);
+    await dispatch(ctx, "saveSettings", [{ notifyStyle: "off", keepRunning: true }]);
+    assert.equal(be.d.settings.notifyStyle, "off");
+  });
   await test("old single chat (v1.0) becomes the first task", () => {
     const dir = path.join(TMP, "old");
     fs.mkdirSync(dir, { recursive: true });
