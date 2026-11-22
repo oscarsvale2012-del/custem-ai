@@ -4,12 +4,14 @@
 const METHODS = [
   "publicState", "saveSettings",
   "claudeSend", "claudeStop", "claudeNewChat", "claudeNewTask", "claudeRemoveTask", "claudeStartTask", "claudeLogin", "claudeCheck", "pcAnswer", "pcRevoke",
+  "teamPlan", "teamRevise", "teamAccept", "teamSetRole", "teamDiscard",
   "listIdeas", "setPicked", "addCustomIdea", "removeCustomIdea", "ideaPrompt", "buildIdeas",
+  "checkBlender", "makeModel",
   "connectStudio", "detectStudios", "addProject", "updateProject", "removeProject", "setActiveProject", "refreshGame",
   "accountSyncNow", "linkRoblox", "unlinkRoblox", "setRobloxApiKey", "clearRobloxApiKey", "refreshRevenue", "refreshRates",
 ];
 // Read-only helpers the connector uses (not reachable from the UI's bridge list above).
-const INTERNAL = ["revenueKr", "notify", "pcAction"];
+const INTERNAL = ["revenueKr", "notify", "pcAction", "teamStatus", "teamMessage", "teamWait"];
 
 /** VYRON account (always required). Reachable while locked. */
 const AUTH = {

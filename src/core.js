@@ -8,6 +8,8 @@ const { McpManager, PRESETS } = require("./mcp");
 const { lookupGame, parseStudios } = require("./roblox");
 const { ClaudeRunner } = require("./claude");
 const { PcDriver } = require("./pc");
+const R = require("./roles");
+const { blenderServer } = require("./claude");
 const { IDEAS, CATEGORIES } = require("./ideas");
 const DX = require("./devex");
 const RA = require("./robloxAccount");
@@ -16,6 +18,7 @@ const AN = require("./analytics");
 const now = () => Date.now();
 const clip = (s, n) => (s && s.length > n ? s.slice(0, n) + "…" : s || "");
 const STUDIO_ID = "studio";
+const BLENDER_ID = "blender";
 
 class Backend extends EventEmitter {
   constructor({ dataDir, encrypt, decrypt, host = {}, fetchImpl, claude, studio = true, pc }) {
@@ -32,6 +35,7 @@ class Backend extends EventEmitter {
     this.d = this.store.data;
     this.d.customIdeas = this.d.customIdeas || [];
     this.d.picked = this.d.picked || [];
+    this.d.teams = this.d.teams || [];
     this.d.rates = this.d.rates || null;
     this.mcp = new McpManager({ onChange: () => this.changed(), log: (t, l) => this.log(t, l, "Studio") });
     this.studios = [];
@@ -42,10 +46,11 @@ class Backend extends EventEmitter {
     this.claude = new ClaudeRunner({
       dataDir, log: (t, l) => this.log(t, l, "Claude"),
       control: () => (this.controlInfo ? this.controlInfo(true) : null),
-      settings: () => ({ access: this.d.settings.claudeAccess || "safe", model: this.d.settings.claudeModel || "", parallel: this.d.settings.claudeParallel || 3, pc: this.d.settings.pcControl || "off" }),
+      settings: () => ({ access: this.d.settings.claudeAccess || "safe", model: this.d.settings.claudeModel || "", parallel: this.d.settings.claudeParallel || 3, blender: this.d.settings.blender !== false, pc: this.d.settings.pcControl || "off" }),
       ...(claude || {}),
     });
     this.claude.on("change", () => this.changed());
+    this.claude.on("finished", (f) => this.teamTaskFinished(f.id));
     // Tell the user (sound + Windows notification) when a task ends.
     this.claude.on("finished", (f) => {
       const msg = {
@@ -65,6 +70,7 @@ class Backend extends EventEmitter {
     this.log("VYRON started", "info", "System");
     if (this.useStudio) {
       this.connectStudio().catch(() => {});
+      setTimeout(() => this.checkBlender().catch(() => {}), 3000);
       this._studioTimer = setInterval(() => this.detectStudios(true).catch(() => {}), 15000);
     }
     this._revTimer = setInterval(() => this.refreshRevenue(false).catch(() => {}), 10 * 60 * 1000);
@@ -107,6 +113,9 @@ class Backend extends EventEmitter {
       rates: this.d.rates,
       ideas: { categories: CATEGORIES, count: IDEAS.length, custom: this.d.customIdeas, picked: this.d.picked },
       claude: this.claude.public(),
+      teams: this.teamsPublic(),
+      roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { name: R.ROLES[r].name, short: R.ROLES[r].short }])),
+      blender: { found: !!blenderServer(), on: this.d.settings.blender !== false, ...(this.blenderInfo || {}) },
       pc: { mode: this.d.settings.pcControl || "off", asks: this.pcAsks.map(({ resolve, reject, timer, ...a }) => a), allowedUntil: this.pcUntil > now() ? this.pcUntil : 0, activeAt: this.pcLast },
       workDir: this.workDir(),
       notes: this.notes.slice(-20),
@@ -117,7 +126,7 @@ class Backend extends EventEmitter {
   }
 
   saveSettings(patch) {
-    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook", "uiSounds", "uiHover", "uiPack"]) if (k in patch) this.d.settings[k] = patch[k];
+    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook", "uiSounds", "uiHover", "uiPack", "blender"]) if (k in patch) this.d.settings[k] = patch[k];
     const S = this.d.settings;
     if (!["vyron", "windows", "off"].includes(S.notifyStyle)) S.notifyStyle = "vyron";
     S.keepRunning = S.keepRunning !== false;
@@ -179,7 +188,7 @@ class Backend extends EventEmitter {
     return {
       v: 1, at: now(), settings: { ...settings, activeProjectId },
       projects: d.projects.map(({ studioId, ...p }) => p), customIdeas: d.customIdeas, picked: d.picked,
-      claudeTasks: this.claude.exportTasks(), revenueHistory: (d.roblox.history || []).slice(-120),
+      teams: d.teams.slice(-10), claudeTasks: this.claude.exportTasks(), revenueHistory: (d.roblox.history || []).slice(-120),
     };
   }
   importFromAccount(x) {
@@ -189,6 +198,7 @@ class Backend extends EventEmitter {
     if (Array.isArray(x.projects)) d.projects = x.projects.map((p) => ({ ...p, studioId: null }));
     if (Array.isArray(x.customIdeas)) d.customIdeas = x.customIdeas;
     if (Array.isArray(x.picked)) d.picked = x.picked;
+    if (Array.isArray(x.teams)) d.teams = x.teams.map((t) => (t.status === "planning" || t.status === "revising" ? { ...t, status: t.plan ? "proposed" : "failed" } : t));
     if (Array.isArray(x.revenueHistory)) d.roblox.history = x.revenueHistory;
     if (Array.isArray(x.claudeTasks)) this.claude.importTasks(x.claudeTasks);
     this.save();
@@ -286,6 +296,121 @@ class Backend extends EventEmitter {
     this.changed();
   }
 
+  /* ================= studio team (Co-Founder + 4 roles) ================= */
+  team(id) { const t = id ? this.d.teams.find((x) => x.id === id) : [...this.d.teams].reverse().find((x) => x.status === "building"); if (!t) throw new Error(id ? "Team not found" : "No team is building right now"); return t; }
+  roleId(r) { const k = String(r || "").toLowerCase().replace(/[^a-z]/g, ""); const id = R.ROLE_IDS.find((x) => x === k || R.ROLES[x].name.toLowerCase().replace(/[^a-z]/g, "").startsWith(k) || (k === "modeler" && x === "builder") || (k === "uimaker" && x === "ui") || (k === "moneymaker" && x === "money")); if (!id) throw new Error("Unknown role " + r + ". Roles: " + R.ROLE_IDS.join(", ")); return id; }
+  roleState(team, r) {
+    const ro = team.roles[r];
+    if (!ro?.enabled) return "off";
+    const t = ro.taskId && this.claude.tasks.find((x) => x.id === ro.taskId);
+    if (!t) return team.status === "building" ? "not started" : "ready";
+    return t.busy ? "working" : t.queued ? "waiting" : t.outcome === "failed" || t.outcome === "usage" ? "problem" : "done";
+  }
+  teamsPublic() {
+    const pid = this.d.settings.activeProjectId;
+    return this.d.teams.filter((t) => !pid || t.projectId === pid || !t.projectId).slice(-10).reverse().map((t) => ({
+      id: t.id, status: t.status, error: t.error || null, idea: t.idea, plan: t.plan, createdAt: t.createdAt, cofounderTaskId: t.roles.cofounder?.taskId || null,
+      roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { enabled: !!t.roles[r]?.enabled, taskId: t.roles[r]?.taskId || null, state: this.roleState(t, r) }])),
+    }));
+  }
+  /** Ideas tab: the Co-Founder makes a plan (nothing is built until you press Accept). */
+  teamPlan(text, ideaIds) {
+    text = String(text || "").trim();
+    const ideas = (ideaIds || []).map((id) => this.idea(id)).filter(Boolean);
+    if (!text && !ideas.length) throw new Error("Tell the Co-Founder your idea, or pick some ideas");
+    const idea = [text, ideas.length ? "Ideas to use:\n" + ideas.map((i) => `- ${i.title} (${i.category}): ${i.pitch} Features: ${i.features}`).join("\n") : ""].filter(Boolean).join("\n\n");
+    const team = { id: uid("team"), projectId: this.d.settings.activeProjectId, status: "planning", idea: clip(idea, 3000), plan: null, createdAt: now(), roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { enabled: true, taskId: null }])) };
+    const taskId = this.claude.newTask("Co-Founder: " + clip(text || ideas.map((i) => i.title).join(" + "), 44), { role: "cofounder", teamId: team.id });
+    team.roles.cofounder.taskId = taskId;
+    this.d.teams.push(team);
+    this.d.teams = this.d.teams.slice(-30);
+    this.save();
+    this.claudeSend(R.planPrompt(idea), taskId);
+    this.log("Co-Founder is planning a game", "info", "Team");
+    return team.id;
+  }
+  /** A role's Claude finished a step: read the Co-Founder's plan when it was planning. */
+  teamTaskFinished(taskId) {
+    const team = this.d.teams.find((t) => t.roles.cofounder?.taskId === taskId && (t.status === "planning" || t.status === "revising"));
+    if (!team) return this.changed();
+    const t = this.claude.tasks.find((x) => x.id === taskId);
+    const lastUser = t ? t.messages.map((m) => m.role).lastIndexOf("user") : -1;
+    const answer = t ? t.messages.slice(lastUser + 1).filter((m) => m.role === "assistant").map((m) => m.text).join("\n") : "";
+    const plan = R.parsePlan(answer);
+    if (plan) { team.plan = plan; team.status = "proposed"; team.error = null; this.log(`Co-Founder's plan is ready: ${plan.title}`, "ok", "Team"); this.emit("alert", { kind: "done", title: "The Co-Founder's plan is ready", body: plan.title + " — open Game Ideas to accept or change it.", at: now() }); }
+    else { team.status = team.plan ? "proposed" : "failed"; team.error = t?.outcome === "usage" ? "Out of Claude usage." : "The Co-Founder's answer had no plan I could read. Press Change and ask again."; }
+    this.save();
+  }
+  teamRevise(id, feedback) {
+    const team = this.team(id);
+    if (!["proposed", "failed"].includes(team.status)) throw new Error("The plan can only be changed before you accept it");
+    if (!String(feedback || "").trim()) throw new Error("Write what to change");
+    team.status = "revising"; team.error = null; this.save();
+    this.claude.followUp(team.roles.cofounder.taskId, `Change the plan: ${String(feedback).slice(0, 3000)}\nAnswer with a short summary and the full updated JSON block in the same format.`, this.workDir(), "you");
+  }
+  /** Accept: every switched-on role gets its jobs; the Co-Founder starts directing. */
+  teamAccept(id) {
+    const team = this.team(id);
+    if (team.status !== "proposed") throw new Error("There's no plan to accept yet");
+    team.status = "building"; team.acceptedAt = now(); this.save();
+    for (const r of R.WORKERS) if (team.roles[r].enabled) this.teamStartRole(team, r);
+    if (team.roles.cofounder.enabled) this.claude.followUp(team.roles.cofounder.taskId, R.directorBrief(team), this.workDir(), "you");
+    this.log(`Team started building ${team.plan.title}`, "ok", "Team");
+    this.save();
+  }
+  teamStartRole(team, r) {
+    if (team.roles[r].taskId && this.claude.tasks.some((x) => x.id === team.roles[r].taskId)) return;
+    const taskId = this.claude.newTask(`${R.ROLES[r].name}: ${team.plan?.title || "game"}`, { role: r, teamId: team.id });
+    team.roles[r].taskId = taskId;
+    this.claudeSend(R.workerBrief(team, r), taskId);
+  }
+  /** The on/off switch for a role in a project's team. */
+  teamSetRole(id, role, on) {
+    const team = this.team(id), r = this.roleId(role), ro = team.roles[r];
+    ro.enabled = !!on;
+    if (!on && ro.taskId && this.claude.tasks.some((x) => x.id === ro.taskId)) this.claude.stop(ro.taskId);
+    if (on && team.status === "building") {
+      if (r !== "cofounder" && !ro.taskId) this.teamStartRole(team, r);
+      else if (ro.taskId) { const t = this.claude.tasks.find((x) => x.id === ro.taskId); if (t && !t.busy && !t.queued) this.claude.followUp(ro.taskId, "[From the Co-Founder] You're switched on again — check vyron_team_status and continue your jobs.", this.workDir(), "you"); }
+    }
+    this.log(`${R.ROLES[r].name} switched ${on ? "on" : "off"}`, "info", "Team");
+    this.save();
+  }
+  teamDiscard(id) {
+    const team = this.team(id);
+    for (const r of R.ROLE_IDS) if (team.roles[r].taskId && this.claude.tasks.some((x) => x.id === team.roles[r].taskId)) this.claude.stop(team.roles[r].taskId);
+    this.d.teams = this.d.teams.filter((t) => t !== team);
+    this.save();
+  }
+  /* --- tools the Co-Founder (and the roles) use through the connector --- */
+  teamStatus(id) {
+    const team = this.team(id);
+    return {
+      team: team.id, game: team.plan?.title, status: team.status,
+      roles: R.ROLE_IDS.map((r) => {
+        const t = team.roles[r].taskId && this.claude.tasks.find((x) => x.id === team.roles[r].taskId);
+        const last = t ? [...t.messages].reverse().find((m) => m.role === "assistant") : null;
+        return { role: r, name: R.ROLES[r].name, state: this.roleState(team, r), waitingMessages: (t?.inbox || []).length, lastUpdate: last ? clip(last.text, 600) : null, jobs: (team.plan?.work[r] || []).map((w) => w.title) };
+      }),
+    };
+  }
+  teamMessage(id, role, text, from) {
+    const team = this.team(id), r = this.roleId(role), ro = team.roles[r];
+    if (!ro.enabled) throw new Error(`${R.ROLES[r].name} is switched off by the user.`);
+    if (!String(text || "").trim()) throw new Error("Empty message");
+    if (!ro.taskId) { if (r === "cofounder" || team.status !== "building") throw new Error(`${R.ROLES[r].name} hasn't started.`); this.teamStartRole(team, r); }
+    this.claude.followUp(ro.taskId, `[From ${String(from || "the Co-Founder").slice(0, 40)}] ${String(text).slice(0, 6000)}`, this.workDir(), from || "cofounder");
+    this.save();
+    return `Sent to ${R.ROLES[r].name}.`;
+  }
+  async teamWait(id, roles, seconds = 300) {
+    const team = this.team(id);
+    const want = (roles && roles.length ? roles.map((x) => this.roleId(x)) : R.WORKERS).filter((r) => team.roles[r].enabled && r !== "cofounder");
+    const end = now() + Math.min(900, Math.max(10, seconds)) * 1000;
+    while (now() < end && want.some((r) => ["working", "waiting"].includes(this.roleState(team, r)))) await new Promise((res) => setTimeout(res, 2000));
+    return this.teamStatus(team.id);
+  }
+
   /* ================= ideas ================= */
   listIdeas(category) { return category ? IDEAS.filter((i) => i.category.toLowerCase() === String(category).toLowerCase()) : IDEAS; }
   allIdeas() { return [...IDEAS, ...this.d.customIdeas]; }
@@ -313,6 +438,36 @@ class Backend extends EventEmitter {
   buildIdeas(ids, extra) {
     const names = (ids || []).map((id) => this.idea(id)?.title).filter(Boolean);
     return this.claudeStartTask(this.ideaPrompt(ids, extra), "Build: " + names.slice(0, 3).join(" + ") + (names.length > 3 ? " +" + (names.length - 3) : ""));
+  }
+
+  /* ================= Blender ================= */
+  /** Is Blender open with its MCP add-on? VYRON asks Blender's own MCP server. */
+  async checkBlender() {
+    const srv = blenderServer();
+    if (!srv) { this.blenderInfo = { found: false, open: false, file: null, error: "Blender's MCP server isn't installed (Claude desktop → Settings → Extensions → Blender)." }; this.changed(); return this.blenderInfo; }
+    try {
+      if (this.mcp.info(BLENDER_ID).status !== "connected") await this.mcp.connect({ id: BLENDER_ID, name: "Blender", transport: "stdio", command: srv.command, args: srv.args });
+      if (this.mcp.info(BLENDER_ID).status !== "connected") throw new Error(this.mcp.info(BLENDER_ID).error || "Couldn't start Blender's MCP server");
+      const r = await this.mcp.call(BLENDER_ID, "get_blendfile_summary_path_info", {});
+      if (r.isError) throw new Error(r.text);
+      const file = (String(r.text).match(/[A-Za-z]:\\[^"\n]+?\.blend/) || [])[0] || null;
+      this.blenderInfo = { found: true, open: true, file, error: null };
+    } catch (e) {
+      this.blenderInfo = { found: true, open: false, file: null, error: /connect|refused|ECONN|not running|timed out|socket/i.test(e.message) ? "Blender isn't open, or its MCP add-on is off. Open Blender and turn the add-on on." : String(e.message).slice(0, 300) };
+    }
+    this.changed();
+    return this.blenderInfo;
+  }
+  /** "Make a 3D model": a Builder & Modeler Claude makes it in Blender. */
+  makeModel(text) {
+    text = String(text || "").trim();
+    if (!text) throw new Error("Describe the model first");
+    if (!blenderServer()) throw new Error("Blender's MCP server isn't installed yet (Claude desktop → Settings → Extensions → Blender).");
+    const id = this.claude.newTask("Model: " + clip(text, 48), { role: "builder" });
+    this.claudeSend(`Make this 3D model in Blender: ${text}
+
+Work in the open Blender file: build it step by step with clean, named objects and simple materials, check it with a viewport screenshot, keep it low-poly and Roblox-friendly. Then export it as .fbx into the "models" folder of the project folder and tell me the file name and how to import it into Roblox Studio (3D Importer).`, id);
+    return id;
   }
 
   /* ================= Roblox Studio ================= */

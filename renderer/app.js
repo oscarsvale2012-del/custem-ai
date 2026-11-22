@@ -201,7 +201,7 @@ document.addEventListener("click", (e) => {
   // Only tabs and choices make a sound. Each tab is a slightly different note.
   if (el.matches(".nav[data-go]")) return uiSound("nav", [0, 2, 4, 5, 7, 9][PAGES.findIndex((p) => p[0] === el.dataset.go)] || 0);
   const act = el.dataset.act || "";
-  if (/^(setting|setTheme|randomTheme|toggleIdea|ideaTab|ideaCat|pickTask|revTf)$/.test(act) || el.matches(".toggle,.radio-card")) return uiSound("pick");
+  if (/^(setting|setTheme|randomTheme|toggleIdea|ideaTab|ideaCat|pickTask|revTf|teamRole)$/.test(act) || el.matches(".toggle,.radio-card")) return uiSound("pick");
 }, true);
 document.addEventListener("change", (e) => { if (e.target.matches?.("select")) uiSound("pick"); }, true);
 
@@ -322,8 +322,8 @@ VIEWS.claude = () => {
   const t = curTask();
   const active = t.busy || t.queued;
   const list = C.tasks.map((x) => { const [dot, label] = taskState(x); return `<div class="pick task-pick ${x.id === t.id ? "on" : ""}" data-act="pickTask" data-id="${x.id}">
-      <span class="dot ${dot}" title="${label}"></span><div class="grow" style="min-width:0"><div class="ell" style="font-weight:500">${esc(x.title)}</div>
-      <div class="faint ell" style="font-size:11.5px">${label}${x.modelName ? " · " + esc(x.modelName) : ""}${x.last ? " · " + esc(x.last) : ""}</div></div></div>`; }).join("");
+      <span class="dot ${dot}" title="${label}"></span><div class="grow" style="min-width:0"><div class="ell" style="font-weight:500">${x.role ? `<span class="role-tag r-${x.role}">${esc(S.roles[x.role]?.name || x.role)}</span>` : ""}${esc(x.role ? x.title.replace(/^[^:]{2,22}: /, "") : x.title)}</div>
+      <div class="faint ell" style="font-size:11.5px">${label}${x.inbox ? ` · ${x.inbox} message${x.inbox > 1 ? "s" : ""} waiting` : ""}${x.modelName ? " · " + esc(x.modelName) : ""}${x.last ? " · " + esc(x.last) : ""}</div></div></div>`; }).join("");
   return `<div class="chat-wrap" style="height:calc(100vh - 102px)">
     ${claudeSetupCard()}
     <div class="claude-grid" style="flex:1;min-height:0">
@@ -346,6 +346,46 @@ VIEWS.claude = () => {
         </div>
       </div></div></div>`;
 };
+
+function blenderPanel() {
+  const b = S.blender || {};
+  return `<div class="panel"><div class="panel-h"><h3>Blender</h3><div class="grow"></div><span class="chip ${b.open ? "ok" : ""}"><span class="dot ${b.open ? "connected" : b.found ? "unknown" : "error"}"></span>${b.open ? "Connected" : b.found ? "Not open" : "Not installed"}</span><button class="btn sm ghost icon" data-act="checkBlender" title="Check again">${ic("refresh")}</button></div>
+    <div class="panel-b stack">
+      <div class="muted" style="font-size:12.5px">${b.open ? "Claude can make and change 3D models in Blender" + (b.file ? " (" + esc(b.file.split(/[\\/]/).pop()) + ")" : "") + "." : esc(b.error || "Checking…")}</div>
+      <div class="row" style="gap:8px"><input class="input grow" id="mkModel" placeholder="Make a 3D model… e.g. a cartoon treasure chest with gold trim"><button class="btn primary" data-act="makeModel" ${b.found ? "" : "disabled"}>${ic("bolt")}Make it</button></div>
+      <div class="faint" style="font-size:11.5px">A Builder &amp; Modeler Claude builds it in your open Blender file and exports it as .fbx to the project's models folder for Studio's 3D Importer.</div></div></div>`;
+}
+
+/* ---------- Studio team (Co-Founder) ---------- */
+const ROLE_ICON = { cofounder: "star", builder: "roblox", coder: "edit", ui: "image", money: "revenue" };
+const ROLE_ORDER = ["cofounder", "builder", "coder", "ui", "money"];
+const STATE_DOT = { working: "working", waiting: "connecting", done: "connected", problem: "error", off: "unknown", "not started": "unknown", ready: "unknown" };
+function roleSwitch(team, r) {
+  const ro = team.roles[r];
+  return `<div class="role-row ${ro.enabled ? "" : "off"}"><span class="role-ic r-${r}">${ic(ROLE_ICON[r])}</span><div class="grow" style="min-width:0"><b>${esc(S.roles[r].name)}</b><div class="faint ell" style="font-size:11.5px">${team.status === "building" || team.status === "done" ? `<span class="dot ${STATE_DOT[ro.state] || "unknown"}" style="display:inline-block;width:6px;height:6px;margin-right:5px"></span>${esc(ro.state)}` : esc(S.roles[r].short)}</div></div>
+    ${ro.taskId ? `<button class="btn sm ghost" data-act="openTask" data-id="${ro.taskId}">Chat</button>` : ""}<div class="toggle ${ro.enabled ? "on" : ""}" data-act="teamRole" data-id="${team.id}" data-role="${r}" data-on="${!ro.enabled}" title="Switch ${esc(S.roles[r].name)} ${ro.enabled ? "off" : "on"}"></div></div>`;
+}
+function teamCard(t) {
+  const P = t.plan;
+  const head = `<div class="row" style="gap:10px"><span class="role-ic r-cofounder">${ic("star")}</span><div class="grow" style="min-width:0"><b style="font:600 15px var(--f-head)">${esc(P?.title || "New game plan")}</b><div class="faint ell" style="font-size:12px">${esc({ planning: "The Co-Founder is planning…", revising: "The Co-Founder is changing the plan…", proposed: "Plan ready — accept it or ask for changes", building: "The team is building", failed: "Something went wrong", done: "Done" }[t.status] || t.status)}</div></div>
+    ${t.cofounderTaskId ? `<button class="btn sm ghost" data-act="openTask" data-id="${t.cofounderTaskId}">Co-Founder chat</button>` : ""}<button class="btn sm ghost danger icon" data-act="teamDiscard" data-id="${t.id}" title="Remove this plan (stops its team)">${ic("trash")}</button></div>`;
+  if (t.status === "planning" || t.status === "revising") return `<div class="panel pad team-card">${head}<div class="row" style="margin-top:12px"><span class="spinner"></span><span class="faint" style="font-size:12.5px">Reading your idea and writing a plan for every role. This takes a minute or two.</span></div></div>`;
+  const change = `<div class="row" style="margin-top:12px;gap:8px"><input class="input grow" id="cfChange-${t.id}" placeholder="Want something different? e.g. “make it a horror game, fewer gamepasses”"><button class="btn" data-act="teamRevise" data-id="${t.id}">Change</button>${t.status === "proposed" ? `<button class="btn primary" data-act="teamAccept" data-id="${t.id}">${ic("check")}Accept &amp; start building</button>` : ""}</div>`;
+  if (t.status === "failed" || !P) return `<div class="panel pad team-card">${head}<div class="faint" style="margin-top:10px;color:var(--bad)">${esc(t.error || "No plan yet.")}</div>${change}</div>`;
+  const jobs = (r) => (P.work[r] || []).map((w) => `<li><b>${esc(w.title)}</b><span class="faint"> — ${esc(w.details)}</span></li>`).join("") || '<li class="faint">No jobs</li>';
+  return `<div class="panel pad team-card">${head}
+    <div class="muted" style="font-size:13px;margin-top:10px">${esc(P.summary)}</div>
+    ${P.features.length ? `<div class="row wrap" style="gap:6px;margin-top:10px">${P.features.map((f) => `<span class="tag">${esc(f)}</span>`).join("")}</div>` : ""}
+    <div class="team-grid">${ROLE_ORDER.map((r) => `<div class="team-col">${roleSwitch(t, r)}${r === "cofounder" ? '<div class="faint" style="font-size:12px;margin-top:6px">Directs everyone, checks their work and does the final play test.</div>' : `<ul class="jobs">${jobs(r)}</ul>`}</div>`).join("")}</div>
+    ${t.status === "proposed" || t.status === "failed" ? change : `<div class="faint" style="font-size:12px;margin-top:10px">Turn a role off to stop it; turn it on again to let it continue. Each role is its own Claude, and more roles at once use your Claude usage faster.</div>`}</div>`;
+}
+function teamPanel() {
+  const teams = S.teams || [];
+  const n = S.ideas.picked.length;
+  return `<div class="panel pad stack cofounder-box"><div class="row" style="gap:12px"><span class="role-ic r-cofounder big">${ic("star")}</span><div class="grow"><div class="h3">Ask the Co-Founder</div><div class="faint" style="font-size:12.5px">Say your idea — the Co-Founder plans the whole game and splits it into jobs for the Builder &amp; Modeler, Coder, UI Maker and Money Maker. Nothing is built until you press Accept.</div></div></div>
+    <div class="row" style="gap:8px"><input class="input grow" id="cfIdea" placeholder="e.g. a brainrot pet simulator with trading and a lava obby"><button class="btn primary" data-act="teamPlan">${ic("star")}Plan it${n ? ` (+${n} picked)` : ""}</button></div></div>
+    ${teams.map(teamCard).join("")}<div class="sp" style="height:14px"></div>`;
+}
 
 /* ---------- Ideas ---------- */
 VIEWS.ideas = () => {
@@ -372,7 +412,7 @@ VIEWS.ideas = () => {
     const cats = ui.ideaTab === "library" ? `<div class="row wrap" style="gap:6px">${["All", ...S.ideas.categories].map((c) => `<button class="btn sm ${ui.ideaCat === c ? "primary" : "ghost"}" data-act="ideaCat" data-id="${esc(c)}">${esc(c)} <span class="faint" style="margin-left:4px">${c === "All" ? IDEAS.length : IDEAS.filter((i) => i.category === c).length}</span></button>`).join("")}</div><div class="sp" style="height:12px"></div>` : "";
     body = `${cats}<div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(270px,1fr))">${list.map(card).join("") || `<div class="panel">${empty(ui.ideaTab === "picked" ? "Nothing picked yet" : "No ideas match", ui.ideaTab === "picked" ? "Click ideas in the Library to pick them." : "Try another search.")}</div>`}</div>`;
   }
-  return `<div class="row">${tabs}<div class="grow"></div>${ui.ideaTab !== "custom" ? `<div class="search" style="width:280px">${ic("search")}<input class="input" id="ideaSearch" placeholder="Search ideas" value="${esc(ui.ideaQ)}"></div>` : ""}</div>
+  return `${teamPanel()}<div class="row">${tabs}<div class="grow"></div>${ui.ideaTab !== "custom" ? `<div class="search" style="width:280px">${ic("search")}<input class="input" id="ideaSearch" placeholder="Search ideas" value="${esc(ui.ideaQ)}"></div>` : ""}</div>
     <div class="sp" style="height:14px"></div>${body}<div style="height:90px"></div>
     ${P.size ? `<div class="pickbar panel"><b>${P.size} picked</b><span class="faint ell" style="max-width:340px;font-size:12px">${esc(allIdeas().filter((i) => P.has(i.id)).map((i) => i.title).join(", "))}</span><button class="btn sm ghost" data-act="clearPicked">Clear</button>
       <input class="input grow" id="ideaExtra" placeholder="Extra wishes (optional), e.g. make it multiplayer with trading"><button class="btn primary" data-act="buildIdeas">${ic("claude")}Build with Claude</button></div>` : ""}`;
@@ -399,6 +439,7 @@ VIEWS.projects = () => {
           : `<div class="row"><div class="muted grow" style="font-size:13px">${S.studios.length ? `${S.studios.length} Studio window${S.studios.length > 1 ? "s" : ""} open` : esc(S.studioError || "No Studio window found.")}</div><button class="btn sm" data-act="detectStudios">${ic("refresh")}Detect</button></div>
              ${S.studios.map((w) => { const linked = S.projects.find((x) => x.studio?.id === w.id); return `<div class="mini-proj" style="cursor:default"><div class="gicon sm"><div class="fallback">${esc(initials(w.name))}</div></div><div class="grow" style="min-width:0"><div class="ell" style="font-weight:600;font-size:13px">${esc(w.name)}</div><div class="faint" style="font-size:11.5px">${esc(w.mode || "")}${w.placeId ? " · Place " + esc(w.placeId) : " · not published"}</div></div>${linked ? `<span class="chip ok">${esc(linked.game?.name || linked.name)}</span>` : `${p ? `<button class="btn sm" data-act="linkStudio" data-id="${esc(w.id)}">Link</button>` : ""}<button class="btn sm" data-act="projectFromStudio" data-id="${esc(w.id)}">New project</button>`}</div>`; }).join("")}`}
         </div></div>
+      ${blenderPanel()}
       <div class="panel pad"><div class="h3" style="margin-bottom:8px">How it works</div>
         <div class="muted" style="font-size:12.5px;line-height:1.7">Open your place in <b>Roblox Studio</b> and turn on its AI / MCP connection (Assistant settings). Claude then builds right in that window: scripts, parts, UI and play tests. If a project has a folder (e.g. Rojo), Claude can also edit the files there.</div></div>
     </div></div>`;
@@ -544,6 +585,7 @@ VIEWS.settings = () => {
       <div class="label" style="margin-top:6px">What Claude may do</div>
       ${[["safe", "Studio, VYRON and project files (recommended)", "Claude builds in Roblox Studio, uses VYRON, and reads/edits files in the project folder. No shell commands."], ["full", "Full access", "Claude may also run commands on this PC without asking. Only turn this on if you trust what you ask for."]].map(([k, t, d]) => `<div class="radio-card ${(s.claudeAccess || "safe") === k ? "on" : ""}" data-act="setting" data-key="claudeAccess" data-val="${k}"><span class="dot ${(s.claudeAccess || "safe") === k ? "connected" : "unknown"}"></span><div><b style="font-weight:600">${t}</b><div class="faint" style="font-size:12.5px">${d}</div></div></div>`).join("")}
       <label class="field"><span>Model</span><select class="select" data-change="setting" data-key="claudeModel">${[["", "Default (your plan's default)"], ["opus", "Opus — strongest"], ["sonnet", "Sonnet — balanced"], ["haiku", "Haiku — fastest"]].map(([k, l]) => `<option value="${k}" ${(s.claudeModel || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <div class="row"><span class="grow">Blender for Claude <span class="faint" style="font-size:12px">(${S.blender?.found ? "found" : "Blender extension not found"})</span></span><div class="toggle ${s.blender !== false ? "on" : ""}" data-act="setting" data-key="blender" data-val="${s.blender === false}"></div></div>
       <label class="field"><span>Tasks at the same time</span><select class="select" data-change="setting" data-key="claudeParallel">${[1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20].map((n) => `<option value="${n}" ${(s.claudeParallel || 3) === n ? "selected" : ""}>${n}${n === 1 ? " (one at a time)" : n >= 10 ? " — uses a lot of usage" : ""}</option>`).join("")}</select><small>Each running task is a separate Claude. More at once is faster, but your Claude usage limit runs out faster, and tasks changing the same part of a game can get in each other's way.</small></label>
     </div>
     <div class="stack" style="gap:16px">
@@ -762,6 +804,14 @@ const ACT = {
   async randomTheme() { const t = THEMES[(Math.random() * THEMES.length) | 0]; await ACT.setTheme({ dataset: { id: t.id } }); toast("Theme: " + t.name); },
   previewSound: (el) => playSound(soundFor(el.dataset.id), S.settings.volume ?? 0.7),
   async testPopup() { if (!desktop) return toast("Pop-ups show in the desktop app"); if ((S.settings.notifyStyle || "vyron") !== "vyron") return toast("Choose “VYRON style” first"); await B.host("testPopup"); },
+  async teamPlan() { const t = val("cfIdea"); await call("teamPlan", t, S.ideas.picked); $("#cfIdea").value = ""; toast("The Co-Founder is planning — this takes a minute or two"); },
+  async teamRevise(el) { const f = val("cfChange-" + el.dataset.id); if (!f.trim()) return toast("Write what to change", "error"); await call("teamRevise", el.dataset.id, f); },
+  async teamAccept(el) { await call("teamAccept", el.dataset.id); toast("Accepted — the team is starting"); },
+  async teamRole(el) { await call("teamSetRole", el.dataset.id, el.dataset.role, el.dataset.on === "true"); },
+  async teamDiscard(el) { if (confirm("Remove this plan? Its team's running tasks are stopped.")) await call("teamDiscard", el.dataset.id); },
+  openTask: (el) => { ui.taskId = el.dataset.id; go("claude"); },
+  async checkBlender() { const b = await call("checkBlender"); toast(b.open ? "Blender is connected" : b.error || "Blender isn't open", b.open ? "" : "error"); },
+  async makeModel() { const t = val("mkModel"); if (!t.trim()) return toast("Describe the model first", "error"); ui.taskId = await call("makeModel", t); $("#mkModel").value = ""; go("claude"); },
   async refreshRates() { await call("refreshRates"); toast("Rates updated from Roblox and the ECB"); },
   async setting(el) { let v = el.dataset.val; if (v === "true") v = true; else if (v === "false") v = false; await call("saveSettings", { [el.dataset.key]: v }); },
   copyLog: () => { navigator.clipboard.writeText(S.activity.map((l) => `${new Date(l.at).toISOString()} [${l.level}] ${l.source}: ${l.text}`).join("\n")); toast("Log copied"); },

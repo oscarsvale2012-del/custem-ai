@@ -193,6 +193,15 @@ class ControlServer {
     tool("vyron_pc_type", "Type text into the focused window." + pcNote, { text: z.string().max(2000) }, async (a) => { await this.call("pcAction", "type", a); return "Typed."; });
     tool("vyron_pc_key", "Press a key or shortcut, e.g. enter, esc, tab, ctrl+s, alt+tab, ctrl+shift+p, f5." + pcNote, { keys: z.string() }, async (a) => { await this.call("pcAction", "key", a); return "Pressed " + a.keys + "."; });
 
+    const teamId = z.string().optional().describe("Team id (default: the team that is building now)");
+    tool("vyron_team_status", "Studio team: what each role (Co-Founder, Builder & Modeler, Coder, UI Maker, Money Maker) is doing, their jobs and last update.", { team_id: teamId }, async ({ team_id }) => { await this.state(); return this.call("teamStatus", team_id); });
+    tool("vyron_team_message", "Send a message to a role in the studio team (builder, coder, ui, money or cofounder). It reaches them right away, or as soon as their current step ends.", {
+      role: z.string(), message: z.string(), team_id: teamId, from: z.string().optional().describe("Your role name, e.g. Coder"),
+    }, async ({ role, message, team_id, from }) => { await this.state(); return this.call("teamMessage", team_id, role, message, from); });
+    tool("vyron_team_wait", "Wait until roles finish their current work (default: all workers), then return the team status.", {
+      roles: z.array(z.string()).optional(), timeout_seconds: z.number().int().min(10).max(900).optional(), team_id: teamId,
+    }, async ({ roles, timeout_seconds, team_id }) => { await this.state(); return this.call("teamWait", team_id, roles, timeout_seconds); });
+
     tool("vyron_activity", "Recent activity log.", { limit: z.number().int().min(1).max(150).optional() }, async ({ limit = 40 }) => {
       const s = await this.state();
       return s.activity.slice(-limit).map((l) => `${new Date(l.at).toLocaleTimeString()} [${l.source}] ${l.text}`);

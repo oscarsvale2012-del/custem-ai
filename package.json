@@ -1,7 +1,7 @@
 {
   "name": "vyron",
   "productName": "VYRON",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "VYRON - desktop companion for Claude: build Roblox games with Claude, game ideas and DevEx kroner",
   "main": "main.js",
   "author": "VYRON",
@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "dev:web": "node src/devserver.js",
-    "test": "node test/core.js && node test/revenue.js && node test/account.js && node test/bridge.js",
+    "test": "node test/core.js && node test/revenue.js && node test/account.js && node test/bridge.js && node test/team.js",
     "icon": "electron build/render-icon.js",
     "dist": "electron-builder --win --publish never"
   },

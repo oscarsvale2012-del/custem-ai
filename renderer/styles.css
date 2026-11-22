@@ -377,3 +377,15 @@ body.locked #shell{display:none}
 .theme-card.light{color:#1a1d27}.theme-card.light b{color:color-mix(in srgb,var(--ta) 55%,#1a1d27)}.theme-card.light span{opacity:.7}
 
 .code-input{font:600 22px var(--f-mono);letter-spacing:.35em;text-align:center}
+
+/* studio team */
+.cofounder-box{border-color:color-mix(in srgb,var(--accent) 35%,var(--border));margin-bottom:14px}
+.team-card{margin-bottom:14px}
+.team-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-top:14px}
+@media (max-width:1400px){.team-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.team-col{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--surface)}
+.role-row{display:flex;align-items:center;gap:8px}.role-row.off{opacity:.55}
+.role-ic{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;flex:none;background:var(--surface-3)}.role-ic svg{width:15px;height:15px}.role-ic.big{width:36px;height:36px}
+.r-cofounder{color:#ffd76a}.r-builder{color:#7cc7ff}.r-coder{color:#74e3ae}.r-ui{color:#ff8ad8}.r-money{color:#ffcf4a}
+.jobs{margin:8px 0 0 16px;font-size:12px;display:flex;flex-direction:column;gap:4px}
+.role-tag{font-size:10.5px;font-weight:600;border:1px solid currentColor;border-radius:6px;padding:0 5px;margin-right:6px;opacity:.9}
