@@ -17,7 +17,7 @@ function post(cfg, body) {
     const data = Buffer.from(body);
     const req = http.request({
       host: "127.0.0.1", port: cfg.port || 47211, path: "/mcp", method: "POST", timeout: 10 * 60 * 1000,
-      headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: "Bearer " + cfg.token, "Content-Length": data.length },
+      headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: "Bearer " + cfg.token, "X-VYRON-Client": "claude-desktop", "Content-Length": data.length },
     }, (res) => {
       let out = "";
       res.setEncoding("utf8");

@@ -173,19 +173,35 @@ function drawNav() {
     <div class="conns">${connections().map(([dot, text, go, tip]) => `<div class="conn" data-go="${go}" title="${esc(tip)}"><span class="dot ${dot}"></span><span class="ell">${esc(text)}</span></div>`).join("")}</div>
     ${S.auth?.user ? `<div class="row acct" data-go="settings" title="${esc(S.auth.user.email)}"><div class="av" style="margin:0;width:24px;height:24px;font-size:10px">${esc(initials(S.auth.user.email))}</div><span class="ell grow" style="font-size:12px">${esc(S.auth.user.email)}</span></div>` : ""}`;
 }
-/** Sidebar status lines: [dot class, text, page, tooltip]. */
+/** Sidebar status lines: [dot class, text, page, tooltip]. One line per open Studio / Blender window. */
+const base = (p) => String(p || "").split(/[\\/]/).pop();
 function connections() {
-  const st = S.studio || {}, b = S.blender || {}, X = S.control;
-  const studioOk = st.status === "connected" && S.studios.length;
-  return [
-    [claudeDot(), claudeLine() + (modelNow() ? " · " + modelNow() : ""), "claude", "Claude Code on this PC"],
-    [studioOk ? "connected" : st.status === "connected" ? "unknown" : st.status === "connecting" ? "connecting" : "error",
-      studioOk ? "Roblox Studio connected" : st.status === "connected" ? "Roblox Studio: no place open" : st.status === "connecting" ? "Roblox Studio connecting…" : "Roblox Studio offline", "projects",
-      studioOk ? S.studios.map((w) => w.name).join(", ") : S.studioError || "Open Studio and turn on its AI/MCP connection"],
-    [b.open ? "connected" : b.found ? "unknown" : "error", b.open ? "Blender connected" : b.found ? "Blender not open" : "Blender not installed", "projects",
-      b.open ? b.file || "Blender is open" : b.error || "Open Blender with its MCP add-on on"],
-    ...(X ? [[X.running ? "connected" : X.enabled ? "error" : "unknown", X.running ? "Claude connector on" + (X.desktop?.connected ? " · desktop" : "") : X.enabled ? "Claude connector error" : "Claude connector off", "settings", X.running ? "Claude can control VYRON" : X.error || "Turn it on in Settings"]] : []),
-  ];
+  const st = S.studio || {}, b = S.blender || {}, X = S.control, W = S.windows || { studio: [], blender: [] };
+  const L = [[claudeDot(), claudeLine() + (modelNow() ? " · " + modelNow() : ""), "claude", "Claude Code on this PC"]];
+  // Roblox Studio: every window the AI connection sees, plus open windows it can't see
+  const seen = st.status === "connected" ? S.studios : [];
+  for (const w of seen) L.push(["connected", "Studio — " + (w.name || "place"), "projects", `Roblox Studio connected${w.placeId ? " · Place " + w.placeId : ""}`]);
+  const unseen = W.studio.filter((w) => !seen.some((s) => s.name && w.title.includes(s.name)));
+  for (const w of unseen.slice(0, Math.max(0, W.studio.length - seen.length))) L.push(["unknown", "Studio — " + (w.title.replace(/ - Roblox Studio$/, "") || "window") + " (AI off)", "projects", "Open in Studio, but its AI / MCP connection is off"]);
+  if (!seen.length && !W.studio.length) L.push([st.status === "connected" ? "unknown" : "error", "Roblox Studio not open", "projects", S.studioError || "Open your place in Roblox Studio"]);
+  // Blender: every Blender window; the one with the MCP add-on is connected
+  const bw = W.blender;
+  if (bw.length) bw.forEach((w, i) => {
+    const file = (w.title.match(/\[(.+?)\]/) || [])[1] || w.title.replace(/ - Blender.*$/, "");
+    const on = b.open && (bw.length === 1 || (b.file && w.title.includes(base(b.file))) || (!b.file && i === 0));
+    L.push([on ? "connected" : "unknown", "Blender — " + (base(file) || "untitled") + (on ? "" : " (add-on off)"), "projects", on ? "Claude can use this Blender" : "Open, but its MCP add-on isn't connected"]);
+  });
+  else L.push([b.open ? "connected" : b.found ? "unknown" : "error", b.open ? "Blender connected" : b.found ? "Blender not open" : "Blender not installed", "projects", b.error || "Open Blender with its MCP add-on on"]);
+  // Claude apps that use VYRON
+  const fresh = (k) => (X?.clients || []).find((c) => c.kind === k && Date.now() - c.last < 3 * 60 * 1000);
+  const d = fresh("desktop"), c = fresh("code");
+  if (X) {
+    L.push([d ? "connected" : X.desktop?.connected ? "unknown" : "error", d ? "Claude desktop connected" : X.desktop?.connected ? "Claude desktop: set up, not active" : "Claude desktop not connected", "settings",
+      d ? "Used VYRON " + ago(d.last) : X.desktop?.connected ? "Open Claude desktop (quit and reopen after connecting)" : "Settings → Connect Claude desktop"]);
+    L.push([c ? "connected" : "unknown", c ? "Claude Code / web connected" : "Claude Code / web: not active", "settings", c ? (c.app || "Claude Code") + " · " + ago(c.last) : "Claude Code (like the Code tab) can connect to VYRON's connector"]);
+    L.push([X.running ? "connected" : X.enabled ? "error" : "unknown", X.running ? "VYRON connector on" : X.enabled ? "VYRON connector error" : "VYRON connector off", "settings", X.running ? X.url : X.error || "Turn it on in Settings"]);
+  }
+  return L;
 }
 const claudeDot = () => (!S.claude.found ? "error" : S.claude.busy ? "working" : S.claude.auth?.loggedIn ? "connected" : "unknown");
 /** Which model Claude is running (as Claude Code reports it), and a note if a different one is picked for the next message. */
@@ -934,5 +950,7 @@ document.addEventListener("pointerdown", (e) => {
   } catch (e) { $("#bootMsg").textContent = "Could not start: " + e.message; }
 })();
 
+/* keep time-based labels ("used 2 min ago", connected) fresh */
+setInterval(() => S && !S.locked && render(), 30000);
 /* keep the "Claude is using your PC" bar honest */
 setInterval(() => { if (S?.pc?.activeAt && Date.now() - S.pc.activeAt < 12000) render(); }, 3000);

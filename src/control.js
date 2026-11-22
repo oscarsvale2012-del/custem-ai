@@ -35,8 +35,24 @@ class ControlServer {
 
   saveCfg() { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.cfg, null, 2)); }
 
+  /** Which Claude apps use the connector: VYRON's own tasks, the Claude desktop app (bridge) or Claude Code. */
+  seen(req, body) {
+    const tag = String(req.headers["x-vyron-client"] || "");
+    const msgs = Array.isArray(body) ? body : body ? [body] : [];
+    const init = msgs.find((m) => m && m.method === "initialize");
+    const name = String(init?.params?.clientInfo?.name || "");
+    const kind = tag === "vyron" ? "vyron" : tag === "claude-desktop" ? "desktop" : "code";
+    this.clients = this.clients || {};
+    const c = (this.clients[kind] = this.clients[kind] || { kind, first: Date.now(), calls: 0 });
+    c.last = Date.now(); c.calls++;
+    if (name) c.app = name.slice(0, 60);
+    if (kind !== "vyron" && (!this._seenEmit || Date.now() - this._seenEmit > 5000)) { this._seenEmit = Date.now(); this.onSeen?.(); }
+  }
+  clientsPublic() { return Object.values(this.clients || {}).map(({ kind, app, last, calls }) => ({ kind, app: app || null, last, calls })); }
+
   status() {
     return {
+      clients: this.clientsPublic(),
       desktop: this.desktopStatus(), enabled: !!this.cfg.enabled, running: !!this.server, port: this.cfg.port, url: `http://127.0.0.1:${this.cfg.port}/mcp`, error: this.error, configFile: this.file };
   }
 
@@ -256,6 +272,7 @@ class ControlServer {
       try { parsed = body ? JSON.parse(body) : undefined; } catch { return json(400, { ok: false, error: "Invalid JSON" }); }
       try {
         if (url.pathname === "/mcp") {
+          this.seen(req, parsed);
           if (req.method !== "POST") return json(405, { ok: false, error: "Use POST" });
           const server = this.mcpServer();
           const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
@@ -265,6 +282,7 @@ class ControlServer {
           return;
         }
         const m = url.pathname.match(/^\/rpc\/([a-z_]+)$/);
+        if (m) this.seen(req, null);
         if (m && req.method === "POST") return json(200, { ok: true, result: await this.runTool(m[1], parsed || {}) });
         if (url.pathname === "/rpc" && req.method === "GET") return json(200, { ok: true, tools: this.tools().map((t) => ({ name: t.name, description: t.description })) });
         json(404, { ok: false, error: "Not found" });

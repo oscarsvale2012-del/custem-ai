@@ -52,6 +52,17 @@ function bridge(dataDir) {
     assert(/Tycoon/.test(st.result.content[0].text));
     b.close();
   });
+  await test("VYRON sees who is connected: Claude desktop (bridge) vs Claude Code vs its own tasks", async () => {
+    const desk = control.clientsPublic().find((c) => c.kind === "desktop");
+    assert(desk && desk.app === "Claude" && Date.now() - desk.last < 60000, JSON.stringify(control.clientsPublic()));
+    const r = await fetch(`http://127.0.0.1:${control.cfg.port}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: "Bearer " + control.cfg.token },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "claude-code", version: "2" } } }) });
+    assert.equal(r.status, 200);
+    assert.equal(control.clientsPublic().find((c) => c.kind === "code").app, "claude-code");
+    await fetch(`http://127.0.0.1:${control.cfg.port}/rpc/vyron_status`, { method: "POST", headers: { Authorization: "Bearer " + control.cfg.token, "X-VYRON-Client": "vyron" } });
+    assert(control.clientsPublic().some((c) => c.kind === "vyron"));
+    assert(control.status().clients.length === 3);
+  });
   await test("a changed key is reported", async () => {
     const real = control.cfg.token;
     fs.writeFileSync(path.join(TMP, "vyron-control.json"), JSON.stringify({ ...control.cfg, token: "wrong-key" }));

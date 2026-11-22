@@ -71,7 +71,8 @@ class Backend extends EventEmitter {
     if (this.useStudio) {
       this.connectStudio().catch(() => {});
       setTimeout(() => this.checkBlender().catch(() => {}), 3000);
-      this._blenderTimer = setInterval(() => this.checkBlender().catch(() => {}), 20000);
+      this._blenderTimer = setInterval(() => { this.checkBlender().catch(() => {}); this.scanWindows().catch(() => {}); }, 20000);
+      this.scanWindows().catch(() => {});
       this._studioTimer = setInterval(() => this.detectStudios(true).catch(() => {}), 15000);
     }
     this._revTimer = setInterval(() => this.refreshRevenue(false).catch(() => {}), 10 * 60 * 1000);
@@ -109,6 +110,7 @@ class Backend extends EventEmitter {
       activeProjectId: active?.id || null,
       studio: { status: si.status, error: si.error, tools: si.tools.length },
       studios: this.studios,
+      windows: this.windows || { studio: [], blender: [] },
       studioError: this.studioError,
       revenue: this.revenuePublic(),
       rates: this.d.rates,
@@ -439,6 +441,25 @@ class Backend extends EventEmitter {
   buildIdeas(ids, extra) {
     const names = (ids || []).map((id) => this.idea(id)?.title).filter(Boolean);
     return this.claudeStartTask(this.ideaPrompt(ids, extra), "Build: " + names.slice(0, 3).join(" + ") + (names.length > 3 ? " +" + (names.length - 3) : ""));
+  }
+
+  /* ================= open windows ================= */
+  /** Windows of a program running on this PC (tasklist), e.g. RobloxStudioBeta.exe or blender.exe. */
+  listWindows(image) {
+    if (process.platform !== "win32" || this.noTasklist) return Promise.resolve([]);
+    return new Promise((resolve) => {
+      require("child_process").execFile("tasklist", ["/FI", `IMAGENAME eq ${image}`, "/V", "/FO", "CSV", "/NH"], { windowsHide: true, timeout: 8000 }, (err, out) => {
+        if (err) return resolve([]);
+        const rows = String(out).split(/\r?\n/).filter((l) => l.startsWith('"'));
+        resolve(rows.map((l) => { const c = l.slice(1, -1).split('","'); return { pid: Number(c[1]), title: c[8] && c[8] !== "N/A" ? c[8] : "" }; }));
+      });
+    });
+  }
+  async scanWindows() {
+    const [studio, blender] = await Promise.all([this.listWindows("RobloxStudioBeta.exe"), this.listWindows("blender.exe")]);
+    this.windows = { studio: studio.filter((w) => w.title), blender: blender.filter((w) => w.title || blender.length === 1), at: now() };
+    this.changed();
+    return this.windows;
   }
 
   /* ================= Blender ================= */

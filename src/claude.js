@@ -157,7 +157,7 @@ class ClaudeRunner extends EventEmitter {
   mcpConfig(want = ["vyron", "roblox_studio", "blender"]) {
     const servers = {};
     const c = this.o.control();
-    if (want.includes("vyron") && c?.running) servers.vyron = { type: "http", url: c.url, headers: { Authorization: "Bearer " + c.token } };
+    if (want.includes("vyron") && c?.running) servers.vyron = { type: "http", url: c.url, headers: { Authorization: "Bearer " + c.token, "X-VYRON-Client": "vyron" } };
     const st = want.includes("roblox_studio") && studioServer();
     if (st) servers.roblox_studio = st;
     const bl = want.includes("blender") && this.o.settings().blender !== false && blenderServer();
