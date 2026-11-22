@@ -18,6 +18,8 @@ const AN = require("./analytics");
 const now = () => Date.now();
 const clip = (s, n) => (s && s.length > n ? s.slice(0, n) + "…" : s || "");
 const STUDIO_ID = "studio";
+const REVIEW_KINDS = ["model", "build", "ui", "gamepass"];
+const REVIEW_NAME = { model: "3D model", build: "Build", ui: "UI", gamepass: "Gamepasses" };
 const BLENDER_ID = "blender";
 
 class Backend extends EventEmitter {
@@ -36,6 +38,8 @@ class Backend extends EventEmitter {
     this.d.customIdeas = this.d.customIdeas || [];
     this.d.picked = this.d.picked || [];
     this.d.teams = this.d.teams || [];
+    this.d.reviews = this.d.reviews || [];
+    this.d.settings.autoApprove = Object.fromEntries(REVIEW_KINDS.map((k) => [k, this.d.settings.autoApprove?.[k] === true]));
     this.d.rates = this.d.rates || null;
     this.mcp = new McpManager({ onChange: () => this.changed(), log: (t, l) => this.log(t, l, "Studio") });
     this.studios = [];
@@ -114,6 +118,7 @@ class Backend extends EventEmitter {
       studios: this.studios,
       windows: this.windows || { studio: [], blender: [] },
       setup: this.setupStatus(),
+      reviews: this.d.reviews.slice(-60).reverse().map(({ file, ...r }) => ({ ...r, hasImage: !!file })),
       discord: { set: !!this.d.secrets.discordWebhook, lastError: this.discordError || null },
       studioError: this.studioError,
       revenue: this.revenuePublic(),
@@ -133,11 +138,14 @@ class Backend extends EventEmitter {
   }
 
   saveSettings(patch) {
-    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook", "uiSounds", "uiHover", "uiPack", "blender"]) if (k in patch) this.d.settings[k] = patch[k];
+    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook", "uiSounds", "uiHover", "uiPack", "blender", "autoApprove", "usageStyle"]) if (k in patch) this.d.settings[k] = patch[k];
     const S = this.d.settings;
     if (!["vyron", "windows", "off"].includes(S.notifyStyle)) S.notifyStyle = "vyron";
     S.keepRunning = S.keepRunning !== false;
     S.sounds = S.sounds !== false;
+    if (!["circle", "bar", "off"].includes(S.usageStyle)) S.usageStyle = "circle";
+    const AA = S.autoApprove && typeof S.autoApprove === "object" ? S.autoApprove : {};
+    S.autoApprove = Object.fromEntries(REVIEW_KINDS.map((k) => [k, AA[k] === true]));
     S.uiSounds = S.uiSounds !== false;
     S.uiHover = S.uiHover === true; // off unless turned on
     if (!["soft", "crisp", "space", "retro", "bubble"].includes(S.uiPack)) S.uiPack = "soft";
@@ -448,6 +456,66 @@ class Backend extends EventEmitter {
     return this.claudeStartTask(this.ideaPrompt(ids, extra), "Build: " + names.slice(0, 3).join(" + ") + (names.length > 3 ? " +" + (names.length - 3) : ""));
   }
 
+  /* ================= reviews (send a picture, wait for OK) ================= */
+  /** An agent finished something: it waits here for the user's OK, unless auto mode is on for that kind. */
+  submitReview({ kind, title, details, image_path, role, task_id }) {
+    kind = REVIEW_KINDS.includes(kind) ? kind : "build";
+    const r = { id: uid("rev"), kind, title: clip(String(title || REVIEW_NAME[kind]), 100), details: clip(String(details || ""), 3000), role: role || null, taskId: task_id || null, at: now(), status: "pending", feedback: null, file: null };
+    if (image_path) {
+      const p = path.resolve(String(image_path));
+      if (!/\.(png|jpe?g|webp)$/i.test(p)) throw new Error("The picture must be a .png, .jpg or .webp file");
+      let st; try { st = fs.statSync(p); } catch { throw new Error("Picture not found: " + p); }
+      if (!st.isFile() || st.size > 15 * 1024 * 1024) throw new Error("The picture is missing or too big (max 15 MB)");
+      const dir = path.join(this.dataDir, "reviews"); fs.mkdirSync(dir, { recursive: true });
+      r.file = path.join(dir, r.id + path.extname(p).toLowerCase());
+      fs.copyFileSync(p, r.file);
+    }
+    const auto = this.d.settings.autoApprove?.[kind];
+    if (auto) { r.status = "approved"; r.auto = true; r.decidedAt = now(); }
+    this.d.reviews.push(r);
+    this.d.reviews = this.d.reviews.slice(-200);
+    this.save();
+    if (auto) this.log(`Auto mode approved ${REVIEW_NAME[kind]}: ${r.title}`, "ok", "Reviews");
+    else this.emit("alert", { kind: "approval", title: `Check this ${REVIEW_NAME[kind].toLowerCase()}: ${r.title}`, body: "Open Blender & Builds to approve it or ask for changes.", at: now() });
+    return { review_id: r.id, decision: r.status, auto: !!auto, next: auto ? "Auto mode is on: go ahead and put it in the game." : "Call vyron_review_wait with this review_id and wait for the user's answer. Don't put it in the game before it's approved." };
+  }
+  reviewDecide(id, approve, feedback) {
+    const r = this.d.reviews.find((x) => x.id === id);
+    if (!r) throw new Error("Review not found");
+    if (r.status !== "pending") throw new Error("This was already answered");
+    r.status = approve ? "approved" : "changes";
+    r.feedback = approve ? null : clip(String(feedback || "Please improve it."), 2000);
+    r.decidedAt = now();
+    this.save();
+    this.log(`${approve ? "Approved" : "Asked for changes to"} ${REVIEW_NAME[r.kind]}: ${r.title}`, "info", "Reviews");
+    return r.status;
+  }
+  /** Turn auto mode on/off for one kind, or for all with kind "all". Pending ones of that kind are approved right away. */
+  setAuto(kind, on) {
+    const kinds = kind === "all" ? REVIEW_KINDS : [kind];
+    if (!kinds.every((k) => REVIEW_KINDS.includes(k))) throw new Error("Unknown kind");
+    for (const k of kinds) this.d.settings.autoApprove[k] = !!on;
+    if (on) for (const r of this.d.reviews) if (r.status === "pending" && kinds.includes(r.kind)) { r.status = "approved"; r.auto = true; r.decidedAt = now(); }
+    this.save();
+  }
+  async reviewWait(id, seconds = 300) {
+    const end = now() + Math.min(900, Math.max(5, seconds)) * 1000;
+    for (;;) {
+      const r = this.d.reviews.find((x) => x.id === id);
+      if (!r) throw new Error("Review not found");
+      if (r.status !== "pending") return { review_id: id, decision: r.status, feedback: r.feedback || undefined, auto: !!r.auto, next: r.status === "approved" ? "Approved: put it in the game now." : "The user wants changes: fix it, then send a new picture with vyron_submit_review." };
+      if (now() > end) return { review_id: id, decision: "pending", next: "Still waiting for the user. Call vyron_review_wait again." };
+      await new Promise((res) => setTimeout(res, 1500));
+    }
+  }
+  reviewImage(id) {
+    const r = this.d.reviews.find((x) => x.id === id);
+    if (!r?.file || !fs.existsSync(r.file)) return null;
+    const ext = path.extname(r.file).slice(1).replace("jpg", "jpeg");
+    return `data:image/${ext};base64,${fs.readFileSync(r.file).toString("base64")}`;
+  }
+  clearReviews() { this.d.reviews = this.d.reviews.filter((r) => r.status === "pending"); this.save(); }
+
   /* ================= first-run setup ================= */
   /** Which apps are installed on this PC (official download links for the missing ones). */
   installedApps(env = process.env) {
@@ -547,7 +615,7 @@ class Backend extends EventEmitter {
     const id = this.claude.newTask("Model: " + clip(text, 48), { role: "builder" });
     this.claudeSend(`Make this 3D model in Blender: ${text}
 
-Work in the open Blender file: build it step by step with clean, named objects and simple materials, check it with a viewport screenshot, keep it low-poly and Roblox-friendly. Then export it as .fbx into the "models" folder of the project folder and tell me the file name and how to import it into Roblox Studio (3D Importer).`, id);
+Work in the open Blender file: build it step by step with clean, named objects and simple materials, check it with a viewport screenshot, keep it low-poly and Roblox-friendly. When it's done, render a picture (render_viewport_to_path to a .png in the project's reviews folder) and send it to me with vyron_submit_review (kind "model"), then vyron_review_wait. Only after it's approved, export it as .fbx into the "models" folder of the project folder and tell me the file name and how to import it into Roblox Studio (3D Importer). If I ask for changes, fix it and send a new picture.`, id);
     return id;
   }
 

@@ -235,6 +235,14 @@ class ControlServer {
       return { studio: { connected: s.studio.status === "connected", windows: s.studios.map((w) => w.name), problem: s.studioError || undefined }, blender: b };
     });
 
+    tool("vyron_submit_review", "When you finish a 3D model, a build, a UI or a set of gamepasses: send the user a picture and a short description and ask if it's OK BEFORE you put it in the game. If the user turned on auto mode for that kind it is approved at once. Make the picture first, e.g. Blender render_viewport_to_path or render_thumbnail_to_path to a .png in the project's reviews folder.", {
+      kind: z.enum(["model", "build", "ui", "gamepass"]), title: z.string(), details: z.string().optional().describe("What you made, in a few lines (for gamepasses: names and prices)"),
+      image_path: z.string().optional().describe("Full path to a .png/.jpg picture of it"), role: z.string().optional().describe("Your role, e.g. Builder & Modeler"),
+    }, async (a) => { await this.state(); return this.call("submitReview", a); });
+    tool("vyron_review_wait", "Wait for the user's answer to a review: approved (go ahead and put it in the game) or changes (fix it and submit again).", {
+      review_id: z.string(), timeout_seconds: z.number().int().min(5).max(900).optional(),
+    }, async ({ review_id, timeout_seconds }) => { await this.state(); return this.call("reviewWait", review_id, timeout_seconds); });
+
     tool("vyron_activity", "Recent activity log.", { limit: z.number().int().min(1).max(150).optional() }, async ({ limit = 40 }) => {
       const s = await this.state();
       return s.activity.slice(-limit).map((l) => `${new Date(l.at).toLocaleTimeString()} [${l.source}] ${l.text}`);

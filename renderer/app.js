@@ -74,10 +74,10 @@ ICON.ideas = '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5 
 ICON.stop = '<rect x="6" y="6" width="12" height="12" rx="2"/>';
 ICON.check = '<path d="m5 12 5 5 9-10"/>';
 
-const PAGES = [["dashboard", "Dashboard"], ["claude", "Claude"], ["ideas", "Game Ideas"], ["projects", "Projects & Studio"], ["revenue", "Revenue"], ["settings", "Settings"]];
+const PAGES = [["dashboard", "Dashboard"], ["claude", "Claude"], ["ideas", "Game Ideas"], ["projects", "Projects & Studio"], ["blender", "Blender & Builds"], ["revenue", "Revenue"], ["settings", "Settings"]];
 const SUB = {
   dashboard: "Your game studio at a glance", claude: "Talk to Claude — it controls VYRON and Roblox Studio for you", ideas: "Pick ideas and let Claude build them",
-  projects: "Your Roblox games and the Studio connection", revenue: "Robux, pending earnings and DevEx value in kroner", settings: "Claude access, appearance and account",
+  projects: "Your Roblox games and the Studio connection", blender: "See what the team made and approve it before it goes in the game", revenue: "Robux, pending earnings and DevEx value in kroner", settings: "Claude access, appearance and account",
 };
 
 /* ---------------- state ---------------- */
@@ -164,16 +164,34 @@ function draw() {
 }
 
 function drawNav() {
-  const counts = { ideas: S.ideas.picked.length, claude: S.claude.running + S.claude.queued };
-  $("#nav").innerHTML = PAGES.map(([k, label]) => `<div class="nav ${ui.route === k ? "on" : ""}" data-go="${k}">${ic(k === "projects" ? "roblox" : k)}${label}${counts[k] ? `<span class="count">${counts[k]}</span>` : ""}</div>`).join("");
+  const counts = { blender: (S.reviews || []).filter((r) => r.status === "pending").length, ideas: S.ideas.picked.length, claude: S.claude.running + S.claude.queued };
+  $("#nav").innerHTML = PAGES.map(([k, label]) => `<div class="nav ${ui.route === k ? "on" : ""}" data-go="${k}">${ic(k === "projects" ? "roblox" : k === "blender" ? "cube" : k)}${label}${counts[k] ? `<span class="count">${counts[k]}</span>` : ""}</div>`).join("");
   const p = activeProject();
   const C = S.claude;
   $("#sideFoot").innerHTML = `
     ${p ? `<div class="mini-proj" data-go="projects">${gameIcon(p, "sm")}<div class="grow"><div class="ell" style="font-weight:600;font-size:13px">${esc(p.game?.name || p.name)}</div><div class="faint" style="font-size:11.5px"><span class="dot ${p.studioConnected ? "connected" : "unknown"}" style="display:inline-block;width:6px;height:6px;margin-right:5px"></span>${p.studioConnected ? "Open in Studio" : "Studio not linked"}</div></div></div>`
       : `<div class="mini-proj" data-go="projects"><div class="gicon sm"><div class="fallback">+</div></div><div class="faint" style="font-size:12.5px">Add a project</div></div>`}
+    ${usageMeter()}
     <div class="conns">${connections().map(([dot, text, go, tip]) => `<div class="conn" data-go="${go}" title="${esc(tip)}"><span class="dot ${dot}"></span><span class="ell">${esc(text)}</span></div>`).join("")}</div>
     ${S.auth?.user ? `<div class="row acct" data-go="settings" title="${esc(S.auth.user.email)}"><div class="av" style="margin:0;width:24px;height:24px;font-size:10px">${esc(initials(S.auth.user.email))}</div><span class="ell grow" style="font-size:12px">${esc(S.auth.user.email)}</span></div>` : ""}`;
 }
+/** Claude plan usage left (5-hour window, plus the weekly limit), as a circle or a bar. */
+function usageMeter() {
+  const st = S.settings.usageStyle || "circle";
+  if (st === "off") return "";
+  const U = S.claude.usage, w = U?.fiveHour || U?.main, wk = U?.week;
+  const left = w ? 100 - w.used : null;
+  const col = left === null ? "var(--text-3)" : left <= 10 ? "var(--bad)" : left <= 30 ? "var(--warn)" : "var(--ok)";
+  const resets = w?.resetsAt ? new Date(w.resetsAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
+  const sub = left === null ? "Shows after Claude's next reply" : (resets ? "Resets " + resets : "5-hour window") + (wk ? ` · week ${100 - wk.used}% left` : "");
+  const tip = left === null ? "Claude tells VYRON how much usage is left while it works." : `${left}% of your 5-hour Claude usage is left${resets ? ", resets at " + resets : ""}${wk ? `. Weekly: ${100 - wk.used}% left` : ""}${U.status === "rejected" ? ". Limit reached." : ""}`;
+  if (st === "bar") return `<div class="usage bar-style" title="${esc(tip)}" data-go="settings"><div class="row"><span class="grow">Usage left</span><b style="color:${col}">${left === null ? "—" : left + "%"}</b></div>
+    <div class="ubar"><i style="width:${left ?? 0}%;background:${col}"></i></div><div class="faint ell" style="font-size:11px">${esc(sub)}</div></div>`;
+  const r = 17, c = 2 * Math.PI * r, off = c * (1 - (left ?? 0) / 100);
+  return `<div class="usage" title="${esc(tip)}" data-go="settings"><svg viewBox="0 0 44 44" class="uring"><circle cx="22" cy="22" r="${r}" class="track"/><circle cx="22" cy="22" r="${r}" class="val" style="stroke:${col};stroke-dasharray:${c.toFixed(1)};stroke-dashoffset:${off.toFixed(1)}"/><text x="22" y="26" text-anchor="middle">${left === null ? "—" : left}</text></svg>
+    <div style="min-width:0"><b style="font-size:12.5px">Usage left${left === null ? "" : ` <span style="color:${col}">${left}%</span>`}</b><div class="faint ell" style="font-size:11px">${esc(sub)}</div></div></div>`;
+}
+
 /** Sidebar status lines: [dot class, text, page, tooltip]. One line per open Studio / Blender window. */
 const base = (p) => String(p || "").split(/[\\/]/).pop();
 function connections() {
@@ -237,7 +255,7 @@ document.addEventListener("click", (e) => {
   // Only tabs and choices make a sound. Each tab is a slightly different note.
   if (el.matches(".nav[data-go]")) return uiSound("nav", [0, 2, 4, 5, 7, 9][PAGES.findIndex((p) => p[0] === el.dataset.go)] || 0);
   const act = el.dataset.act || "";
-  if (/^(setting|setTheme|randomTheme|toggleIdea|ideaTab|ideaCat|pickTask|revTf|teamRole)$/.test(act) || el.matches(".toggle,.radio-card")) return uiSound("pick");
+  if (/^(setting|setTheme|randomTheme|toggleIdea|ideaTab|ideaCat|pickTask|revTf|teamRole|revAuto|revApprove)$/.test(act) || el.matches(".toggle,.radio-card")) return uiSound("pick");
 }, true);
 document.addEventListener("change", (e) => { if (e.target.matches?.("select")) uiSound("pick"); }, true);
 
@@ -413,6 +431,40 @@ function teamColumn() {
         <span class="agent-st"><span class="dot"></span>${label}</span></div>`; }).join("")}</div>`;
 }
 
+/* ---------- Blender & Builds: reviews ---------- */
+const REV_KINDS = [["model", "3D models", "cube"], ["build", "Builds", "roblox"], ["ui", "UI", "layout"], ["gamepass", "Gamepasses", "coin"]];
+const REV_ROLE = { model: "builder", build: "builder", ui: "ui", gamepass: "money" };
+ui.revImg = ui.revImg || {};
+function revImage(r) {
+  if (!r.hasImage) return `<div class="rev-noimg">${ic(REV_KINDS.find((k) => k[0] === r.kind)?.[2] || "image")}<span>No picture</span></div>`;
+  const src = ui.revImg[r.id];
+  if (src === undefined) { ui.revImg[r.id] = null; B.call("reviewImage", r.id).then((d) => { ui.revImg[r.id] = d || ""; render(); }).catch(() => { ui.revImg[r.id] = ""; }); }
+  return src ? `<img src="${src}" alt="" data-act="revZoom" data-id="${r.id}">` : '<div class="rev-noimg"><span class="spinner"></span></div>';
+}
+function reviewCard(r) {
+  const k = REV_KINDS.find((x) => x[0] === r.kind) || REV_KINDS[1], role = REV_ROLE[r.kind];
+  return `<div class="panel rev-card r-${role}"><div class="rev-img">${revImage(r)}</div>
+    <div class="rev-body"><div class="row" style="gap:8px"><span class="role-tag">${esc(k[1])}</span><span class="faint" style="font-size:11.5px">${esc(r.role || S.roles[role]?.name || "")} · ${time(r.at)}</span></div>
+      <b class="rev-title">${esc(r.title)}</b>${r.details ? `<div class="muted rev-details">${esc(r.details)}</div>` : ""}
+      <div class="row" style="gap:6px;margin-top:10px"><input class="input grow" id="revFb-${r.id}" placeholder="What should change? (optional)" style="height:34px"><button class="btn sm" data-act="revChanges" data-id="${r.id}">Ask for changes</button><button class="btn sm primary" data-act="revApprove" data-id="${r.id}">${ic("check")}Looks good — upload it</button></div></div></div>`;
+}
+VIEWS.blender = () => {
+  const A = S.settings.autoApprove || {}, allOn = REV_KINDS.every(([k]) => A[k]);
+  const R = S.reviews || [], pending = R.filter((r) => r.status === "pending"), done = R.filter((r) => r.status !== "pending");
+  return `<div class="grid" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
+    ${blenderPanel()}
+    <div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("bolt")}</div><div class="grow"><div class="h3">Auto mode</div><div class="faint" style="font-size:12.5px">On: the team uploads it by itself. Off: it waits for your OK here.</div></div>
+      <button class="btn ${allOn ? "" : "primary"}" data-act="revAuto" data-id="all" data-on="${!allOn}">${allOn ? "All manual" : "All auto"}</button></div>
+      <div class="auto-grid">${REV_KINDS.map(([k, name, icon]) => `<div class="auto-item r-${REV_ROLE[k]}"><span class="agent-ic">${ic(icon)}</span><span class="grow"><b>${name}</b><span class="faint" style="display:block;font-size:11.5px">${A[k] ? "Uploads by itself" : "Asks you first"}</span></span><div class="toggle ${A[k] ? "on" : ""}" data-act="revAuto" data-id="${k}" data-on="${!A[k]}"></div></div>`).join("")}</div></div>
+  </div>
+  <div class="sp"></div>
+  <div class="row"><div class="h3 grow">Waiting for your OK ${pending.length ? `<span class="count-pill">${pending.length}</span>` : ""}</div></div><div class="sp" style="height:10px"></div>
+  ${pending.length ? `<div class="rev-grid">${pending.map(reviewCard).join("")}</div>` : `<div class="panel">${empty("Nothing to check right now", "When the Builder & Modeler, UI Maker or Money Maker finishes something, a picture shows up here and they wait for your OK before it goes in the game.")}</div>`}
+  ${done.length ? `<div class="sp"></div><div class="panel"><div class="panel-h"><h3>History</h3><div class="grow"></div><button class="btn sm ghost" data-act="revClear">Clear history</button></div>
+    ${done.slice(0, 30).map((r) => `<div class="list-row"><span class="rev-thumb">${r.hasImage && ui.revImg[r.id] ? `<img src="${ui.revImg[r.id]}" alt="">` : ic(REV_KINDS.find((k) => k[0] === r.kind)?.[2] || "image")}</span><div class="grow" style="min-width:0"><div class="ell" style="font-weight:500">${esc(r.title)}</div><div class="faint ell" style="font-size:12px">${esc(REV_KINDS.find((k) => k[0] === r.kind)?.[1] || "")} · ${ago(r.decidedAt || r.at)}${r.feedback ? " · “" + esc(r.feedback) + "”" : ""}</div></div>
+      <span class="chip ${r.status === "approved" ? "ok" : "warn"}">${r.status === "approved" ? (r.auto ? "Auto-uploaded" : "Approved") : "Changes asked"}</span></div>`).join("")}</div>` : ""}`;
+};
+
 /* ---------- Studio team (Co-Founder) ---------- */
 const ROLE_ICON = { cofounder: "crown", builder: "cube", coder: "code", ui: "layout", money: "coin" };
 const ROLE_ORDER = ["cofounder", "builder", "coder", "ui", "money"];
@@ -496,7 +548,6 @@ VIEWS.projects = () => {
           : `<div class="row"><div class="muted grow" style="font-size:13px">${S.studios.length ? `${S.studios.length} Studio window${S.studios.length > 1 ? "s" : ""} open` : esc(S.studioError || "No Studio window found.")}</div><button class="btn sm" data-act="detectStudios">${ic("refresh")}Detect</button></div>
              ${S.studios.map((w) => { const linked = S.projects.find((x) => x.studio?.id === w.id); return `<div class="mini-proj" style="cursor:default"><div class="gicon sm"><div class="fallback">${esc(initials(w.name))}</div></div><div class="grow" style="min-width:0"><div class="ell" style="font-weight:600;font-size:13px">${esc(w.name)}</div><div class="faint" style="font-size:11.5px">${esc(w.mode || "")}${w.placeId ? " · Place " + esc(w.placeId) : " · not published"}</div></div>${linked ? `<span class="chip ok">${esc(linked.game?.name || linked.name)}</span>` : `${p ? `<button class="btn sm" data-act="linkStudio" data-id="${esc(w.id)}">Link</button>` : ""}<button class="btn sm" data-act="projectFromStudio" data-id="${esc(w.id)}">New project</button>`}</div>`; }).join("")}`}
         </div></div>
-      ${blenderPanel()}
       <div class="panel pad"><div class="h3" style="margin-bottom:8px">How it works</div>
         <div class="muted" style="font-size:12.5px;line-height:1.7">Open your place in <b>Roblox Studio</b> and turn on its AI / MCP connection (Assistant settings). Claude then builds right in that window: scripts, parts, UI and play tests. If a project has a folder (e.g. Rojo), Claude can also edit the files there.</div></div>
     </div></div>`;
@@ -643,6 +694,7 @@ VIEWS.settings = () => {
       ${[["safe", "Studio, VYRON and project files (recommended)", "Claude builds in Roblox Studio, uses VYRON, and reads/edits files in the project folder. No shell commands."], ["full", "Full access", "Claude may also run commands on this PC without asking. Only turn this on if you trust what you ask for."]].map(([k, t, d]) => `<div class="radio-card ${(s.claudeAccess || "safe") === k ? "on" : ""}" data-act="setting" data-key="claudeAccess" data-val="${k}"><span class="dot ${(s.claudeAccess || "safe") === k ? "connected" : "unknown"}"></span><div><b style="font-weight:600">${t}</b><div class="faint" style="font-size:12.5px">${d}</div></div></div>`).join("")}
       <label class="field"><span>Model</span><select class="select" data-change="setting" data-key="claudeModel">${[["", "Default (your plan's default)"], ["opus", "Opus — strongest"], ["sonnet", "Sonnet — balanced"], ["haiku", "Haiku — fastest"]].map(([k, l]) => `<option value="${k}" ${(s.claudeModel || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       <div class="row"><span class="grow">Blender for Claude <span class="faint" style="font-size:12px">(${S.blender?.found ? "found" : "Blender extension not found"})</span></span><div class="toggle ${s.blender !== false ? "on" : ""}" data-act="setting" data-key="blender" data-val="${s.blender === false}"></div></div>
+      <div class="row"><span class="grow">Usage meter <span class="faint" style="font-size:12px">(Claude usage left, in the sidebar)</span></span><div class="seg">${[["circle", "Circle"], ["bar", "Bar"], ["off", "Off"]].map(([k, l]) => `<button class="${(s.usageStyle || "circle") === k ? "on" : ""}" data-act="setting" data-key="usageStyle" data-val="${k}">${l}</button>`).join("")}</div></div>
       <label class="field"><span>Tasks at the same time</span><select class="select" data-change="setting" data-key="claudeParallel">${[1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20].map((n) => `<option value="${n}" ${(s.claudeParallel || 3) === n ? "selected" : ""}>${n}${n === 1 ? " (one at a time)" : n >= 10 ? " — uses a lot of usage" : ""}</option>`).join("")}</select><small>Each running task is a separate Claude. More at once is faster, but your Claude usage limit runs out faster, and tasks changing the same part of a game can get in each other's way.</small></label>
     </div>
     <div class="stack" style="gap:16px">
@@ -882,6 +934,11 @@ const ACT = {
   openSetup: () => { ui.forceSetup = true; ui.obPrompt = false; render(); },
   async discordTest() { await call("testDiscord"); toast("Test message sent to Discord"); },
   async discordClear() { if (confirm("Disconnect Discord?")) await call("clearDiscord"); },
+  async revApprove(el) { await call("reviewDecide", el.dataset.id, true); toast("Approved — they'll put it in the game"); },
+  async revChanges(el) { const f = val("revFb-" + el.dataset.id); if (!f.trim()) return toast("Write what should change", "error"); await call("reviewDecide", el.dataset.id, false, f); toast("Sent back with your notes"); },
+  async revAuto(el) { const on = el.dataset.on === "true"; await call("setAuto", el.dataset.id, on); if (el.dataset.id === "all") toast(on ? "All auto: the team uploads everything by itself" : "All manual: they'll ask you first"); },
+  async revClear() { await call("clearReviews"); },
+  revZoom: (el) => { const src = ui.revImg[el.dataset.id]; if (src) modal("Preview", `<img src="${src}" alt="" style="width:100%;border-radius:12px;display:block">`, '<button class="btn primary" data-act="closeModal">Close</button>', true); },
   async refreshRates() { await call("refreshRates"); toast("Rates updated from Roblox and the ECB"); },
   async setting(el) { let v = el.dataset.val; if (v === "true") v = true; else if (v === "false") v = false; await call("saveSettings", { [el.dataset.key]: v }); },
   copyLog: () => { navigator.clipboard.writeText(S.activity.map((l) => `${new Date(l.at).toISOString()} [${l.level}] ${l.source}: ${l.text}`).join("\n")); toast("Log copied"); },

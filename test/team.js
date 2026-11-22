@@ -178,6 +178,67 @@ function fakeSpawn(exe, args, opts) {
     await dispatch(ctx, "saveSettings", [{ blender: true }]);
   });
 
+  console.log("Blender & Builds: reviews");
+  const png = path.join(TMP, "dragon.png");
+  fs.writeFileSync(png, Buffer.from("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4c10000000049454e44ae426082", "hex"));
+  await test("the Builder sends a picture and waits; nothing goes in the game until you approve", async () => {
+    const r = await tool("vyron_submit_review", { kind: "model", title: "Baby dragon", details: "Low-poly, 3 colours", image_path: png, role: "Builder & Modeler" });
+    assert.equal(r.decision, "pending");
+    const waiting = tool("vyron_review_wait", { review_id: r.review_id, timeout_seconds: 30 });
+    await wait(100);
+    const pub = be.publicState().reviews.find((x) => x.id === r.review_id);
+    assert(pub.status === "pending" && pub.hasImage && !("file" in pub));
+    assert(/^data:image\/png;base64,/.test(await dispatch(ctx, "reviewImage", [r.review_id])));
+    await dispatch(ctx, "reviewDecide", [r.review_id, true]);
+    const ans = await waiting;
+    assert.equal(ans.decision, "approved"); assert(/put it in the game/.test(ans.next));
+  });
+  await test("ask for changes → the agent gets your notes", async () => {
+    const r = await tool("vyron_submit_review", { kind: "ui", title: "Shop UI", details: "6 slots" });
+    await dispatch(ctx, "reviewDecide", [r.review_id, false, "make the buttons bigger"]);
+    const ans = await tool("vyron_review_wait", { review_id: r.review_id });
+    assert.equal(ans.decision, "changes"); assert.equal(ans.feedback, "make the buttons bigger");
+    await assert.rejects(dispatch(ctx, "reviewDecide", [r.review_id, true]), /already answered/);
+  });
+  await test("only real pictures are accepted", async () => {
+    await assert.rejects(tool("vyron_submit_review", { kind: "build", title: "x", image_path: path.join(TMP, "game") }), /\.png, \.jpg/);
+    await assert.rejects(tool("vyron_submit_review", { kind: "build", title: "x", image_path: path.join(TMP, "nope.png") }), /not found/);
+  });
+  await test("auto mode uploads by itself; All auto also approves what's waiting", async () => {
+    await dispatch(ctx, "setAuto", ["gamepass", true]);
+    const g = await tool("vyron_submit_review", { kind: "gamepass", title: "2x Coins 149 R$" });
+    assert(g.decision === "approved" && g.auto);
+    const b = await tool("vyron_submit_review", { kind: "build", title: "Lava map" });
+    assert.equal(b.decision, "pending");
+    await dispatch(ctx, "setAuto", ["all", true]);
+    assert.equal((await tool("vyron_review_wait", { review_id: b.review_id })).decision, "approved");
+    assert.deepEqual(be.d.settings.autoApprove, { model: true, build: true, ui: true, gamepass: true });
+    await dispatch(ctx, "setAuto", ["all", false]);
+    assert(Object.values(be.d.settings.autoApprove).every((v) => v === false));
+  });
+  await test("roles are told to send a picture and wait before uploading", () => {
+    for (const r of ["builder", "ui", "money"]) assert(/vyron_submit_review/.test(R.ROLES[r].prompt) && /Only put it into the game after it is approved/.test(R.ROLES[r].prompt), r);
+  });
+
+  console.log("Usage left");
+  await test("Claude Code's usage event becomes 'usage left' (5-hour + weekly) and is remembered", async () => {
+    const t = be.claude.tasks[0];
+    be.claude.onLine(t, JSON.stringify({ type: "rate_limit_event", rate_limit_info: { status: "allowed", rateLimitType: "five_hour", utilization: 0.42, resetsAt: 1795400000,
+      unifiedWindows: { five_hour: { utilization: 0.42, resetsAt: 1795400000 }, seven_day: { utilization: 0.1, resetsAt: 1795900000 } } } }), () => {});
+    const u = be.publicState().claude.usage;
+    assert.equal(u.fiveHour.used, 42); assert.equal(u.week.used, 10);
+    assert.equal(u.fiveHour.resetsAt, 1795400000 * 1000, "seconds become milliseconds");
+    be.claude.setUsage({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 85 });
+    assert.equal(be.claude.usage.week.used, 85, "0–100 values work too");
+    const { ClaudeRunner } = require("../src/claude");
+    const again = new ClaudeRunner({ dataDir: TMP, exe: null, control: () => null, settings: () => ({}) });
+    assert.equal(again.usage.week.used, 85, "kept after restart");
+  });
+  await test("usage meter style: circle, bar or off", async () => {
+    await dispatch(ctx, "saveSettings", [{ usageStyle: "bar" }]); assert.equal(be.d.settings.usageStyle, "bar");
+    await dispatch(ctx, "saveSettings", [{ usageStyle: "pie" }]); assert.equal(be.d.settings.usageStyle, "circle");
+  });
+
   console.log("First-run setup");
   await test("the checklist has the 7 connections and isn't done on a new PC", () => {
     const s = be.publicState().setup;

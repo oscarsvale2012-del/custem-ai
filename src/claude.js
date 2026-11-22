@@ -96,6 +96,7 @@ class ClaudeRunner extends EventEmitter {
     } catch { /* first start */ }
     for (const t of this.tasks) { t.busy = false; t.queued = null; }
     if (!this.tasks.length) this.tasks.push(this.blank("Main chat"));
+    try { this.usage = JSON.parse(fs.readFileSync(path.join(opts.dataDir, "claude-usage.json"), "utf8")); } catch { this.usage = null; }
   }
 
   blank(title, extra = {}) { return { id: uid(), title: clip(String(title || "New task"), 60), sessionId: null, model: null, messages: [], at: now(), busy: false, queued: null, ...extra }; }
@@ -112,11 +113,28 @@ class ClaudeRunner extends EventEmitter {
   }
   changed() { this.emit("change"); }
   push(t, m) { t.messages.push({ at: now(), ...m }); if (t.messages.length > 400) t.messages.splice(0, t.messages.length - 400); t.at = now(); this.changed(); }
+  /** Plan usage from Claude Code: utilization is used (0–1, or 0–100), shown as % left. */
+  setUsage(info) {
+    const pct = (u) => (typeof u === "number" && isFinite(u) ? Math.max(0, Math.min(100, u <= 1 ? u * 100 : u)) : null);
+    const win = (w) => (w && pct(w.utilization) !== null ? { used: Math.round(pct(w.utilization)), resetsAt: w.resetsAt ? (w.resetsAt < 1e12 ? w.resetsAt * 1000 : w.resetsAt) : null } : null);
+    const W = info.unifiedWindows || {};
+    const main = win({ utilization: info.utilization, resetsAt: info.resetsAt });
+    this.usage = {
+      at: now(), status: info.status || null, type: info.rateLimitType || null,
+      fiveHour: win(W.five_hour) || (info.rateLimitType === "five_hour" ? main : null),
+      week: win(W.seven_day) || (info.rateLimitType === "seven_day" ? main : null),
+      main,
+    };
+    this.saveUsage();
+    this.changed();
+  }
+  saveUsage() { try { fs.writeFileSync(path.join(this.o.dataDir, "claude-usage.json"), JSON.stringify(this.usage)); } catch { /* ignore */ } }
+
   setModel(t, id) { if (id) { t.modelAt = now(); if (id !== t.model) { t.model = id; this.changed(); } } }
 
   public() {
     return {
-      model: this.model, modelName: modelName(this.model), found: !!this.exe, exe: this.exe, auth: this.auth, busy: this.busy,
+      usage: this.usage, model: this.model, modelName: modelName(this.model), found: !!this.exe, exe: this.exe, auth: this.auth, busy: this.busy,
       running: this.running(), queued: this.tasks.filter((t) => t.queued).length, limit: this.limit(),
       tasks: this.tasks.map((t) => ({
         id: t.id, title: t.title, role: t.role || null, teamId: t.teamId || null, inbox: (t.inbox || []).length, busy: t.busy, queued: !!t.queued, at: t.at, model: t.model, modelName: modelName(t.model),
@@ -273,6 +291,7 @@ class ClaudeRunner extends EventEmitter {
   onLine(t, line, gotResult) {
     let j;
     try { j = JSON.parse(line); } catch { return; }
+    if (j.type === "rate_limit_event" && j.rate_limit_info) { this.setUsage(j.rate_limit_info); return; }
     if (j.type === "system") { if (j.session_id) t.sessionId = j.session_id; if (j.model) this.setModel(t, j.model); return; }
     if (j.type === "assistant") {
       if (j.message?.model && j.message.model !== "<synthetic>") this.setModel(t, j.message.model);
