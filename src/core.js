@@ -37,7 +37,7 @@ class Backend extends EventEmitter {
     this.claude = new ClaudeRunner({
       dataDir, log: (t, l) => this.log(t, l, "Claude"),
       control: () => (this.controlInfo ? this.controlInfo(true) : null),
-      settings: () => ({ access: this.d.settings.claudeAccess || "safe", model: this.d.settings.claudeModel || "" }),
+      settings: () => ({ access: this.d.settings.claudeAccess || "safe", model: this.d.settings.claudeModel || "", parallel: this.d.settings.claudeParallel || 3 }),
       ...(claude || {}),
     });
     this.claude.on("change", () => this.changed());
@@ -98,8 +98,10 @@ class Backend extends EventEmitter {
   }
 
   saveSettings(patch) {
-    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel"]) if (k in patch) this.d.settings[k] = patch[k];
+    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel"]) if (k in patch) this.d.settings[k] = patch[k];
     if (!["safe", "full"].includes(this.d.settings.claudeAccess)) this.d.settings.claudeAccess = "safe";
+    this.d.settings.claudeParallel = Math.min(20, Math.max(1, Math.round(Number(this.d.settings.claudeParallel) || 3)));
+    this.claude.pump();
     this.d.settings.claudeModel = String(this.d.settings.claudeModel || "").replace(/[^\w.:\-[\]]/g, "").slice(0, 60);
     this.save();
   }
@@ -113,13 +115,18 @@ class Backend extends EventEmitter {
     fs.mkdirSync(d, { recursive: true });
     return d;
   }
-  claudeSend(text) {
+  /** Send to a task (default: the newest). Returns the task id. */
+  claudeSend(text, taskId) {
     const p = this.activeProject();
     const ctx = p ? `[Active VYRON project: ${p.game?.name || p.name}${p.placeId ? `, place ${p.placeId}` : ""}${this.studioFor(p) ? ", open in Studio" : ""}]\n` : "";
-    this.claude.send(ctx + text, this.workDir());
+    return this.claude.send(ctx + text, this.workDir(), taskId || null);
   }
-  claudeStop() { this.claude.stop(); }
-  claudeNewChat() { this.claude.newChat(); }
+  claudeStop(taskId) { this.claude.stop(taskId || null); }
+  claudeNewChat(taskId) { this.claude.newChat(taskId || null); }
+  claudeNewTask(title) { return this.claude.newTask(title); }
+  claudeRemoveTask(taskId) { this.claude.removeTask(taskId); }
+  /** Start a new parallel task with a message. */
+  claudeStartTask(text, title) { return this.claudeSend(text, this.claude.newTask(title || "New task")); }
   claudeLogin() { this.claude.login(); }
   claudeCheck() { return this.claude.checkAuth(); }
 
@@ -154,7 +161,11 @@ class Backend extends EventEmitter {
       (extra ? `\n\nExtra wishes: ${String(extra).slice(0, 2000)}` : "") +
       "\n\nBuild it in my open Roblox Studio place: map, scripts, UI and monetization (game passes / developer products). Start with a short plan, then build it step by step and test it.";
   }
-  buildIdeas(ids, extra) { this.claudeSend(this.ideaPrompt(ids, extra)); }
+  /** Each Build starts its own task, so several builds can run at once. */
+  buildIdeas(ids, extra) {
+    const names = (ids || []).map((id) => this.idea(id)?.title).filter(Boolean);
+    return this.claudeStartTask(this.ideaPrompt(ids, extra), "Build: " + names.slice(0, 3).join(" + ") + (names.length > 3 ? " +" + (names.length - 3) : ""));
+  }
 
   /* ================= Roblox Studio ================= */
   async connectStudio() {

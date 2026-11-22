@@ -355,3 +355,6 @@ body.locked #shell{display:none}
 @media (max-width:1250px){.pickbar .ell{display:none}}
 .chip.model{color:var(--accent);border-color:rgba(169,193,255,.3)}
 .chip svg{width:13px;height:13px}
+.claude-grid{display:grid;grid-template-columns:280px minmax(0,1fr);gap:16px}
+.claude-grid .ws-agents{overflow:auto;min-height:0}
+.task-pick{align-items:flex-start}.task-pick .dot{margin-top:6px}

@@ -9,7 +9,9 @@ Claude inside VYRON; Claude controls VYRON and Roblox Studio for you.
 - **Claude** — chat with Claude. VYRON runs the Claude Code app installed on this
   PC in the background (`claude -p`, streamed), in the project's folder, with two
   tool servers: VYRON's own connector and Roblox Studio's MCP server. Claude
-  builds in your open Studio place. Chats continue (`--resume`) until *New chat*.
+  builds in your open Studio place. **Multitask**: run up to 20 Claude tasks at once
+  (Settings → Tasks at the same time); extra tasks wait in a queue. Each task keeps
+  its own chat (`--resume`).
 - **Game Ideas** — 700+ original ideas across 17 genres (brainrot, shooter, PvP,
   simulator, tycoon, obby, horror, tower defense, RPG, racing, roleplay, survival,
   party, puzzle, sports, anime-style, sandbox). Pick several and press

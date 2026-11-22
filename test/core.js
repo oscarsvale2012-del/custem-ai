@@ -30,17 +30,19 @@ const fakeFetch = async (url) => {
 
 // A fake claude.exe: records how it was started and answers in stream-json.
 const spawned = [];
-function fakeSpawn(script) {
+let live = 0, peak = 0;
+function fakeSpawn(script, ms = 10) {
   return (exe, args, opts) => {
+    live++; peak = Math.max(peak, live);
     const p = new EventEmitter();
     p.stdout = new EventEmitter(); p.stderr = new EventEmitter();
     let input = "";
     p.stdin = { end: (t) => { input = t; setTimeout(() => {
       spawned.push({ exe, args, opts, input });
       for (const l of script(input, args)) p.stdout.emit("data", Buffer.from(JSON.stringify(l) + "\n"));
-      p.emit("close", 0);
-    }, 10); } };
-    p.kill = () => p.emit("close", 1);
+      live--; p.emit("close", 0);
+    }, ms); } };
+    p.kill = () => { live--; p.emit("close", 1); };
     p.unref = () => {};
     return p;
   };
@@ -138,11 +140,11 @@ const reply = (input) => [
     assert(!run.args.includes("Bash"), "shell must not be allowed in safe mode");
   });
   await test("replies, tool steps and the session show in the chat", () => {
-    const m = be.publicState().claude.messages.map((x) => x.role + ":" + x.text);
+    const m = be.publicState().claude.tasks[0].messages.map((x) => x.role + ":" + x.text);
     assert(m.some((x) => /^tool:roblox_studio · execute_luau/.test(x)), m.join(" | "));
     assert(m.some((x) => /^assistant:Built it/.test(x)));
     assert(m.some((x) => /^result:Done in 2 s · 3 steps/.test(x)));
-    assert.equal(be.claude.sessionId, "sess-1");
+    assert.equal(be.claude.tasks[0].sessionId, "sess-1");
     assert.equal(be.publicState().claude.modelName, "Opus 5.5");
     assert(!JSON.stringify(be.publicState()).includes(control.cfg.token), "control key leaked to the UI");
   });
@@ -156,6 +158,8 @@ const reply = (input) => [
     await dispatch(ctx, "buildIdeas", [be.d.picked, ""]);
     for (let i = 0; i < 50 && be.claude.busy; i++) await wait(20);
     assert(spawned.at(-1).input.includes("Cat Cafe Wars"));
+    assert(!spawned.at(-1).args.includes("--resume"), "a build starts a fresh Claude task");
+    assert(/^Build: /.test(be.claude.tasks[0].title) && be.claude.tasks.length === 2);
   });
   await test("full access mode is a deliberate setting", async () => {
     await dispatch(ctx, "saveSettings", [{ claudeAccess: "full", claudeModel: "opus; rm -rf" }]);
@@ -169,17 +173,62 @@ const reply = (input) => [
     be.claude.o.spawnImpl = fakeSpawn(() => [{ type: "result", is_error: true, result: "Not logged in · Please run /login", duration_ms: 10 }]);
     await dispatch(ctx, "claudeSend", ["hello"]);
     for (let i = 0; i < 50 && be.claude.busy; i++) await wait(20);
-    assert(be.claude.messages.some((m) => m.role === "error" && /Sign in to Claude/.test(m.text)));
+    assert(be.claude.tasks[0].messages.some((m) => m.role === "error" && /Sign in to Claude/.test(m.text)));
     be.claude.o.spawnImpl = fakeSpawn(reply);
   });
   await test("model names read like the real ones", () => {
     const { modelName } = require("../src/claude");
     assert.deepEqual(["claude-opus-5-5", "claude-sonnet-4-5-20250929", "claude-haiku-5-5", "claude-fable-5-2", "claude-opus-5-5[1m]", "claude-3-7-sonnet-20250219"].map(modelName), ["Opus 5.5", "Sonnet 4.5", "Haiku 5.5", "Fable 5.2", "Opus 5.5", "Sonnet 3.7"]);
   });
+  await test("multitask: many tasks at once, the rest wait in a queue", async () => {
+    await dispatch(ctx, "saveSettings", [{ claudeParallel: 2 }]);
+    be.claude.o.spawnImpl = fakeSpawn(reply, 150);
+    live = 0; peak = 0;
+    const ids = [];
+    for (const job of ["make the map", "make the shop", "make the UI"]) ids.push(await dispatch(ctx, "claudeStartTask", [job]));
+    assert.equal(new Set(ids).size, 3);
+    let C = be.publicState().claude;
+    assert.equal(C.running, 2); assert.equal(C.queued, 1); assert.equal(C.limit, 2);
+    await assert.rejects(dispatch(ctx, "claudeSend", ["more", ids[0]]), /still working/);
+    for (let i = 0; i < 100 && be.claude.busy; i++) await wait(20);
+    C = be.publicState().claude;
+    assert.equal(peak, 2, "never more than the limit at once");
+    assert(ids.every((id) => C.tasks.find((t) => t.id === id).messages.some((m) => m.role === "assistant")), "every task finished");
+    assert.equal(C.tasks.find((t) => t.id === ids[2]).title, "make the UI");
+    // other running tasks are mentioned to each Claude so they don't undo each other's work
+    assert(spawned.slice(-3).some((r) => /Other Claude tasks are working/.test(r.args[r.args.indexOf("--append-system-prompt") + 1])));
+    await dispatch(ctx, "saveSettings", [{ claudeParallel: 99 }]);
+    assert.equal(be.d.settings.claudeParallel, 20);
+    be.claude.o.spawnImpl = fakeSpawn(reply);
+  });
+  await test("stop a queued task, delete a task", async () => {
+    await dispatch(ctx, "saveSettings", [{ claudeParallel: 1 }]);
+    be.claude.o.spawnImpl = fakeSpawn(reply, 120);
+    const a = await dispatch(ctx, "claudeStartTask", ["one"]);
+    const b = await dispatch(ctx, "claudeStartTask", ["two"]);
+    assert(be.claude.task(b).queued);
+    await dispatch(ctx, "claudeStop", [b]);
+    assert(!be.claude.task(b).queued);
+    for (let i = 0; i < 100 && be.claude.busy; i++) await wait(20);
+    await dispatch(ctx, "claudeRemoveTask", [b]);
+    assert(!be.claude.tasks.some((t) => t.id === b) && be.claude.tasks.some((t) => t.id === a));
+    await dispatch(ctx, "saveSettings", [{ claudeParallel: 3 }]);
+    be.claude.o.spawnImpl = fakeSpawn(reply);
+  });
+  await test("old single chat (v1.0) becomes the first task", () => {
+    const dir = path.join(TMP, "old");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "claude-chat.json"), JSON.stringify({ sessionId: "s-old", model: "claude-opus-5-5", messages: [{ role: "user", text: "hi", at: 1 }] }));
+    const { ClaudeRunner } = require("../src/claude");
+    const r = new ClaudeRunner({ dataDir: dir, exe: null, control: () => null, settings: () => ({}) });
+    assert.equal(r.tasks.length, 1);
+    assert.equal(r.tasks[0].sessionId, "s-old");
+    assert.equal(r.public().tasks[0].modelName, "Opus 5.5");
+  });
   await test("new chat forgets the session", async () => {
     await dispatch(ctx, "claudeNewChat", []);
-    assert.equal(be.claude.sessionId, null);
-    assert.equal(be.publicState().claude.messages.length, 0);
+    assert.equal(be.claude.tasks[0].sessionId, null);
+    assert.equal(be.publicState().claude.tasks[0].messages.length, 0);
   });
 
   console.log("Claude connector (MCP)");

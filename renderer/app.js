@@ -147,7 +147,7 @@ function draw() {
   $("#title").textContent = PAGES.find((p) => p[0] === ui.route)?.[1] || "";
   $("#subtitle").textContent = SUB[ui.route] || "";
   const C = S.claude;
-  $("#topActions").innerHTML = C.busy ? `<button class="btn sm" data-go="claude"><span class="spinner"></span>Claude is working…</button>` : "";
+  $("#topActions").innerHTML = C.busy ? `<button class="btn sm" data-go="claude"><span class="spinner"></span>${C.running} Claude task${C.running === 1 ? "" : "s"} working${C.queued ? ` · ${C.queued} waiting` : ""}</button>` : "";
   const t = performance.now();
   $$(".spinner").forEach((e) => (e.style.animationDelay = -(t % 800) + "ms"));
   $$(".dot.working,.dot.connecting").forEach((e) => (e.style.animationDelay = -(t % 1800) + "ms"));
@@ -155,7 +155,7 @@ function draw() {
 }
 
 function drawNav() {
-  const counts = { ideas: S.ideas.picked.length, claude: S.claude.busy ? "•" : 0 };
+  const counts = { ideas: S.ideas.picked.length, claude: S.claude.running + S.claude.queued };
   $("#nav").innerHTML = PAGES.map(([k, label]) => `<div class="nav ${ui.route === k ? "on" : ""}" data-go="${k}">${ic(k === "projects" ? "roblox" : k)}${label}${counts[k] ? `<span class="count">${counts[k]}</span>` : ""}</div>`).join("");
   const p = activeProject();
   const C = S.claude;
@@ -170,7 +170,7 @@ const claudeDot = () => (!S.claude.found ? "error" : S.claude.busy ? "working" :
 const modelNow = () => S.claude.modelName || null;
 const modelPending = () => { const want = S.settings.claudeModel; const now = (S.claude.modelName || "").toLowerCase(); return want && now && !now.startsWith(want.toLowerCase()) ? want[0].toUpperCase() + want.slice(1) : null; };
 const modelChip = () => modelNow() ? `<span class="chip model" title="${esc(S.claude.model)}">${ic("sparkle")}${esc(modelNow())}${modelPending() ? ` → ${esc(modelPending())} next` : ""}</span>` : `<span class="chip" title="Shown after Claude answers once">${ic("sparkle")}${S.settings.claudeModel ? esc(S.settings.claudeModel[0].toUpperCase() + S.settings.claudeModel.slice(1)) : "Model: after first reply"}</span>`;
-const claudeLine = () => (!S.claude.found ? "Claude Code not installed" : S.claude.busy ? "Claude is working" : S.claude.auth?.loggedIn ? "Claude ready" : S.claude.auth ? "Sign in to Claude" : "Checking Claude…");
+const claudeLine = () => (!S.claude.found ? "Claude Code not installed" : S.claude.busy ? `${S.claude.running} task${S.claude.running === 1 ? "" : "s"} working` : S.claude.auth?.loggedIn ? "Claude ready" : S.claude.auth ? "Sign in to Claude" : "Checking Claude…");
 
 /* ---------------- shared pieces ---------------- */
 function gameIcon(p, size = "") {
@@ -214,19 +214,20 @@ function claudeSetupCard() {
 VIEWS.dashboard = () => {
   const p = activeProject();
   const C = S.claude, sm = S.revenue.summary;
-  const last = C.messages.filter((m) => m.role !== "result").slice(-6);
+  const lt = [...C.tasks].sort((a, b) => b.at - a.at)[0];
+  const last = (lt?.messages || []).filter((m) => m.role !== "result").slice(-6);
   return `${claudeSetupCard()}${claudeSetupCard() ? '<div class="sp"></div>' : ""}
   <div class="grid" style="grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)">
     ${projectCard(p)}
     <div class="panel pad stack">
       <div class="row"><div class="h3 grow">Tell Claude what to build</div><span class="faint" style="font-size:12px">${p ? esc(p.game?.name || p.name) : "No project"}</span></div>
       <textarea class="input" id="quickAsk" placeholder="e.g. “Add a pet egg shop with 3 rarities and a hatch animation” — Enter to send" style="min-height:110px"></textarea>
-      <div class="row"><button class="btn sm ghost" data-go="ideas">${ic("ideas")}Browse ${S.ideas.count}+ game ideas</button><div class="grow"></div><button class="btn primary" data-act="quickAsk" ${C.busy ? "disabled" : ""}>${ic("send")}Send to Claude</button></div>
+      <div class="row"><button class="btn sm ghost" data-go="ideas">${ic("ideas")}Browse ${S.ideas.count}+ game ideas</button><div class="grow"></div><button class="btn primary" data-act="quickAsk">${ic("send")}Send to Claude</button></div>
     </div>
   </div>
   <div class="sp"></div>
   <div class="grid g4">
-    <div class="panel stat click" data-go="claude"><div class="label">Claude</div><div class="n" style="font-size:20px"><span class="dot ${claudeDot()}" style="display:inline-block;margin-right:8px"></span>${claudeLine()}</div><div class="d">${modelNow() ? "Model: <b>" + esc(modelNow()) + "</b> · " : ""}${C.messages.filter((m) => m.role === "user").length} messages in this chat</div></div>
+    <div class="panel stat click" data-go="claude"><div class="label">Claude</div><div class="n" style="font-size:20px"><span class="dot ${claudeDot()}" style="display:inline-block;margin-right:8px"></span>${claudeLine()}</div><div class="d">${modelNow() ? "Model: <b>" + esc(modelNow()) + "</b> · " : ""}${C.tasks.length} task${C.tasks.length === 1 ? "" : "s"} · up to ${C.limit} at once</div></div>
     <div class="panel stat click" data-go="projects"><div class="label">Roblox Studio</div><div class="n" style="font-size:20px">${S.studio.status === "connected" ? S.studios.length + " open" : "Not connected"}</div><div class="d">${esc(S.studios.map((s) => s.name).join(", ") || S.studioError || "")}</div></div>
     <div class="panel stat click" data-go="ideas"><div class="label">Picked ideas</div><div class="n">${S.ideas.picked.length}</div><div class="d">${S.ideas.count} ideas in the library · ${S.ideas.custom.length} of your own</div></div>
     <div class="panel stat click" data-go="revenue"><div class="label">Robux (DevEx value)</div><div class="n">${sm ? rbx(sm.balance) : "—"}</div><div class="d">${sm ? `≈ ${kr(sm.balance)} · pending ${kr(sm.pending)}` : "Link Roblox on the Revenue tab"}</div></div>
@@ -260,25 +261,44 @@ function msgView(m, compact) {
   return `<div class="msg error"><div class="who">Problem</div>${esc(m.text)}</div>`;
 }
 
+/** The task being looked at in the Claude tab. */
+function curTask() {
+  const T = S.claude.tasks;
+  let t = T.find((x) => x.id === ui.taskId);
+  if (!t) { t = T[0]; ui.taskId = t?.id; }
+  return t;
+}
+const taskState = (t) => (t.busy ? ["working", "Working"] : t.queued ? ["connecting", "Waiting"] : ["idle", t.count ? "Done" : "New"]);
+
 VIEWS.claude = () => {
   const C = S.claude;
   const p = activeProject();
+  const t = curTask();
+  const active = t.busy || t.queued;
+  const list = C.tasks.map((x) => { const [dot, label] = taskState(x); return `<div class="pick task-pick ${x.id === t.id ? "on" : ""}" data-act="pickTask" data-id="${x.id}">
+      <span class="dot ${dot}" title="${label}"></span><div class="grow" style="min-width:0"><div class="ell" style="font-weight:500">${esc(x.title)}</div>
+      <div class="faint ell" style="font-size:11.5px">${label}${x.modelName ? " · " + esc(x.modelName) : ""}${x.last ? " · " + esc(x.last) : ""}</div></div></div>`; }).join("");
   return `<div class="chat-wrap" style="height:calc(100vh - 102px)">
     ${claudeSetupCard()}
-    <div class="panel chat" style="flex:1;min-height:0">
-      <div class="panel-h"><div class="ava" style="width:32px;height:32px;border-radius:10px">${ic("claude")}</div><div><h3>Claude</h3><div class="faint" style="font-size:12px">${S.settings.claudeAccess === "full" ? "Full access" : "Studio + VYRON + project files"}· works in ${esc(p ? p.game?.name || p.name : "VYRON's Games folder")}</div></div><div class="grow"></div>
-        ${modelChip()}<span class="chip ${S.studio.status === "connected" && S.studios.length ? "ok" : ""}"><span class="dot ${S.studio.status === "connected" && S.studios.length ? "connected" : "unknown"}"></span>Studio</span>
-        ${C.busy ? `<button class="btn sm danger" data-act="claudeStop">${ic("stop")}Stop</button>` : `<button class="btn sm ghost" data-act="claudeNewChat">${ic("plus")}New chat</button>`}</div>
-      <div class="thread" id="thread">
-        ${C.messages.length ? C.messages.map((m) => msgView(m)).join("") : `<div class="empty" style="margin:auto;max-width:520px"><b>You control Claude from here</b>Ask for anything in your game — Claude builds it in Roblox Studio, and can use VYRON too (your projects, picked ideas, revenue). Try: “Make an obby with 20 stages and checkpoints”.</div>`}
-        ${C.busy ? `<div class="msg assistant"><div class="who">Claude</div><span class="typing"><i></i><i></i><i></i></span></div>` : ""}
-      </div>
-      <div class="composer">
-        <textarea id="claudeInput" placeholder="Message Claude…  (Enter to send, Shift+Enter for a new line)"></textarea>
-        <div class="row"><button class="btn sm ghost" data-go="ideas">${ic("ideas")}Ideas</button><span class="faint" style="font-size:12px">${S.ideas.picked.length ? S.ideas.picked.length + " idea(s) picked" : ""}</span><div class="grow"></div>
-          <button class="btn sm primary" data-act="claudeSend" ${C.busy ? "disabled" : ""}>${ic("send")}Send</button></div>
-      </div>
-    </div></div>`;
+    <div class="claude-grid" style="flex:1;min-height:0">
+      <div class="panel ws-agents"><div class="panel-h"><h3>Tasks</h3><span class="faint" style="font-size:12px">${C.running}/${C.limit} running${C.queued ? ` · ${C.queued} waiting` : ""}</span><div class="grow"></div><button class="btn sm" data-act="newTask" title="Start another Claude that works at the same time">${ic("plus")}New</button></div>
+        <div style="padding:8px">${list}</div>
+        <div class="faint" style="font-size:11.5px;padding:4px 14px 14px">Every task is its own Claude working at the same time (up to ${C.limit}, change it in Settings). More tasks use your Claude usage faster.</div></div>
+      <div class="panel chat">
+        <div class="panel-h"><div class="ava" style="width:32px;height:32px;border-radius:10px">${ic("claude")}</div><div style="min-width:0"><h3 class="ell">${esc(t.title)}</h3><div class="faint" style="font-size:12px">${S.settings.claudeAccess === "full" ? "Full access" : "Studio + VYRON + project files"} · works in ${esc(p ? p.game?.name || p.name : "VYRON's Games folder")}</div></div><div class="grow"></div>
+          ${t.modelName ? `<span class="chip model">${ic("sparkle")}${esc(t.modelName)}</span>` : modelChip()}<span class="chip ${S.studio.status === "connected" && S.studios.length ? "ok" : ""}"><span class="dot ${S.studio.status === "connected" && S.studios.length ? "connected" : "unknown"}"></span>Studio</span>
+          ${active ? `<button class="btn sm danger" data-act="claudeStop" data-id="${t.id}">${ic("stop")}${t.queued ? "Cancel" : "Stop"}</button>` : `<button class="btn sm ghost" data-act="claudeNewChat" data-id="${t.id}" title="Clear this task's chat">Clear</button><button class="btn sm ghost danger icon" data-act="removeTask" data-id="${t.id}" title="Delete task">${ic("trash")}</button>`}</div>
+        <div class="thread" id="thread">
+          ${t.messages.length ? t.messages.map((m) => msgView(m)).join("") : `<div class="empty" style="margin:auto;max-width:520px"><b>You control Claude from here</b>Ask for anything in your game — Claude builds it in Roblox Studio, and can use VYRON too. Want several things at once? Press New for another task — each one is a separate Claude working at the same time.</div>`}
+          ${t.busy ? `<div class="msg assistant"><div class="who">Claude</div><span class="typing"><i></i><i></i><i></i></span></div>` : t.queued ? `<div class="tool-step"><span class="spinner"></span><span>Waiting — ${C.running} of ${C.limit} tasks are running. Starts automatically.</span></div>` : ""}
+        </div>
+        <div class="composer">
+          <textarea id="claudeInput" placeholder="${active ? "This task is working — use “As new task” to start another one at the same time" : "Message Claude…  (Enter to send, Shift+Enter for a new line)"}"></textarea>
+          <div class="row"><button class="btn sm ghost" data-go="ideas">${ic("ideas")}Ideas</button><div class="grow"></div>
+            <button class="btn sm" data-act="claudeSendNew" title="Send as a new task that runs at the same time">${ic("plus")}As new task</button>
+            <button class="btn sm primary" data-act="claudeSend" ${active ? "disabled" : ""}>${ic("send")}Send</button></div>
+        </div>
+      </div></div></div>`;
 };
 
 /* ---------- Ideas ---------- */
@@ -309,7 +329,7 @@ VIEWS.ideas = () => {
   return `<div class="row">${tabs}<div class="grow"></div>${ui.ideaTab !== "custom" ? `<div class="search" style="width:280px">${ic("search")}<input class="input" id="ideaSearch" placeholder="Search ideas" value="${esc(ui.ideaQ)}"></div>` : ""}</div>
     <div class="sp" style="height:14px"></div>${body}<div style="height:90px"></div>
     ${P.size ? `<div class="pickbar panel"><b>${P.size} picked</b><span class="faint ell" style="max-width:340px;font-size:12px">${esc(allIdeas().filter((i) => P.has(i.id)).map((i) => i.title).join(", "))}</span><button class="btn sm ghost" data-act="clearPicked">Clear</button>
-      <input class="input grow" id="ideaExtra" placeholder="Extra wishes (optional), e.g. make it multiplayer with trading"><button class="btn primary" data-act="buildIdeas" ${S.claude.busy ? "disabled" : ""}>${ic("claude")}Build with Claude</button></div>` : ""}`;
+      <input class="input grow" id="ideaExtra" placeholder="Extra wishes (optional), e.g. make it multiplayer with trading"><button class="btn primary" data-act="buildIdeas">${ic("claude")}Build with Claude</button></div>` : ""}`;
 };
 
 /* ---------- Projects & Studio ---------- */
@@ -481,6 +501,7 @@ VIEWS.settings = () => {
       <div class="label" style="margin-top:6px">What Claude may do</div>
       ${[["safe", "Studio, VYRON and project files (recommended)", "Claude builds in Roblox Studio, uses VYRON, and reads/edits files in the project folder. No shell commands."], ["full", "Full access", "Claude may also run commands on this PC without asking. Only turn this on if you trust what you ask for."]].map(([k, t, d]) => `<div class="radio-card ${(s.claudeAccess || "safe") === k ? "on" : ""}" data-act="setting" data-key="claudeAccess" data-val="${k}"><span class="dot ${(s.claudeAccess || "safe") === k ? "connected" : "unknown"}"></span><div><b style="font-weight:600">${t}</b><div class="faint" style="font-size:12.5px">${d}</div></div></div>`).join("")}
       <label class="field"><span>Model</span><select class="select" data-change="setting" data-key="claudeModel">${[["", "Default (your plan's default)"], ["opus", "Opus — strongest"], ["sonnet", "Sonnet — balanced"], ["haiku", "Haiku — fastest"]].map(([k, l]) => `<option value="${k}" ${(s.claudeModel || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label class="field"><span>Tasks at the same time</span><select class="select" data-change="setting" data-key="claudeParallel">${[1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20].map((n) => `<option value="${n}" ${(s.claudeParallel || 3) === n ? "selected" : ""}>${n}${n === 1 ? " (one at a time)" : n >= 10 ? " — uses a lot of usage" : ""}</option>`).join("")}</select><small>Each running task is a separate Claude. More at once is faster, but your Claude usage limit runs out faster, and tasks changing the same part of a game can get in each other's way.</small></label>
     </div>
     <div class="stack" style="gap:16px">
       ${X ? `<div class="panel pad"><div class="row" style="gap:14px"><img src="icon.svg" alt="" style="width:34px;height:34px"><div class="grow"><div class="h3">Claude controls VYRON</div><div class="faint" style="font-size:12.5px">The connector Claude uses to see and change VYRON (projects, ideas, revenue, messages to you). Only this PC can connect, with a secret key.</div></div><div class="toggle ${X.enabled ? "on" : ""}" data-act="controlToggle"></div></div>
@@ -606,18 +627,21 @@ async function authCall(btn, method, ...args) {
 async function sendClaude(text) {
   text = String(text || "").trim();
   if (!text) return false;
-  await call("claudeSend", text);
-  return true;
+  return await call("claudeSend", text, ui.taskId);
 }
 const ACT = {
   closeModal, closeModalScrim: (el, e) => { if (e.target === el) closeModal(); },
   copyCode: (el) => { navigator.clipboard.writeText(el.closest(".code").querySelector("pre").textContent); toast("Copied"); },
   openUrl: (el) => B.host("openUrl", el.dataset.id),
 
-  async quickAsk() { if (await sendClaude(val("quickAsk"))) { $("#quickAsk").value = ""; go("claude"); } },
+  async quickAsk() { const t = val("quickAsk").trim(); if (!t) return; ui.taskId = await call("claudeStartTask", t); $("#quickAsk").value = ""; go("claude"); },
   async claudeSend() { if (await sendClaude(val("claudeInput"))) $("#claudeInput").value = ""; },
-  async claudeStop() { await call("claudeStop"); },
-  async claudeNewChat() { if (confirm("Start a new chat? Claude forgets this conversation (your game stays as it is).")) await call("claudeNewChat"); },
+  async claudeSendNew() { const t = val("claudeInput").trim(); if (!t) return toast("Type what the new task should do", "error"); ui.taskId = await call("claudeStartTask", t); $("#claudeInput").value = ""; render(); },
+  async claudeStop(el) { await call("claudeStop", el.dataset.id); },
+  async claudeNewChat(el) { if (confirm("Clear this task? Claude forgets its conversation (your game stays as it is).")) await call("claudeNewChat", el.dataset.id); },
+  async newTask() { ui.taskId = await call("claudeNewTask", "New task"); render(); setTimeout(() => $("#claudeInput")?.focus(), 60); },
+  pickTask: (el) => { ui.taskId = el.dataset.id; render(); },
+  async removeTask(el) { if (confirm("Delete this task and its chat?")) await call("claudeRemoveTask", el.dataset.id); },
   async claudeLogin() { await call("claudeLogin"); toast("Sign in in the window that opened — VYRON checks automatically"); },
   async claudeCheck() { const a = await call("claudeCheck"); toast(a?.loggedIn ? "Claude is ready" : S.claude.found ? "Not signed in to Claude yet" : "Claude Code not found", a?.loggedIn ? "" : "error"); },
 
@@ -638,8 +662,8 @@ const ACT = {
     toast("Idea saved");
     return id;
   },
-  async saveIdeaBuild() { const id = await ACT.saveIdea(); if (id) { await call("buildIdeas", [id], ""); go("claude"); } },
-  async buildIdeas() { await call("buildIdeas", S.ideas.picked, val("ideaExtra")); toast("Sent to Claude"); go("claude"); },
+  async saveIdeaBuild() { const id = await ACT.saveIdea(); if (id) { ui.taskId = await call("buildIdeas", [id], ""); go("claude"); } },
+  async buildIdeas() { ui.taskId = await call("buildIdeas", S.ideas.picked, val("ideaExtra")); toast("Started a new Claude task"); go("claude"); },
 
   async setProject(el) { await call("setActiveProject", el.dataset.id); },
   async refreshGame(el) { await call("refreshGame", el.dataset.id); toast("Game info refreshed"); },

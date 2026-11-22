@@ -8,6 +8,7 @@ const fs = require("fs");
 const path = require("path");
 
 const now = () => Date.now();
+const uid = () => "t_" + require("crypto").randomBytes(4).toString("hex");
 const clip = (s, n) => (s && s.length > n ? s.slice(0, n) + "…" : s || "");
 
 const SYSTEM = [
@@ -57,30 +58,51 @@ function studioServer(env = process.env) {
 }
 
 class ClaudeRunner extends EventEmitter {
-  /** opts: { dataDir, control: () => ({url, token, running}), settings: () => ({access, model}), log, spawnImpl, exe } */
+  /** opts: { dataDir, control: () => ({url, token, running}), settings: () => ({access, model, parallel}), log, spawnImpl, exe } */
   constructor(opts) {
     super();
     this.o = opts;
     this.file = path.join(opts.dataDir, "claude-chat.json");
-    this.proc = null;
-    this.busy = false;
     this.auth = null;
     this.exe = opts.exe !== undefined ? opts.exe : findClaude();
-    try { const j = JSON.parse(fs.readFileSync(this.file, "utf8")); this.sessionId = j.sessionId || null; this.messages = j.messages || []; this.model = j.model || null; }
-    catch { this.sessionId = null; this.messages = []; }
+    this.tasks = [];
+    this.procs = new Map(); // taskId -> child process
+    try {
+      const j = JSON.parse(fs.readFileSync(this.file, "utf8"));
+      if (Array.isArray(j.tasks)) this.tasks = j.tasks;
+      else if (j.messages?.length) this.tasks = [{ id: uid(), title: "Main chat", sessionId: j.sessionId || null, model: j.model || null, messages: j.messages, at: now() }]; // v1.0/1.1 single chat
+    } catch { /* first start */ }
+    for (const t of this.tasks) { t.busy = false; t.queued = null; }
+    if (!this.tasks.length) this.tasks.push(this.blank("Main chat"));
   }
+
+  blank(title) { return { id: uid(), title: clip(String(title || "New task"), 60), sessionId: null, model: null, messages: [], at: now(), busy: false, queued: null }; }
+  task(id) { const t = this.tasks.find((x) => x.id === id); if (!t) throw new Error("Task not found"); return t; }
+  limit() { return Math.min(20, Math.max(1, Number(this.o.settings().parallel) || 3)); }
+  running() { return this.tasks.filter((t) => t.busy).length; }
+  get busy() { return this.tasks.some((t) => t.busy || t.queued); }
+  get model() { return [...this.tasks].filter((t) => t.model).sort((a, b) => (b.modelAt || 0) - (a.modelAt || 0))[0]?.model || null; }
 
   save() {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    fs.writeFileSync(this.file, JSON.stringify({ sessionId: this.sessionId, model: this.model, messages: this.messages.slice(-300) }));
+    const tasks = this.tasks.map(({ busy, queued, ...t }) => ({ ...t, messages: t.messages.slice(-300) }));
+    fs.writeFileSync(this.file, JSON.stringify({ tasks }));
   }
   changed() { this.emit("change"); }
-  push(m) { this.messages.push({ at: now(), ...m }); if (this.messages.length > 400) this.messages.splice(0, this.messages.length - 400); this.changed(); }
-
-  setModel(id) { if (id && id !== this.model) { this.model = id; this.changed(); } }
+  push(t, m) { t.messages.push({ at: now(), ...m }); if (t.messages.length > 400) t.messages.splice(0, t.messages.length - 400); t.at = now(); this.changed(); }
+  setModel(t, id) { if (id) { t.modelAt = now(); if (id !== t.model) { t.model = id; this.changed(); } } }
 
   public() {
-    return { model: this.model, modelName: modelName(this.model), found: !!this.exe, exe: this.exe, auth: this.auth, busy: this.busy, sessionId: this.sessionId, messages: this.messages.slice(-150) };
+    return {
+      model: this.model, modelName: modelName(this.model), found: !!this.exe, exe: this.exe, auth: this.auth, busy: this.busy,
+      running: this.running(), queued: this.tasks.filter((t) => t.queued).length, limit: this.limit(),
+      tasks: this.tasks.map((t) => ({
+        id: t.id, title: t.title, busy: t.busy, queued: !!t.queued, at: t.at, model: t.model, modelName: modelName(t.model),
+        count: t.messages.filter((m) => m.role === "user").length,
+        last: clip([...t.messages].reverse().find((m) => m.role === "assistant" || m.role === "error")?.text || "", 90),
+        messages: t.messages.slice(-120),
+      })),
+    };
   }
 
   run(args, timeout = 20000) {
@@ -104,7 +126,6 @@ class ClaudeRunner extends EventEmitter {
     if (!this.exe) throw new Error("Claude Code isn't installed. Install the Claude desktop app first.");
     const sp = this.o.spawnImpl || spawn;
     sp("cmd.exe", ["/c", "start", "Sign in to Claude", "cmd.exe", "/k", this.exe, "auth", "login"], { detached: true, stdio: "ignore", windowsHide: false }).unref?.();
-    // Check again while the user signs in.
     let n = 0;
     clearInterval(this._authT);
     this._authT = setInterval(async () => { const a = await this.checkAuth(); if (a?.loggedIn || ++n > 60) clearInterval(this._authT); }, 5000);
@@ -121,83 +142,131 @@ class ClaudeRunner extends EventEmitter {
     return { file, names: Object.keys(servers) };
   }
 
-  args(cwd) {
+  args(t) {
     const s = this.o.settings();
     const mcp = this.mcpConfig();
-    const a = ["-p", "--output-format", "stream-json", "--verbose", "--mcp-config", mcp.file, "--strict-mcp-config", "--append-system-prompt", SYSTEM];
+    const others = this.tasks.filter((x) => x !== t && (x.busy || x.queued)).map((x) => x.title);
+    const sys = SYSTEM + (others.length ? ` Other Claude tasks are working at the same time in the same game (${others.slice(0, 8).join("; ")}). Only change what your task needs, and don't undo their work.` : "");
+    const a = ["-p", "--output-format", "stream-json", "--verbose", "--mcp-config", mcp.file, "--strict-mcp-config", "--append-system-prompt", sys];
     if (s.access === "full") a.push("--dangerously-skip-permissions");
     else a.push("--permission-mode", "acceptEdits", "--allowedTools", ...mcp.names.map((n) => "mcp__" + n), "Read", "Edit", "Write", "Glob", "Grep", "WebSearch", "WebFetch");
     if (s.model) a.push("--model", s.model);
-    if (this.sessionId) a.push("--resume", this.sessionId);
-    return { args: a, cwd };
+    if (t.sessionId) a.push("--resume", t.sessionId);
+    return a;
   }
 
-  /** Send a message to Claude. Replies stream into this.messages. */
-  send(text, cwd) {
+  newTask(title) {
+    if (this.tasks.length >= 60) throw new Error("Too many tasks — delete some old ones first");
+    const t = this.blank(title);
+    this.tasks.unshift(t);
+    this.save();
+    this.changed();
+    return t.id;
+  }
+
+  /** Send a message to a task. Starts now if fewer than `limit` tasks run, otherwise waits in the queue. */
+  send(text, cwd, taskId) {
     text = String(text || "").trim();
     if (!text) throw new Error("Type a message first");
     if (!this.exe) throw new Error("Claude Code isn't installed on this PC. Install the Claude desktop app first.");
-    if (this.busy) throw new Error("Claude is still working. Wait or press Stop.");
     if (!cwd || !fs.existsSync(cwd)) throw new Error("Working folder not found: " + cwd);
-    const { args } = this.args(cwd);
-    this.push({ role: "user", text });
-    this.busy = true;
+    const t = taskId ? this.task(taskId) : this.tasks[0];
+    if (t.busy || t.queued) throw new Error(`“${t.title}” is still working. Wait, press Stop, or start a new task.`);
+    if (t.title === "New task" && !t.messages.length) t.title = clip(text.replace(/^\[[^\]]*\]\n/, "").split("\n")[0], 60);
+    this.push(t, { role: "user", text });
+    t.queued = { text, cwd, at: now() };
+    this.pump();
+    return t.id;
+  }
+
+  /** Start queued tasks while there is room. */
+  pump() {
+    const waiting = this.tasks.filter((t) => t.queued).sort((a, b) => a.queued.at - b.queued.at);
+    for (const t of waiting) {
+      if (this.running() >= this.limit()) break;
+      const { text, cwd } = t.queued;
+      t.queued = null;
+      this.start(t, text, cwd);
+    }
     this.changed();
+  }
+
+  start(t, text, cwd) {
+    t.busy = true;
     const sp = this.o.spawnImpl || spawn;
-    const p = sp(this.exe, args, { cwd, windowsHide: true, env: { ...process.env } });
-    this.proc = p;
+    let p;
+    try { p = sp(this.exe, this.args(t), { cwd, windowsHide: true, env: { ...process.env } }); }
+    catch (e) { t.busy = false; this.push(t, { role: "error", text: "Could not start Claude: " + e.message }); return; }
+    this.procs.set(t.id, p);
     let buf = "", err = "", gotResult = false;
     p.stdout.on("data", (d) => {
       buf += d.toString();
       let i;
-      while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (line) this.onLine(line, () => (gotResult = true)); }
+      while ((i = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (line) this.onLine(t, line, () => (gotResult = true)); }
     });
     p.stderr.on("data", (d) => { err = (err + d.toString()).slice(-4000); });
-    p.on("error", (e) => { this.push({ role: "error", text: "Could not start Claude: " + e.message }); });
+    p.on("error", (e) => { this.push(t, { role: "error", text: "Could not start Claude: " + e.message }); });
     p.on("close", (code) => {
-      if (buf.trim()) this.onLine(buf.trim(), () => (gotResult = true));
-      this.proc = null;
-      this.busy = false;
-      if (this.stopped) { this.push({ role: "error", text: "Stopped." }); this.stopped = false; }
-      else if (!gotResult && code) this.push({ role: "error", text: clip(err.trim(), 800) || "Claude stopped (code " + code + ")." });
+      if (buf.trim()) this.onLine(t, buf.trim(), () => (gotResult = true));
+      this.procs.delete(t.id);
+      t.busy = false;
+      if (t.stopped) { this.push(t, { role: "error", text: "Stopped." }); t.stopped = false; }
+      else if (!gotResult && code) this.push(t, { role: "error", text: clip(err.trim(), 800) || "Claude stopped (code " + code + ")." });
       this.save();
-      this.changed();
-      this.emit("done");
+      this.emit("done", t.id);
+      this.pump();
     });
     p.stdin.end(text);
   }
 
-  onLine(line, gotResult) {
+  onLine(t, line, gotResult) {
     let j;
     try { j = JSON.parse(line); } catch { return; }
-    if (j.type === "system") { if (j.session_id) this.sessionId = j.session_id; if (j.model) this.setModel(j.model); return; }
+    if (j.type === "system") { if (j.session_id) t.sessionId = j.session_id; if (j.model) this.setModel(t, j.model); return; }
     if (j.type === "assistant") {
-      if (j.message?.model && j.message.model !== "<synthetic>") this.setModel(j.message.model);
+      if (j.message?.model && j.message.model !== "<synthetic>") this.setModel(t, j.message.model);
       for (const c of j.message?.content || []) {
-        if (c.type === "text" && c.text.trim() && !/^Not logged in/i.test(c.text.trim())) this.push({ role: "assistant", text: c.text });
-        else if (c.type === "tool_use") this.push({ role: "tool", tool: c.name, text: toolLabel(c.name, c.input) });
+        if (c.type === "text" && c.text.trim() && !/^Not logged in/i.test(c.text.trim())) this.push(t, { role: "assistant", text: c.text });
+        else if (c.type === "tool_use") this.push(t, { role: "tool", tool: c.name, text: toolLabel(c.name, c.input) });
       }
     } else if (j.type === "user") {
-      for (const c of j.message?.content || []) if (c.type === "tool_result" && c.is_error) this.push({ role: "tool", tool: "error", text: clip(typeof c.content === "string" ? c.content : JSON.stringify(c.content), 300) });
+      for (const c of j.message?.content || []) if (c.type === "tool_result" && c.is_error) this.push(t, { role: "tool", tool: "error", text: clip(typeof c.content === "string" ? c.content : JSON.stringify(c.content), 300) });
     } else if (j.type === "result") {
       gotResult();
-      if (j.session_id) this.sessionId = j.session_id;
+      if (j.session_id) t.sessionId = j.session_id;
       if (j.is_error) {
         const msg = String(j.result || j.subtype || "Claude reported an error");
-        this.push({ role: "error", text: /not logged in|\/login/i.test(msg) ? "You're not signed in to Claude yet. Press “Sign in to Claude”." : msg });
-        if (/not logged in|\/login/i.test(msg)) { this.auth = { loggedIn: false }; }
+        this.push(t, { role: "error", text: /not logged in|\/login/i.test(msg) ? "You're not signed in to Claude yet. Press “Sign in to Claude”." : msg });
+        if (/not logged in|\/login/i.test(msg)) this.auth = { loggedIn: false };
         return;
       }
-      this.push({ role: "result", text: `Done in ${Math.round((j.duration_ms || 0) / 1000)} s${j.num_turns ? ` · ${j.num_turns} steps` : ""}` });
+      this.push(t, { role: "result", text: `Done in ${Math.round((j.duration_ms || 0) / 1000)} s${j.num_turns ? ` · ${j.num_turns} steps` : ""}` });
     }
   }
 
-  stop() { if (this.proc) { this.stopped = true; try { this.proc.kill(); } catch { /* gone */ } } }
+  stop(taskId) {
+    for (const t of taskId ? [this.task(taskId)] : this.tasks) {
+      if (t.queued) { t.queued = null; this.push(t, { role: "error", text: "Removed from the queue." }); }
+      const p = this.procs.get(t.id);
+      if (p) { t.stopped = true; try { p.kill(); } catch { /* gone */ } }
+    }
+    this.changed();
+  }
 
-  newChat() {
-    if (this.busy) throw new Error("Stop Claude first");
-    this.sessionId = null;
-    this.messages = [];
+  /** Clear a task's chat (Claude forgets it). */
+  newChat(taskId) {
+    const t = taskId ? this.task(taskId) : this.tasks[0];
+    if (t.busy || t.queued) throw new Error("Stop this task first");
+    t.sessionId = null; t.messages = []; t.model = null;
+    this.save();
+    this.changed();
+  }
+
+  removeTask(taskId) {
+    const t = this.task(taskId);
+    if (t.busy || t.queued) throw new Error("Stop this task first");
+    this.tasks = this.tasks.filter((x) => x !== t);
+    if (!this.tasks.length) this.tasks.push(this.blank("Main chat"));
     this.save();
     this.changed();
   }

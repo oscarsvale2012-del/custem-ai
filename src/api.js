@@ -3,7 +3,7 @@
 // turned on "require sign-in" and is signed out is everything else locked.
 const METHODS = [
   "publicState", "saveSettings",
-  "claudeSend", "claudeStop", "claudeNewChat", "claudeLogin", "claudeCheck",
+  "claudeSend", "claudeStop", "claudeNewChat", "claudeNewTask", "claudeRemoveTask", "claudeStartTask", "claudeLogin", "claudeCheck",
   "listIdeas", "setPicked", "addCustomIdea", "removeCustomIdea", "ideaPrompt", "buildIdeas",
   "connectStudio", "detectStudios", "addProject", "updateProject", "removeProject", "setActiveProject", "refreshGame",
   "linkRoblox", "unlinkRoblox", "setRobloxApiKey", "clearRobloxApiKey", "refreshRevenue", "refreshRates",
