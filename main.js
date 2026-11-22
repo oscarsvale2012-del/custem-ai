@@ -205,7 +205,10 @@ app.whenReady().then(async () => {
   auth.openExternal = (url) => shell.openExternal(url);
   backend.authInfo = () => auth.public();
   const send = (type, payload) => win && !win.isDestroyed() && win.webContents.send("event", type, payload);
-  control = new ControlServer({ dataDir, getCtx: () => ({ backend, auth, control }), log: (t, l, s) => backend.log(t, l, s), version: app.getVersion() });
+  // The Claude desktop app starts VYRON.exe in Node mode with the bridge script.
+  const bridgeScript = app.isPackaged ? path.join(process.resourcesPath, "app.asar.unpacked", "src", "mcp-bridge.js") : path.join(__dirname, "src", "mcp-bridge.js");
+  const bridge = { command: process.execPath, args: app.isPackaged ? [bridgeScript] : [path.join(__dirname), bridgeScript].slice(1), env: { ELECTRON_RUN_AS_NODE: "1", ...(process.env.VYRON_DATA_DIR ? { VYRON_DATA_DIR: process.env.VYRON_DATA_DIR } : {}) } };
+  control = new ControlServer({ dataDir, getCtx: () => ({ backend, auth, control }), log: (t, l, s) => backend.log(t, l, s), version: app.getVersion(), bridge });
   backend.controlInfo = (withKey) => (withKey ? { ...control.status(), token: control.cfg.token } : control.status());
   backend.on("notify", (n) => { send("notify", n); if (win && !win.isFocused()) win.flashFrame(true); if (win && (!win.isVisible() || !win.isFocused())) alertUser({ kind: "message", title: "Message from Claude", body: n.text }); });
   // Task done / failed / out of usage / needs your OK: sound in the app + a Windows notification.

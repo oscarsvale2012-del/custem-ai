@@ -55,6 +55,7 @@ const CONTROL = {
   controlStatus: (c) => c.status(),
   controlSetEnabled: (c, on) => c.setEnabled(!!on),
   controlNewKey: (c) => c.newKey(),
+  controlDesktop: (c, on) => c.setDesktop(!!on),
 };
 
 module.exports = { METHODS, dispatch, lockedState };

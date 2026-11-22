@@ -19,7 +19,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clip = (s, n) => (s && s.length > n ? s.slice(0, n) + "…" : s || "");
 
 class ControlServer {
-  constructor({ dataDir, getCtx, log, version }) {
+  constructor({ dataDir, getCtx, log, version, bridge }) {
+    this.bridge = bridge || null; // { command, args, env } that starts src/mcp-bridge.js
     this.file = path.join(dataDir, "vyron-control.json");
     this.getCtx = getCtx;
     this.log = log || (() => {});
@@ -35,7 +36,8 @@ class ControlServer {
   saveCfg() { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.cfg, null, 2)); }
 
   status() {
-    return { enabled: !!this.cfg.enabled, running: !!this.server, port: this.cfg.port, url: `http://127.0.0.1:${this.cfg.port}/mcp`, error: this.error, configFile: this.file };
+    return {
+      desktop: this.desktopStatus(), enabled: !!this.cfg.enabled, running: !!this.server, port: this.cfg.port, url: `http://127.0.0.1:${this.cfg.port}/mcp`, error: this.error, configFile: this.file };
   }
 
   async setEnabled(on) {
@@ -43,6 +45,45 @@ class ControlServer {
     this.saveCfg();
     if (on) await this.start(); else await this.stop();
     return this.status();
+  }
+
+  /* ---------------- Claude desktop app ---------------- */
+  /** Where the Claude desktop app keeps its MCP settings (newest Windows app first). */
+  desktopConfigFiles(env = process.env) {
+    const out = [];
+    const la = env.LOCALAPPDATA, ap = env.APPDATA;
+    const ls = (d) => { try { return fs.readdirSync(d); } catch { return []; } };
+    if (la) for (const a of ls(path.join(la, "Claude-Data"))) { const f = path.join(la, "Claude-Data", a, "claude_desktop_config.json"); if (fs.existsSync(f)) out.push(f); }
+    if (la) for (const p of ls(path.join(la, "Packages")).filter((x) => /^Claude_/.test(x))) { const f = path.join(la, "Packages", p, "LocalCache", "Roaming", "Claude", "claude_desktop_config.json"); if (fs.existsSync(f)) out.push(f); }
+    if (ap) { const f = path.join(ap, "Claude", "claude_desktop_config.json"); if (fs.existsSync(f) || !out.length) out.push(f); }
+    return out;
+  }
+  desktopStatus() {
+    const files = this.desktopConfigFiles();
+    const connected = files.some((f) => { try { return !!JSON.parse(fs.readFileSync(f, "utf8")).mcpServers?.vyron; } catch { return false; } });
+    return { available: !!this.bridge, connected, files };
+  }
+  /** Adds (or removes) the "vyron" entry; keeps everything else and a backup of the old file. */
+  setDesktop(on) {
+    if (on && !this.bridge) throw new Error("Connecting Claude desktop works from the installed VYRON app.");
+    const files = this.desktopConfigFiles();
+    for (const f of files) {
+      let j = {};
+      const had = fs.existsSync(f);
+      if (had) {
+        const raw = fs.readFileSync(f, "utf8");
+        try { j = JSON.parse(raw); } catch { throw new Error("Claude desktop's settings file can't be read, so it wasn't changed: " + f); }
+        fs.writeFileSync(f + ".vyron-backup", raw);
+      }
+      j.mcpServers = j.mcpServers && typeof j.mcpServers === "object" ? j.mcpServers : {};
+      if (on) j.mcpServers.vyron = { command: this.bridge.command, args: this.bridge.args, env: this.bridge.env };
+      else delete j.mcpServers.vyron;
+      if (!on && !had) continue;
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f, JSON.stringify(j, null, 2));
+    }
+    this.log(on ? "Claude desktop connected — restart Claude desktop to use VYRON there" : "Claude desktop disconnected", "ok", "Control");
+    return this.desktopStatus();
   }
 
   async newKey() {

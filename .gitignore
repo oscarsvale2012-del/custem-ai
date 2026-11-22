@@ -14,3 +14,4 @@ download/
 .testdata-local/
 .devdata-acct/
 .testdata-account/
+.testdata-bridge/
