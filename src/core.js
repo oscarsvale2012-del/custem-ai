@@ -7,6 +7,7 @@ const { Store, uid } = require("./store");
 const { McpManager, PRESETS } = require("./mcp");
 const { lookupGame, parseStudios } = require("./roblox");
 const { ClaudeRunner } = require("./claude");
+const { PcDriver } = require("./pc");
 const { IDEAS, CATEGORIES } = require("./ideas");
 const DX = require("./devex");
 const RA = require("./robloxAccount");
@@ -17,9 +18,13 @@ const clip = (s, n) => (s && s.length > n ? s.slice(0, n) + "…" : s || "");
 const STUDIO_ID = "studio";
 
 class Backend extends EventEmitter {
-  constructor({ dataDir, encrypt, decrypt, host = {}, fetchImpl, claude, studio = true }) {
+  constructor({ dataDir, encrypt, decrypt, host = {}, fetchImpl, claude, studio = true, pc }) {
     super();
     this.useStudio = studio;
+    this.pc = pc || new PcDriver();
+    this.pcAsks = []; // waiting for the user's OK
+    this.pcUntil = 0; // "Allow 10 min" ends at
+    this.pcLast = 0;
     this.dataDir = dataDir;
     this.host = host;
     this.fetch = fetchImpl || globalThis.fetch;
@@ -37,7 +42,7 @@ class Backend extends EventEmitter {
     this.claude = new ClaudeRunner({
       dataDir, log: (t, l) => this.log(t, l, "Claude"),
       control: () => (this.controlInfo ? this.controlInfo(true) : null),
-      settings: () => ({ access: this.d.settings.claudeAccess || "safe", model: this.d.settings.claudeModel || "", parallel: this.d.settings.claudeParallel || 3 }),
+      settings: () => ({ access: this.d.settings.claudeAccess || "safe", model: this.d.settings.claudeModel || "", parallel: this.d.settings.claudeParallel || 3, pc: this.d.settings.pcControl || "off" }),
       ...(claude || {}),
     });
     this.claude.on("change", () => this.changed());
@@ -89,6 +94,7 @@ class Backend extends EventEmitter {
       rates: this.d.rates,
       ideas: { categories: CATEGORIES, count: IDEAS.length, custom: this.d.customIdeas, picked: this.d.picked },
       claude: this.claude.public(),
+      pc: { mode: this.d.settings.pcControl || "off", asks: this.pcAsks.map(({ resolve, reject, timer, ...a }) => a), allowedUntil: this.pcUntil > now() ? this.pcUntil : 0, activeAt: this.pcLast },
       workDir: this.workDir(),
       notes: this.notes.slice(-20),
       auth: this.authInfo ? this.authInfo() : null,
@@ -98,7 +104,9 @@ class Backend extends EventEmitter {
   }
 
   saveSettings(patch) {
-    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel"]) if (k in patch) this.d.settings[k] = patch[k];
+    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "pcControl"]) if (k in patch) this.d.settings[k] = patch[k];
+    if (!["off", "ask", "on"].includes(this.d.settings.pcControl)) this.d.settings.pcControl = "off";
+    if (this.d.settings.pcControl !== "on") this.pcUntil = 0;
     if (!["safe", "full"].includes(this.d.settings.claudeAccess)) this.d.settings.claudeAccess = "safe";
     this.d.settings.claudeParallel = Math.min(20, Math.max(1, Math.round(Number(this.d.settings.claudeParallel) || 3)));
     this.claude.pump();
@@ -135,6 +143,53 @@ class Backend extends EventEmitter {
     this.notes.push({ id: uid("n"), at: now(), text: clip(String(text || ""), 500) });
     this.notes = this.notes.slice(-20);
     this.emit("notify", this.notes[this.notes.length - 1]);
+    this.changed();
+  }
+
+  /* ================= PC control ================= */
+  /** Claude asks (through the connector) to see or use the PC. Off / ask the user / allowed. */
+  async pcAction(kind, args = {}) {
+    const mode = this.d.settings.pcControl || "off";
+    if (mode === "off") throw new Error("PC control is off. The user can turn it on in VYRON → Settings → PC control.");
+    const what = pcDescribe(kind, args);
+    if (mode === "ask" && now() > this.pcUntil) await this.pcApproval(kind, what);
+    this.pcLast = now();
+    this.log("Claude: " + what, "info", "PC control");
+    const P = this.pc;
+    if (kind === "screenshot") return P.screenshot();
+    if (kind === "click") return P.click(args.x, args.y, args.button || "left", !!args.double);
+    if (kind === "move") return P.move(args.x, args.y);
+    if (kind === "scroll") return P.scroll(args.x, args.y, args.amount);
+    if (kind === "type") return P.type(args.text);
+    if (kind === "key") return P.key(args.keys);
+    throw new Error("Unknown PC action " + kind);
+  }
+  pcApproval(kind, what) {
+    return new Promise((resolve, reject) => {
+      const a = { id: uid("pc"), kind, what, at: now(), resolve, reject };
+      a.timer = setTimeout(() => this.pcAnswer(a.id, "timeout"), 120000);
+      this.pcAsks.push(a);
+      this.emit("notify", { id: a.id, at: now(), text: "Claude wants to " + what.charAt(0).toLowerCase() + what.slice(1) + " — answer in VYRON" });
+      this.changed();
+    });
+  }
+  /** answer: "allow" | "allow10" | "deny" */
+  pcAnswer(id, answer) {
+    const a = this.pcAsks.find((x) => x.id === id);
+    if (!a) return;
+    clearTimeout(a.timer);
+    this.pcAsks = this.pcAsks.filter((x) => x !== a);
+    if (answer === "allow10") { this.pcUntil = now() + 10 * 60 * 1000; for (const o of [...this.pcAsks]) this.pcAnswer(o.id, "allow"); }
+    if (answer === "allow" || answer === "allow10") a.resolve();
+    else a.reject(new Error(answer === "timeout" ? "The user didn't answer in time, so this wasn't done." : "The user said no to this PC action. Don't retry it; find another way or ask the user."));
+    this.changed();
+  }
+  /** Stop button: take back "Allow 10 min", refuse anything waiting and stop all Claude tasks. */
+  pcRevoke() {
+    this.pcUntil = 0;
+    for (const a of [...this.pcAsks]) this.pcAnswer(a.id, "deny");
+    this.claude.stop();
+    this.log("PC control stopped by you", "warn", "PC control");
     this.changed();
   }
 
@@ -352,6 +407,17 @@ class Backend extends EventEmitter {
       canCashOut: r ? r.balance >= DX.MIN_ROBUX : null, minRobux: DX.MIN_ROBUX, minKr: kr(DX.MIN_ROBUX),
     };
   }
+}
+
+function pcDescribe(kind, a) {
+  const at = a.x !== undefined ? ` at (${Math.round(a.x)}, ${Math.round(a.y)})` : "";
+  if (kind === "screenshot") return "Take a screenshot of your screen";
+  if (kind === "click") return `${a.double ? "Double-click" : "Click"}${a.button && a.button !== "left" ? " (" + a.button + " button)" : ""}${at}`;
+  if (kind === "move") return "Move the mouse" + at;
+  if (kind === "scroll") return `Scroll ${a.amount > 0 ? "down" : "up"}${at}`;
+  if (kind === "type") return `Type “${clip(String(a.text || ""), 120)}”`;
+  if (kind === "key") return `Press ${String(a.keys || "")}`;
+  return kind;
 }
 
 module.exports = { Backend };

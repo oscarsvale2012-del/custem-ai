@@ -29,6 +29,13 @@ const fakeFetch = async (url) => {
 };
 
 // A fake claude.exe: records how it was started and answers in stream-json.
+// A fake screen/mouse/keyboard that records what it was asked to do.
+const pcDone = [];
+const fakePc = {
+  screenshot: async () => { pcDone.push("shot"); return { left: 0, top: 0, realW: 3440, realH: 1440, w: 1600, h: 670, cx: 1720, cy: 720, data: Buffer.from("JPEG").toString("base64"), mime: "image/jpeg" }; },
+  click: async (x, y, b, d) => pcDone.push(`click ${x},${y},${b},${d}`), move: async () => {}, scroll: async () => {},
+  type: async (t) => pcDone.push("type " + t), key: async (k) => pcDone.push("key " + k),
+};
 const spawned = [];
 let live = 0, peak = 0;
 function fakeSpawn(script, ms = 10) {
@@ -87,7 +94,7 @@ const reply = (input) => [
   const TMP = path.join(__dirname, "..", ".testdata-core");
   fs.rmSync(TMP, { recursive: true, force: true });
   fs.mkdirSync(path.join(TMP, "game"), { recursive: true });
-  const be = new Backend({ dataDir: TMP, encrypt: (s) => s, decrypt: (s) => s, studio: false, fetchImpl: fakeFetch, claude: { exe: "C:/fake/claude.exe", spawnImpl: fakeSpawn(reply) } });
+  const be = new Backend({ dataDir: TMP, encrypt: (s) => s, decrypt: (s) => s, studio: false, fetchImpl: fakeFetch, claude: { exe: "C:/fake/claude.exe", spawnImpl: fakeSpawn(reply) }, pc: fakePc });
   be.claude.checkAuth = async () => (be.claude.auth = { loggedIn: true });
   const control = new ControlServer({ dataDir: TMP, getCtx: () => ({ backend: be, auth: null, control }), log: () => {}, version: "test" });
   control.cfg.port = 47292;
@@ -258,6 +265,70 @@ const reply = (input) => [
     be.once("notify", (n) => (got = n));
     await callTool("vyron_notify", { message: "Your game is ready" });
     assert.equal(got.text, "Your game is ready");
+  });
+  console.log("PC control");
+  const pcCall = (name, args = {}) => client.callTool({ name, arguments: args });
+  await test("off by default: Claude can't see or touch the PC", async () => {
+    assert.equal(be.publicState().pc.mode, "off");
+    const r = await pcCall("vyron_pc_screenshot");
+    assert(r.isError && /PC control is off/.test(r.content[0].text));
+    assert.equal(pcDone.length, 0);
+  });
+  await test("ask mode: nothing happens until the user allows it", async () => {
+    await dispatch(ctx, "saveSettings", [{ pcControl: "ask" }]);
+    const p = pcCall("vyron_pc_click", { x: 100, y: 50 });
+    for (let i = 0; i < 50 && !be.pcAsks.length; i++) await wait(10);
+    const ask = be.publicState().pc.asks[0];
+    assert.equal(ask.what, "Click at (100, 50)");
+    assert.equal(pcDone.length, 0, "must wait for the OK");
+    await dispatch(ctx, "pcAnswer", [ask.id, "allow"]);
+    assert(!(await p).isError);
+    assert.deepEqual(pcDone, ["click 100,50,left,false"]);
+  });
+  await test("deny is passed back to Claude, and nothing is done", async () => {
+    const p = pcCall("vyron_pc_type", { text: "hello" });
+    for (let i = 0; i < 50 && !be.pcAsks.length; i++) await wait(10);
+    assert.equal(be.pcAsks[0].what, "Type “hello”");
+    await dispatch(ctx, "pcAnswer", [be.pcAsks[0].id, "deny"]);
+    const r = await p;
+    assert(r.isError && /said no/.test(r.content[0].text));
+    assert.equal(pcDone.length, 1);
+  });
+  await test("allow 10 min: later actions don't ask; Stop takes it back", async () => {
+    const p = pcCall("vyron_pc_key", { keys: "ctrl+s" });
+    for (let i = 0; i < 50 && !be.pcAsks.length; i++) await wait(10);
+    await dispatch(ctx, "pcAnswer", [be.pcAsks[0].id, "allow10"]);
+    await p;
+    assert(be.publicState().pc.allowedUntil > Date.now());
+    await pcCall("vyron_pc_type", { text: "hi" });
+    assert.deepEqual(pcDone.slice(-2), ["key ctrl+s", "type hi"]);
+    await dispatch(ctx, "pcRevoke", []);
+    assert.equal(be.publicState().pc.allowedUntil, 0);
+  });
+  await test("screenshots reach Claude as an image with the mouse position", async () => {
+    await dispatch(ctx, "saveSettings", [{ pcControl: "on" }]);
+    const r = await pcCall("vyron_pc_screenshot");
+    assert.equal(r.content[0].type, "image");
+    assert.equal(r.content[0].mimeType, "image/jpeg");
+    assert(/1600×670 \(real screen 3440×1440\)\. Mouse is at \(800, 335\)/.test(r.content[1].text), r.content[1].text);
+    assert(be.publicState().pc.activeAt > 0);
+  });
+  await test("Claude is told the PC rules only when PC control is on", async () => {
+    await dispatch(ctx, "claudeSend", ["hi", be.claude.tasks.at(-1).id]);
+    for (let i = 0; i < 50 && be.claude.busy; i++) await wait(20);
+    const sys = (r) => r.args[r.args.indexOf("--append-system-prompt") + 1];
+    assert(/Never type passwords/.test(sys(spawned.at(-1))));
+    await dispatch(ctx, "saveSettings", [{ pcControl: "off" }]);
+    await dispatch(ctx, "claudeSend", ["hi", be.claude.tasks.at(-1).id]);
+    for (let i = 0; i < 50 && be.claude.busy; i++) await wait(20);
+    assert(!/PC control is on/.test(sys(spawned.at(-1))));
+  });
+  await test("key combos and typed text can't break out", () => {
+    const { keyCombo, sendKeysText } = require("../src/pc");
+    assert.equal(keyCombo("ctrl+shift+s"), "^+s");
+    assert.equal(keyCombo("alt+f4"), "%{F4}");
+    assert.throws(() => keyCombo("win+r"), /Unsupported modifier/);
+    assert.equal(sendKeysText("a+b {x} 100%"), "a{+}b {{}x{}} 100{%}");
   });
   await test("wrong key is refused", async () => {
     const r = await fetch("http://127.0.0.1:47292/rpc/vyron_status", { method: "POST", headers: { Authorization: "Bearer nope" } });

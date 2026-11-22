@@ -23,6 +23,9 @@ Claude inside VYRON; Claude controls VYRON and Roblox Studio for you.
   from [Roblox's official DevEx page](https://create.roblox.com/docs/production/monetization/developer-exchange),
   USD→DKK from the [ECB daily reference rates](https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml).
   Shows the 30,000 Robux cash-out minimum and a calculator.
+- **PC control** (Settings, off by default) — Claude can take screenshots and use
+  mouse/keyboard for hard tasks; "Ask me each time" shows an Allow/Deny popup per
+  action, and a Stop bar shows while Claude uses the PC.
 - **Settings** — Claude sign-in, what Claude may do (Studio + VYRON + project
   files, or full access), model, the connector switch, appearance, optional
   VYRON sign-in.

@@ -141,6 +141,17 @@ class ControlServer {
       return "Shown in VYRON.";
     });
 
+    const xy = { x: z.number().describe("x in pixels of the latest vyron_pc_screenshot"), y: z.number().describe("y in pixels of the latest vyron_pc_screenshot") };
+    const pcNote = " Only works when the user turned on PC control in VYRON; they may have to approve it.";
+    tool("vyron_pc_screenshot", "See the user's whole screen (all monitors). Use before clicking: coordinates for the other vyron_pc_ tools are pixels in this image." + pcNote, {}, async () => {
+      const s = await this.call("pcAction", "screenshot", {});
+      return { __image: s.data, mime: s.mime || "image/jpeg", text: `Screenshot ${s.w}×${s.h} (real screen ${s.realW}×${s.realH}). Mouse is at (${Math.round(((s.cx - s.left) * s.w) / s.realW)}, ${Math.round(((s.cy - s.top) * s.h) / s.realH)}).` };
+    });
+    tool("vyron_pc_click", "Click on the user's screen at a point in the latest screenshot." + pcNote, { ...xy, button: z.enum(["left", "right", "middle"]).optional(), double: z.boolean().optional() }, async (a) => { await this.call("pcAction", "click", a); return "Clicked. Take a new screenshot to see the result."; });
+    tool("vyron_pc_scroll", "Scroll at a point; amount = wheel steps, positive scrolls down." + pcNote, { ...xy, amount: z.number().int().min(-20).max(20) }, async (a) => { await this.call("pcAction", "scroll", a); return "Scrolled."; });
+    tool("vyron_pc_type", "Type text into the focused window." + pcNote, { text: z.string().max(2000) }, async (a) => { await this.call("pcAction", "type", a); return "Typed."; });
+    tool("vyron_pc_key", "Press a key or shortcut, e.g. enter, esc, tab, ctrl+s, alt+tab, ctrl+shift+p, f5." + pcNote, { keys: z.string() }, async (a) => { await this.call("pcAction", "key", a); return "Pressed " + a.keys + "."; });
+
     tool("vyron_activity", "Recent activity log.", { limit: z.number().int().min(1).max(150).optional() }, async ({ limit = 40 }) => {
       const s = await this.state();
       return s.activity.slice(-limit).map((l) => `${new Date(l.at).toLocaleTimeString()} [${l.source}] ${l.text}`);
@@ -162,6 +173,7 @@ class ControlServer {
       server.registerTool(t.name, { description: t.description, inputSchema: t.shape }, async (args) => {
         try {
           const out = await t.run(args || {});
+          if (out && out.__image) return { content: [{ type: "image", data: out.__image, mimeType: out.mime }, { type: "text", text: out.text }] };
           return { content: [{ type: "text", text: typeof out === "string" ? out : JSON.stringify(out, null, 2) }] };
         } catch (e) {
           return { content: [{ type: "text", text: "Error: " + (e.message || e) }], isError: true };

@@ -358,3 +358,8 @@ body.locked #shell{display:none}
 .claude-grid{display:grid;grid-template-columns:280px minmax(0,1fr);gap:16px}
 .claude-grid .ws-agents{overflow:auto;min-height:0}
 .task-pick{align-items:flex-start}.task-pick .dot{margin-top:6px}
+
+/* PC control */
+.pc-bar{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:60;display:flex;align-items:center;gap:10px;padding:7px 8px 7px 14px;border-radius:999px;background:color-mix(in srgb,var(--bg) 90%,transparent);border:1px solid rgba(245,143,143,.45);box-shadow:var(--shadow);backdrop-filter:blur(14px);font-size:12.5px}
+.pc-asks{position:fixed;right:22px;bottom:22px;z-index:61;display:flex;flex-direction:column;gap:10px;width:380px}
+.pc-ask{padding:14px;background:color-mix(in srgb,var(--bg) 94%,transparent);backdrop-filter:blur(16px);border-color:rgba(243,197,111,.45);box-shadow:var(--shadow),0 10px 40px rgba(0,0,0,.4);animation:pageIn .25s var(--ease) both}

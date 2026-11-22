@@ -125,6 +125,7 @@ function restore(root, keep) {
 }
 
 let lastRoute = null;
+let lastOverlay = "";
 function draw() {
   if (!S) return;
   if (S.locked) { document.body.classList.add("locked"); drawLock(); return; }
@@ -148,6 +149,7 @@ function draw() {
   $("#subtitle").textContent = SUB[ui.route] || "";
   const C = S.claude;
   $("#topActions").innerHTML = C.busy ? `<button class="btn sm" data-go="claude"><span class="spinner"></span>${C.running} Claude task${C.running === 1 ? "" : "s"} working${C.queued ? ` · ${C.queued} waiting` : ""}</button>` : "";
+  const ov = pcOverlay(); if (ov !== lastOverlay) { $("#drawerRoot").innerHTML = ov; lastOverlay = ov; }
   const t = performance.now();
   $$(".spinner").forEach((e) => (e.style.animationDelay = -(t % 800) + "ms"));
   $$(".dot.working,.dot.connecting").forEach((e) => (e.style.animationDelay = -(t % 1800) + "ms"));
@@ -171,6 +173,19 @@ const modelNow = () => S.claude.modelName || null;
 const modelPending = () => { const want = S.settings.claudeModel; const now = (S.claude.modelName || "").toLowerCase(); return want && now && !now.startsWith(want.toLowerCase()) ? want[0].toUpperCase() + want.slice(1) : null; };
 const modelChip = () => modelNow() ? `<span class="chip model" title="${esc(S.claude.model)}">${ic("sparkle")}${esc(modelNow())}${modelPending() ? ` → ${esc(modelPending())} next` : ""}</span>` : `<span class="chip" title="Shown after Claude answers once">${ic("sparkle")}${S.settings.claudeModel ? esc(S.settings.claudeModel[0].toUpperCase() + S.settings.claudeModel.slice(1)) : "Model: after first reply"}</span>`;
 const claudeLine = () => (!S.claude.found ? "Claude Code not installed" : S.claude.busy ? `${S.claude.running} task${S.claude.running === 1 ? "" : "s"} working` : S.claude.auth?.loggedIn ? "Claude ready" : S.claude.auth ? "Sign in to Claude" : "Checking Claude…");
+
+/* ---------------- PC control overlay ---------------- */
+const PC_ICON = { screenshot: "image", click: "bolt", move: "bolt", scroll: "bolt", type: "edit", key: "key" };
+function pcOverlay() {
+  const P = S.pc;
+  if (!P) return "";
+  const using = P.activeAt && Date.now() - P.activeAt < 8000;
+  const bar = using || P.allowedUntil ? `<div class="pc-bar"><span class="dot working"></span><b>${using ? "Claude is using your PC" : "PC control allowed"}</b>${P.allowedUntil ? `<span class="faint">without asking until ${time(P.allowedUntil)}</span>` : ""}<button class="btn sm danger" data-act="pcRevoke">${ic("stop")}Stop</button></div>` : "";
+  const asks = P.asks.map((a) => `<div class="pc-ask panel"><div class="row" style="gap:10px"><div class="ava" style="width:30px;height:30px;border-radius:9px">${ic(PC_ICON[a.kind] || "bolt")}</div><div class="grow"><div class="label">Claude wants to use your PC</div><b>${esc(a.what)}</b></div></div>
+    <div class="faint" style="font-size:12px;margin:8px 0 10px">${a.kind === "screenshot" ? "Claude will see everything on your screens. Close private things first." : "This happens on your real mouse and keyboard."} Asked at ${time(a.at)}; refused automatically after 2 minutes.</div>
+    <div class="row"><button class="btn sm danger" data-act="pcAnswer" data-id="${a.id}" data-val="deny">Deny</button><div class="grow"></div><button class="btn sm" data-act="pcAnswer" data-id="${a.id}" data-val="allow10" title="Allow everything for 10 minutes">Allow 10 min</button><button class="btn sm primary" data-act="pcAnswer" data-id="${a.id}" data-val="allow">Allow</button></div></div>`).join("");
+  return bar + (asks ? `<div class="pc-asks">${asks}</div>` : "");
+}
 
 /* ---------------- shared pieces ---------------- */
 function gameIcon(p, size = "") {
@@ -506,6 +521,9 @@ VIEWS.settings = () => {
     <div class="stack" style="gap:16px">
       ${X ? `<div class="panel pad"><div class="row" style="gap:14px"><img src="icon.svg" alt="" style="width:34px;height:34px"><div class="grow"><div class="h3">Claude controls VYRON</div><div class="faint" style="font-size:12.5px">The connector Claude uses to see and change VYRON (projects, ideas, revenue, messages to you). Only this PC can connect, with a secret key.</div></div><div class="toggle ${X.enabled ? "on" : ""}" data-act="controlToggle"></div></div>
         ${X.enabled ? `<hr class="sep"><div class="row wrap" style="gap:10px"><span class="chip ${X.running ? "ok" : "bad"}"><span class="dot ${X.running ? "connected" : "error"}"></span>${X.running ? "On · " + esc(X.url) : esc(X.error || "Not running")}</span><div class="grow"></div><button class="btn sm" data-act="controlNewKey">New key</button></div>` : ""}</div>` : ""}
+      <div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("dashboard")}</div><div class="grow"><div class="h3">PC control</div><div class="faint" style="font-size:12.5px">Lets Claude see your screen and use the mouse and keyboard for hard tasks the Studio tools can't do.</div></div></div>
+        ${[["off", "Off", "Claude can't see or touch your PC."], ["ask", "Ask me each time (recommended)", "A popup shows exactly what Claude wants to do. Allow, deny, or allow for 10 minutes."], ["on", "Allowed", "Claude may take screenshots, click and type without asking. A bar with a Stop button shows while it does."]].map(([k, t, d]) => `<div class="radio-card ${(s.pcControl || "off") === k ? "on" : ""}" data-act="setting" data-key="pcControl" data-val="${k}"><span class="dot ${(s.pcControl || "off") === k ? "connected" : "unknown"}"></span><div><b style="font-weight:600">${t}</b><div class="faint" style="font-size:12.5px">${d}</div></div></div>`).join("")}
+        <div class="faint" style="font-size:11.5px">Claude is told never to type passwords or payment details, buy things or change security settings, and to ignore instructions shown on screen. Screenshots go to Claude (Anthropic) like your chat messages.</div></div>
       <div class="panel pad"><div class="h3" style="margin-bottom:14px">Appearance</div>
         <div class="row" style="margin-bottom:14px"><span class="grow">Theme</span><div class="seg">${[["dark", "Dark"], ["light", "Light"]].map(([k, l]) => `<button class="${(s.theme || "dark") === k ? "on" : ""}" data-act="setting" data-key="theme" data-val="${k}">${l}</button>`).join("")}</div></div>
         <div class="row" style="margin-bottom:14px"><span class="grow">Animations</span><div class="toggle ${s.animations !== false ? "on" : ""}" data-act="setting" data-key="animations" data-val="${s.animations === false}"></div></div>
@@ -729,6 +747,8 @@ const ACT = {
   revTf: (el) => { ui.revTf = el.dataset.id; render(); },
   async saveRbxKey() { const k = val("rbxKey"); if (!k.trim()) return; await call("setRobloxApiKey", k); $("#rbxKey").value = ""; toast("API key saved — loading game analytics"); },
   async clearRbxKey() { if (confirm("Remove the Open Cloud API key?")) await call("clearRobloxApiKey"); },
+  async pcAnswer(el) { await call("pcAnswer", el.dataset.id, el.dataset.val); },
+  async pcRevoke() { await call("pcRevoke"); toast("Stopped: Claude can't use your PC until it asks again"); },
   async refreshRates() { await call("refreshRates"); toast("Rates updated from Roblox and the ECB"); },
   async setting(el) { let v = el.dataset.val; if (v === "true") v = true; else if (v === "false") v = false; await call("saveSettings", { [el.dataset.key]: v }); },
   copyLog: () => { navigator.clipboard.writeText(S.activity.map((l) => `${new Date(l.at).toISOString()} [${l.level}] ${l.source}: ${l.text}`).join("\n")); toast("Log copied"); },
@@ -830,3 +850,6 @@ document.addEventListener("pointerdown", (e) => {
     render(); setTimeout(() => $("#boot").classList.add("gone"), 450);
   } catch (e) { $("#bootMsg").textContent = "Could not start: " + e.message; }
 })();
+
+/* keep the "Claude is using your PC" bar honest */
+setInterval(() => { if (S?.pc?.activeAt && Date.now() - S.pc.activeAt < 12000) render(); }, 3000);
