@@ -179,6 +179,32 @@ const claudeLine = () => (!S.claude.found ? "Claude Code not installed" : S.clau
 function soundFor(ev) { return (S.settings.soundMap || {})[ev] || SOUND_EVENTS.find((e) => e[0] === ev)?.[2]; }
 function ding(ev) { if (S?.settings && S.settings.sounds !== false) playSound(soundFor(ev), S.settings.volume ?? 0.7); }
 
+/* interface sounds: click / hover / pick (Settings → Interface sounds) */
+let uiLast = 0, uiHoverEl = null;
+function uiSound(kind) {
+  const st = S?.settings;
+  if (!st || st.uiSounds === false || (kind === "hover" && st.uiHover === false)) return;
+  const now = performance.now();
+  if (kind === "hover" && now - uiLast < 45) return;
+  uiLast = now;
+  playSound(`ui-${st.uiPack || "soft"}-${kind}`, (st.volume ?? 0.7) * 0.6);
+}
+const UI_HOVER = ".btn,.nav,.pick,.theme-card,.idea,.radio-card,.toggle,.seg button,.stat.click,.mini-proj,.task-pick";
+document.addEventListener("pointerover", (e) => {
+  const el = e.target.closest?.(UI_HOVER);
+  if (el && el !== uiHoverEl && !el.disabled) uiSound("hover");
+  uiHoverEl = el || null;
+});
+document.addEventListener("click", (e) => {
+  const el = e.target.closest?.("[data-go],[data-act],[data-host],button,.seg button,select,input[type=checkbox]");
+  if (!el || el.disabled) return;
+  if (el.matches("[data-go]")) return uiSound("nav");
+  const act = el.dataset.act || "";
+  if (/^(setting|setTheme|randomTheme|toggleIdea|ideaTab|ideaCat|pickTask|toggleEl|revTf|pcAnswer)$/.test(act) || el.matches(".toggle,.radio-card")) return uiSound("pick");
+  uiSound("click");
+}, true);
+document.addEventListener("change", (e) => { if (e.target.matches?.("select")) uiSound("pick"); }, true);
+
 /* ---------------- PC control overlay ---------------- */
 const PC_ICON = { screenshot: "image", click: "bolt", move: "bolt", scroll: "bolt", type: "edit", key: "key" };
 function pcOverlay() {
@@ -535,7 +561,10 @@ VIEWS.settings = () => {
         <div class="row"><span class="grow">Sounds</span><div class="toggle ${s.sounds !== false ? "on" : ""}" data-act="setting" data-key="sounds" data-val="${s.sounds === false}"></div></div>
         ${s.sounds !== false ? `<div class="row"><span class="grow faint">Volume</span><input type="range" min="0" max="1" step="0.05" value="${s.volume ?? 0.7}" id="vol" style="width:180px"></div>
         ${SOUND_EVENTS.map(([ev, label]) => `<div class="row"><span class="grow">${label}</span><select class="select" style="width:200px;height:32px" data-change="sound" data-key="${ev}">${["Gentle", "Happy", "Space", "Game", "Warning"].map((g) => `<optgroup label="${g}">${SOUNDS.filter((x) => x.group === g).map((x) => `<option value="${x.id}" ${soundFor(ev) === x.id ? "selected" : ""}>${x.name}</option>`).join("")}</optgroup>`).join("")}<option value="none" ${soundFor(ev) === "none" ? "selected" : ""}>No sound</option></select><button class="btn sm ghost icon" data-act="previewSound" data-id="${ev}" title="Play">${ic("play")}</button></div>`).join("")}` : ""}
-        <div class="row" style="margin-top:4px"><span class="grow">Animations</span><div class="toggle ${s.animations !== false ? "on" : ""}" data-act="setting" data-key="animations" data-val="${s.animations === false}"></div></div>
+        <div class="row" style="margin-top:4px"><span class="grow">Interface sounds <span class="faint" style="font-size:12px">(clicks, tabs, choices)</span></span><div class="toggle ${s.uiSounds !== false ? "on" : ""}" data-act="setting" data-key="uiSounds" data-val="${s.uiSounds === false}"></div></div>
+        ${s.uiSounds !== false ? `<div class="row"><span class="grow faint">Hover sounds</span><div class="toggle ${s.uiHover !== false ? "on" : ""}" data-act="setting" data-key="uiHover" data-val="${s.uiHover === false}"></div></div>
+        <div class="row"><span class="grow faint">Sound pack</span><div class="seg">${Object.entries(UI_PACKS).map(([k, p]) => `<button class="${(s.uiPack || "soft") === k ? "on" : ""}" data-act="setting" data-key="uiPack" data-val="${k}">${p.name}</button>`).join("")}</div></div>` : ""}
+        <div class="row"><span class="grow">Animations</span><div class="toggle ${s.animations !== false ? "on" : ""}" data-act="setting" data-key="animations" data-val="${s.animations === false}"></div></div>
         <div class="row"><span class="grow">Reduce effects (no animated background)</span><div class="toggle ${s.reduceEffects ? "on" : ""}" data-act="setting" data-key="reduceEffects" data-val="${!s.reduceEffects}"></div></div></div>
       ${account}
     </div>

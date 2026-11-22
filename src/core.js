@@ -116,11 +116,14 @@ class Backend extends EventEmitter {
   }
 
   saveSettings(patch) {
-    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook"]) if (k in patch) this.d.settings[k] = patch[k];
+    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook", "uiSounds", "uiHover", "uiPack"]) if (k in patch) this.d.settings[k] = patch[k];
     const S = this.d.settings;
     if (!["vyron", "windows", "off"].includes(S.notifyStyle)) S.notifyStyle = "vyron";
     S.keepRunning = S.keepRunning !== false;
     S.sounds = S.sounds !== false;
+    S.uiSounds = S.uiSounds !== false;
+    S.uiHover = S.uiHover !== false;
+    if (!["soft", "crisp", "space", "retro", "bubble"].includes(S.uiPack)) S.uiPack = "soft";
     S.volume = Math.min(1, Math.max(0, Number(S.volume ?? 0.7)));
     S.soundMap = Object.fromEntries(Object.entries(S.soundMap && typeof S.soundMap === "object" ? S.soundMap : {}).filter(([k, v]) => /^[a-z]{2,12}$/.test(k) && /^[a-z0-9-]{1,30}$/.test(v)).slice(0, 10));
     S.themeId = /^[a-z0-9-]{1,40}$/.test(S.themeId || "") ? S.themeId : null;

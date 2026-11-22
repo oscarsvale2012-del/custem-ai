@@ -264,3 +264,14 @@ function playSound(id, volume = 0.7) {
     }
   } catch { /* audio not available */ }
 }
+
+/* ---------------- interface sounds (click / hover / pick) ----------------
+   Short and quiet on purpose. 5 packs; can be turned off in Settings. */
+const UI_PACKS = {
+  soft: { name: "Soft", click: [[N(84), 0, 0.05, "sine", 0.18]], hover: [[N(96), 0, 0.025, "sine", 0.05]], pick: [[N(79), 0, 0.06, "sine", 0.16], [N(86), 0.05, 0.09, "sine", 0.14]], nav: [[N(76), 0, 0.07, "sine", 0.16]] },
+  crisp: { name: "Crisp", click: [[N(96), 0, 0.025, "triangle", 0.18]], hover: [[N(103), 0, 0.015, "triangle", 0.05]], pick: [[N(91), 0, 0.04, "triangle", 0.16], [N(98), 0.035, 0.05, "triangle", 0.14]], nav: [[N(88), 0, 0.04, "triangle", 0.16]] },
+  space: { name: "Space", click: [[N(88), 0, 0.09, "sine", 0.13, N(100)]], hover: [[N(100), 0, 0.05, "sine", 0.04, N(105)]], pick: [[N(83), 0, 0.14, "sine", 0.12, N(95)], [N(95), 0.06, 0.18, "sine", 0.06]], nav: [[N(72), 0, 0.16, "sine", 0.12, N(84)]] },
+  retro: { name: "Retro", click: [[N(84), 0, 0.035, "square", 0.06]], hover: [[N(96), 0, 0.015, "square", 0.02]], pick: [[N(84), 0, 0.04, "square", 0.06], [N(91), 0.04, 0.05, "square", 0.06]], nav: [[N(79), 0, 0.05, "square", 0.06]] },
+  bubble: { name: "Bubble", click: [[N(72), 0, 0.06, "sine", 0.2, N(88)]], hover: [[N(90), 0, 0.03, "sine", 0.05, N(96)]], pick: [[N(74), 0, 0.07, "sine", 0.2, N(91)], [N(86), 0.06, 0.06, "sine", 0.12, N(98)]], nav: [[N(67), 0, 0.08, "sine", 0.18, N(84)]] },
+};
+for (const [pid, pack] of Object.entries(UI_PACKS)) for (const k of ["click", "hover", "pick", "nav"]) SOUNDS.push({ id: `ui-${pid}-${k}`, name: `${pack.name} ${k}`, group: "UI", tones: pack[k], noise: [] });
