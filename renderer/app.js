@@ -68,6 +68,7 @@ ICON.cube = '<path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.5 7 12 1
 ICON.code = '<path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14"/>';
 ICON.layout = '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 9h18M9 9v11"/>';
 ICON.chev = '<path d="m9 6 6 6-6 6"/>';
+ICON.bug = '<rect x="7.5" y="7" width="9" height="12" rx="4.5"/><path d="M12 7v12M9 4.5l1.5 2.5M15 4.5 13.5 7M7.5 11H4M7.5 15.5l-3 1.5M16.5 11H20M16.5 15.5l3 1.5"/>';
 ICON.music = '<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>';
 ICON.run = '<circle cx="14.5" cy="4.5" r="2"/><path d="M7 21l3.5-5.5 3 2.5v3M6 11.5l3-3h4.5l2.5 3.5 3 1M10.5 15.5 12 9"/>';
 ICON.panel = '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16"/>';
@@ -136,12 +137,59 @@ function restore(root, keep) {
   }
 }
 
+/**
+ * Update `root` to `html` by changing only what's different, instead of replacing everything.
+ * Keeps the elements that are already there, so: the box you're typing in keeps its text, cursor and focus,
+ * images aren't reloaded (no logo flicker), entrance animations don't replay, and scroll positions stay.
+ */
+const _lastHtml = new WeakMap();
+const setText = (el, s) => { if (el && el.textContent !== s) el.textContent = s; };
+function morph(root, html) {
+  // Always compared with what's really on screen (a button may have changed itself to "Connecting…").
+  _lastHtml.set(root, html);
+  const next = document.createElement(root.tagName === "TBODY" ? "tbody" : "div");
+  next.innerHTML = html;
+  morphChildren(root, next);
+  return true;
+}
+const morphKey = (n) => (n.nodeType === 1 ? n.id || n.getAttribute("data-key") || "" : "");
+const sameKind = (a, b) => a.nodeType === b.nodeType && a.nodeName === b.nodeName && morphKey(a) === morphKey(b);
+function morphChildren(from, to) {
+  let f = from.firstChild, t = to.firstChild;
+  while (t) {
+    const nextT = t.nextSibling;
+    if (f && !sameKind(f, t) && morphKey(t)) { // an element with an id further on (list order changed): bring it here
+      let m = f.nextSibling; while (m && !sameKind(m, t)) m = m.nextSibling;
+      if (m) { from.insertBefore(m, f); f = m; }
+    }
+    if (!f) from.appendChild(t);
+    else if (sameKind(f, t)) { morphNode(f, t); f = f.nextSibling; }
+    else { const nf = f.nextSibling; from.replaceChild(t, f); f = nf; }
+    t = nextT;
+  }
+  while (f) { const nf = f.nextSibling; from.removeChild(f); f = nf; }
+}
+function morphNode(f, t) {
+  if (f.nodeType !== 1) { if (f.nodeValue !== t.nodeValue) f.nodeValue = t.nodeValue; return; }
+  for (const a of [...f.attributes]) if (!t.hasAttribute(a.name)) f.removeAttribute(a.name);
+  for (const a of t.attributes) if (f.getAttribute(a.name) !== a.value) f.setAttribute(a.name, a.value);
+  const tag = f.tagName, typing = document.activeElement === f;
+  if (tag === "TEXTAREA") { if (!typing && "fresh" in t.dataset && f.value !== t.value) f.value = t.value; return; } // its text is what you typed
+  if (tag === "INPUT") {
+    if (!typing && "fresh" in t.dataset && f.value !== t.value) f.value = t.value;
+    if (f.type === "checkbox" || f.type === "radio") f.checked = t.checked;
+    return;
+  }
+  morphChildren(f, t);
+  if (tag === "SELECT" && !typing) { const sel = t.querySelector("option[selected]"); if (sel && f.value !== sel.value) f.value = sel.value; }
+}
+
 let lastRoute = null;
 let lastOverlay = "";
 function draw() {
   if (!S) return;
   if (S.locked) { document.body.classList.add("locked"); drawLock(); return; }
-  if (document.body.classList.contains("locked")) { document.body.classList.remove("locked"); $("#lockRoot").innerHTML = ""; lastRoute = null; }
+  if (document.body.classList.contains("locked")) { document.body.classList.remove("locked"); $("#lockRoot").innerHTML = ""; _lastHtml.delete($("#lockRoot")); lastRoute = null; }
   applyTheme(themeById(S.settings.themeId || (S.settings.theme === "light" ? "vyron-light" : "vyron-dark")));
   window.__fxOff = !!S.settings.reduceEffects;
   document.body.classList.toggle("noanim", S.settings.animations === false);
@@ -150,42 +198,42 @@ function draw() {
   if (typeof drawSetup === "function") drawSetup();
   if (typeof maybeBlenderStart === "function") maybeBlenderStart();
   const page = $("#page");
-  const keep = preserve(page);
   const th0 = $("#thread");
   const sticky = th0 ? th0.scrollHeight - th0.scrollTop - th0.clientHeight < 80 : true;
-  const pageScroll = page.scrollTop;
-  page.innerHTML = (VIEWS[ui.route] || VIEWS.dashboard)();
-  page.scrollTop = pageScroll;
-  page.classList.toggle("settled", lastRoute === ui.route);
-  if (lastRoute !== ui.route) { page.classList.remove("page-in"); void page.offsetWidth; page.classList.add("page-in"); page.scrollTop = 0; lastRoute = ui.route; }
-  else restore(page, keep);
-  const th = $("#thread"); if (th && sticky) th.scrollTop = th.scrollHeight;
-  $("#title").textContent = PAGES.find((p) => p[0] === ui.route)?.[1] || "";
-  $("#subtitle").textContent = SUB[ui.route] || "";
+  const html = (VIEWS[ui.route] || VIEWS.dashboard)();
+  if (lastRoute !== ui.route) {
+    // a new page: build it fresh with its entrance animation
+    page.classList.remove("settled"); page.innerHTML = html; _lastHtml.set(page, html);
+    page.classList.remove("page-in"); void page.offsetWidth; page.classList.add("page-in"); page.scrollTop = 0; lastRoute = ui.route;
+  } else {
+    // same page: only change what changed — typing, focus, images and scroll stay exactly where they are
+    page.classList.add("settled");
+    morph(page, html);
+  }
+  const th = $("#thread"); if (th && sticky && th.scrollHeight - th.scrollTop - th.clientHeight > 2) th.scrollTop = th.scrollHeight;
+  setText($("#title"), PAGES.find((p) => p[0] === ui.route)?.[1] || "");
+  setText($("#subtitle"), SUB[ui.route] || "");
   const C = S.claude;
-  $("#topActions").innerHTML = C.busy ? `<button class="btn sm" data-go="claude"><span class="spinner"></span>${C.running} Claude task${C.running === 1 ? "" : "s"} working${C.queued ? ` · ${C.queued} waiting` : ""}</button>` : "";
+  morph($("#topActions"), C.busy ? `<button class="btn sm" data-go="claude"><span class="spinner"></span>${C.running} Claude task${C.running === 1 ? "" : "s"} working${C.queued ? ` · ${C.queued} waiting` : ""}</button>` : "");
   const ov = pcOverlay(); if (ov !== lastOverlay) { $("#drawerRoot").innerHTML = ov; lastOverlay = ov; }
   // The installed app glows the whole screen (separate windows); the browser version glows inside the page.
   document.body.classList.toggle("vy-glow", !desktop && !!S.pc?.glow);
   const doing = !!(S.pc?.doIt || S.pc?.doItTask), shown = $("#modalRoot .bl-doit");
   if (shown && doing !== shown.classList.contains("working")) blenderConnectModal();
-  const t = performance.now();
-  $$(".spinner").forEach((e) => (e.style.animationDelay = -(t % 800) + "ms"));
-  $$(".dot.working,.dot.connecting").forEach((e) => (e.style.animationDelay = -(t % 1800) + "ms"));
-  $$(".typing i").forEach((e, i) => (e.style.animationDelay = -(t % 1200) + i * 150 + "ms"));
+  // (spinners are no longer rebuilt on every update, so they keep spinning smoothly by themselves)
 }
 
 function drawNav() {
   const counts = { blender: (S.reviews || []).filter((r) => r.status === "pending").length, ideas: S.ideas.picked.length, claude: S.claude.running + S.claude.queued };
-  $("#nav").innerHTML = PAGES.map(([k, label]) => `<div class="nav ${ui.route === k ? "on" : ""}" data-go="${k}">${ic(k === "projects" ? "roblox" : k === "blender" ? "cube" : k)}${label}${counts[k] ? `<span class="count">${counts[k]}</span>` : ""}</div>`).join("");
+  morph($("#nav"), PAGES.map(([k, label]) => `<div class="nav ${ui.route === k ? "on" : ""}" data-go="${k}">${ic(k === "projects" ? "roblox" : k === "blender" ? "cube" : k)}${label}${counts[k] ? `<span class="count">${counts[k]}</span>` : ""}</div>`).join(""));
   const p = activeProject();
   const C = S.claude;
-  $("#sideFoot").innerHTML = `
+  morph($("#sideFoot"), `
     ${p ? `<div class="mini-proj" data-go="projects">${gameIcon(p, "sm")}<div class="grow"><div class="ell" style="font-weight:600;font-size:13px">${esc(p.game?.name || p.name)}</div><div class="faint" style="font-size:11.5px"><span class="dot ${p.studioConnected ? "connected" : "unknown"}" style="display:inline-block;width:6px;height:6px;margin-right:5px"></span>${p.studioConnected ? "Open in Studio" : "Studio not linked"}</div></div></div>`
       : `<div class="mini-proj" data-go="projects"><div class="gicon sm"><div class="fallback">+</div></div><div class="faint" style="font-size:12.5px">Add a project</div></div>`}
     ${usageMeter()}
     <div class="conns">${connections().map(([dot, text, go, tip]) => `<div class="conn" data-go="${go}" title="${esc(tip)}"><span class="dot ${dot}"></span><span class="ell">${esc(text)}</span></div>`).join("")}</div>
-    ${S.auth?.user ? `<div class="row acct" data-go="settings" title="${esc(S.auth.user.email)}"><div class="av" style="margin:0;width:24px;height:24px;font-size:10px">${esc(initials(S.auth.user.email))}</div><span class="ell grow" style="font-size:12px">${esc(S.auth.user.email)}</span></div>` : ""}`;
+    ${S.auth?.user ? `<div class="row acct" data-go="settings" title="${esc(S.auth.user.email)}"><div class="av" style="margin:0;width:24px;height:24px;font-size:10px">${esc(initials(S.auth.user.email))}</div><span class="ell grow" style="font-size:12px">${esc(S.auth.user.email)}</span></div>` : ""}`);
 }
 /** Claude plan usage left (5-hour window, plus the weekly limit), as a circle or a bar. */
 function usageMeter() {
@@ -405,8 +453,10 @@ function threadHtml(t) {
 /** The line at the bottom while Claude works: Claude's spinner, what it's doing right now, and the time. */
 function workingLine(t) {
   const cur = (t.todos || []).find((x) => x.status === "in_progress");
-  return `<div class="working"><span class="cl-spin" aria-hidden="true"></span><span class="shimmer ell">${esc(cur?.activeForm || t.now || "Thinking")}…</span><span class="faint w-time" data-start="${t.startedAt || Date.now()}"></span></div>`;
+  const start = t.startedAt || Date.now();
+  return `<div class="working"><span class="cl-spin" aria-hidden="true"></span><span class="shimmer ell">${esc(cur?.activeForm || t.now || "Thinking")}…</span><span class="faint w-time" data-start="${start}">${elapsed(start)}</span></div>`;
 }
+const elapsed = (start) => { const s = Math.max(0, Math.round((Date.now() - Number(start)) / 1000)); return "· " + (s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s"); };
 /** Claude's own task list (from its TodoWrite tool), like in Claude Code. */
 function todoCard(t) {
   const T = t.todos;
@@ -416,7 +466,7 @@ function todoCard(t) {
   return `<div class="todo-card ${open ? "open" : ""}"><button class="todo-h" data-act="todoToggle" data-id="${t.id}">${ic("tasks")}<b>Tasks</b><span class="faint">${done}/${T.length}${all ? " · done" : ""}</span><div class="grow"></div>${ic("chev")}</button>
     ${open ? `<div class="todo-b">${T.map((x) => `<div class="todo ${x.status}"><span class="todo-ic"></span><span>${esc(x.status === "in_progress" ? x.activeForm : x.content)}</span></div>`).join("")}</div>` : ""}</div>`;
 }
-setInterval(() => { for (const el of document.querySelectorAll(".w-time")) { const s = Math.max(0, Math.round((Date.now() - Number(el.dataset.start)) / 1000)); el.textContent = "· " + (s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s"); } }, 1000);
+setInterval(() => { for (const el of document.querySelectorAll(".w-time")) setText(el, elapsed(el.dataset.start)); }, 1000);
 
 /** The task being looked at in the Claude tab. */
 function curTask() {
@@ -489,7 +539,7 @@ function teamColumn() {
       return `<div class="agent r-${r} st-${k}" ${tid ? `data-act="pickTask" data-id="${tid}"` : 'data-go="ideas"'} title="${why}">
         <span class="agent-ic">${ic(ROLE_ICON[r])}</span><div class="grow" style="min-width:0"><div class="agent-name ell">${esc(S.roles[r].name)}</div><div class="faint ell" style="font-size:11px">${why}</div></div>
         <span class="agent-st"><span class="dot"></span>${label}</span></div>`; }).join("")}
-    ${teamMembers(team).length === 1 ? `<button class="agent-add" data-act="teamPick">${ic("plus")}<span>Add roles <span class="faint">— Builder, Coder, UI, Money, Sound, Animator</span></span></button>` : ""}</div>`;
+    ${teamMembers(team).length === 1 ? `<button class="agent-add" data-act="teamPick">${ic("plus")}<span>Add roles <span class="faint">— Builder, Coder, UI, Money, Sound, Animator, Debugger</span></span></button>` : ""}</div>`;
 }
 
 /* ---------- Blender & Builds: reviews ---------- */
@@ -527,8 +577,8 @@ VIEWS.blender = () => {
 };
 
 /* ---------- Studio team (Co-Founder) ---------- */
-const ROLE_ICON = { cofounder: "crown", builder: "cube", coder: "code", ui: "layout", money: "coin", sound: "music", animator: "run" };
-const ROLE_ORDER = ["cofounder", "builder", "coder", "ui", "money", "sound", "animator"];
+const ROLE_ICON = { cofounder: "crown", builder: "cube", coder: "code", ui: "layout", money: "coin", sound: "music", animator: "run", debug: "bug" };
+const ROLE_ORDER = ["cofounder", "builder", "coder", "ui", "money", "sound", "animator", "debug"];
 /** Who's in the team: always the Co-Founder first, then the roles you added with + (and any role a team is using right now). */
 function teamMembers(team) {
   const added = S.settings.teamRoles || [];
@@ -908,15 +958,14 @@ function drawLock() {
       <div class="or"><span>new here?</span></div>
       <button class="btn wide" data-act="authMode" data-id="signup">Create an account</button>`;
   }
-  root.innerHTML = `<div class="lock-bar"><div class="winctl">
+  morph(root, `<div class="lock-bar"><div class="winctl">
       <button data-host="minimize" title="Minimize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
       <button data-host="close" class="x" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div></div>
     <div class="lock"><div class="lock-card"><img class="lock-logo" src="icon.svg" alt=""><div class="lock-brand">VYRON</div>${body}</div>
-    <div class="lock-foot">Your password is never stored on this PC.</div></div>`;
+    <div class="lock-foot">Your password is never stored on this PC.</div></div>`);
   const key = [A.configured, A.pending?.kind, A.mustSetPassword, A.waitingForGoogle, mode].join("|");
   root.classList.toggle("settled", root.dataset.key === key);
   root.dataset.key = key;
-  restore(root, keep);
 }
 
 async function authCall(btn, method, ...args) {

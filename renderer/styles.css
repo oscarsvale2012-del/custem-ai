@@ -403,8 +403,8 @@ body.locked #shell{display:none}
 .role-tag{font-size:10.5px;font-weight:600;border:1px solid currentColor;border-radius:6px;padding:0 5px;margin-right:6px;opacity:.9}
 
 /* role colours: Co-Founder yellow (crown), Builder blue, Coder green, UI pink, Money orange */
-.r-cofounder{--rc:#ffcc33}.r-builder{--rc:#5fb4ff}.r-coder{--rc:#4fdc96}.r-ui{--rc:#ff6fcf}.r-money{--rc:#ff9a3c}.r-sound{--rc:#2fd6e8}.r-animator{--rc:#b98cff}
-.role-ic.r-cofounder,.role-ic.r-builder,.role-ic.r-coder,.role-ic.r-ui,.role-ic.r-money,.role-ic.r-sound,.role-ic.r-animator{color:var(--rc);background:color-mix(in srgb,var(--rc) 16%,transparent)}
+.r-cofounder{--rc:#ffcc33}.r-builder{--rc:#5fb4ff}.r-coder{--rc:#4fdc96}.r-ui{--rc:#ff6fcf}.r-money{--rc:#ff9a3c}.r-sound{--rc:#2fd6e8}.r-animator{--rc:#b98cff}.r-debug{--rc:#ff5d6c}
+.role-ic.r-cofounder,.role-ic.r-builder,.role-ic.r-coder,.role-ic.r-ui,.role-ic.r-money,.role-ic.r-sound,.role-ic.r-animator,.role-ic.r-debug{color:var(--rc);background:color-mix(in srgb,var(--rc) 16%,transparent)}
 .role-tag{color:var(--rc)}
 .team-list{border:1px solid var(--border);border-radius:12px;padding:8px;background:var(--surface)}
 .agent{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:10px;cursor:pointer;border-left:3px solid var(--rc);margin-bottom:4px;background:color-mix(in srgb,var(--rc) 5%,transparent);transition:background .15s}
@@ -554,7 +554,7 @@ body.noanim .cmsg.reveal{animation:none;-webkit-mask-image:none;mask-image:none}
 .role-pick{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;transition:background .15s,border-color .15s}
 .role-pick:hover{background:var(--surface)}
 .role-pick.on{border-color:color-mix(in srgb,var(--rc,var(--text)) 45%,var(--border));background:color-mix(in srgb,var(--rc,var(--text)) 7%,transparent)}
-.role-pick:has(.r-builder){--rc:#5fb4ff}.role-pick:has(.r-coder){--rc:#4fdc96}.role-pick:has(.r-ui){--rc:#ff6fcf}.role-pick:has(.r-money){--rc:#ff9a3c}.role-pick:has(.r-sound){--rc:#2fd6e8}.role-pick:has(.r-animator){--rc:#b98cff}.role-pick:has(.r-cofounder){--rc:#ffcc33}
+.role-pick:has(.r-builder){--rc:#5fb4ff}.role-pick:has(.r-coder){--rc:#4fdc96}.role-pick:has(.r-ui){--rc:#ff6fcf}.role-pick:has(.r-money){--rc:#ff9a3c}.role-pick:has(.r-sound){--rc:#2fd6e8}.role-pick:has(.r-animator){--rc:#b98cff}.role-pick:has(.r-debug){--rc:#ff5d6c}.role-pick:has(.r-cofounder){--rc:#ffcc33}
 .role-pick.locked{cursor:default}.role-pick.locked>svg{width:16px;height:16px;color:#ffcc33}
 .role-pick input{position:absolute;opacity:0;pointer-events:none}
 .role-pick .check-box{width:18px;height:18px;border-radius:6px;border:1.5px solid var(--border-2);flex:none;position:relative;transition:background .15s,border-color .15s}

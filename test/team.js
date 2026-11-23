@@ -61,8 +61,10 @@ function fakeSpawn(exe, args, opts) {
   const taskOf = (r) => be.claude.tasks.find((x) => x.id === team().roles[r].taskId);
 
   console.log("Roles");
-  await test("seven Roblox roles with their own jobs and tools (Sound Designer and Animator too)", () => {
-    assert.deepEqual(R.ROLE_IDS, ["cofounder", "builder", "coder", "ui", "money", "sound", "animator"]);
+  await test("eight Roblox roles with their own jobs and tools (Sound Designer, Animator and Debugger too)", () => {
+    assert.deepEqual(R.ROLE_IDS, ["cofounder", "builder", "coder", "ui", "money", "sound", "animator", "debug"]);
+    assert(/flickering/.test(R.ROLES.debug.prompt) && /z-fighting/.test(R.ROLES.debug.prompt) && /unanchored/i.test(R.ROLES.debug.prompt) && /get_console_output/.test(R.ROLES.debug.prompt), "the Debugger hunts flickering and flying parts and errors");
+    assert.equal(be.roleId("QA"), "debug"); assert.equal(be.roleId("debugger"), "debug");
     assert(R.ROLES.builder.servers.includes("blender") && !R.ROLES.coder.servers.includes("blender"));
     assert(/gamepasses/i.test(R.ROLES.money.prompt) && /Blender/.test(R.ROLES.builder.prompt) && /control the team/.test(R.ROLES.cofounder.prompt));
     assert(/Creator Store/.test(R.ROLES.sound.prompt) && /SoundService/.test(R.ROLES.sound.prompt), "sounds from Roblox's Creator Store");
@@ -380,7 +382,8 @@ function fakeSpawn(exe, args, opts) {
     assert("studio" in cc && "blender" in cc);
   });
   await test("Finish needs everything except Claude Code / web and Discord", async () => {
-    await assert.rejects(dispatch(ctx, "finishSetup", []), /Connect these first: .*Roblox Studio.*Blender.*Roblox account/);
+    // (Roblox Studio is in the list only when Studio isn't open on the PC running the tests)
+    await assert.rejects(dispatch(ctx, "finishSetup", []), /Connect these first: (?:.*Roblox Studio, )?Blender, Roblox account$/);
     const msg = await dispatch(ctx, "finishSetup", []).catch((e) => e.message);
     assert(!/Discord/.test(msg) && !/Claude Code \/ web/.test(msg), msg);
     await dispatch(ctx, "skipDiscord", []);

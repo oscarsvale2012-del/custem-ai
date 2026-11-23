@@ -370,7 +370,7 @@ class Backend extends EventEmitter {
   }
   roleId(r) {
     const k = String(r || "").toLowerCase().replace(/[^a-z]/g, "");
-    const alias = { modeler: "builder", uimaker: "ui", moneymaker: "money", sounds: "sound", music: "sound", audio: "sound", sfx: "sound", animation: "animator", animations: "animator", animate: "animator" };
+    const alias = { modeler: "builder", uimaker: "ui", moneymaker: "money", sounds: "sound", music: "sound", audio: "sound", sfx: "sound", animation: "animator", animations: "animator", animate: "animator", debugger: "debug", qa: "debug", tester: "debug", bugs: "debug", bug: "debug" };
     const id = k && R.ROLE_IDS.find((x) => x === k || alias[k] === x || R.ROLES[x].name.toLowerCase().replace(/[^a-z]/g, "").startsWith(k)); if (!id) throw new Error("Unknown role " + r + ". Roles: " + R.ROLE_IDS.join(", ")); return id; }
   /** The roles the user added to the team (the Co-Founder is always there and isn't in this list). */
   teamRoster() { return (Array.isArray(this.d.settings.teamRoles) ? this.d.settings.teamRoles : []).filter((r) => R.WORKERS.includes(r)); }

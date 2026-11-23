@@ -193,9 +193,7 @@ function updateSetupList() {
     <div class="row" style="margin-top:18px"><span class="faint" style="font-size:12px">Everything except Claude Code / web and Discord is needed to use VYRON.</span><div class="grow"></div><button class="btn ${all ? "primary" : ""} ob-finish" data-act="obFinish" ${all ? "" : "disabled"}>${all ? "Finish — let's build!" : `Finish (${s.total - s.done} left)`}</button></div>`;
   if (html === setupListHtml) return;
   const card = document.getElementById("obCard");
-  const keep = preserve(card);
-  card.innerHTML = html;
-  restore(card, keep);
+  morph(card, html); // only what changed — the Discord box keeps what you typed and where the cursor is
   setupListHtml = html;
 }
 

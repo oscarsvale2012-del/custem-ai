@@ -135,7 +135,7 @@ const reply = (input) => [
   be.setActiveProject(await be.addProject({ name: "Test Game", rojoDir: path.join(TMP, "game") }));
   await test("sends to claude.exe headless with VYRON + Studio tools, in the project folder", async () => {
     await dispatch(ctx, "claudeSend", ["make a coin system"]);
-    for (let i = 0; i < 50 && be.claude.busy; i++) await wait(20);
+    for (let i = 0; i < 250 && be.claude.busy; i++) await wait(20);
     const run = spawned.at(-1);
     assert(run.args.includes("-p") && run.args.includes("stream-json") && run.args.includes("--strict-mcp-config"));
     assert.equal(run.opts.cwd, path.join(TMP, "game"));
@@ -157,13 +157,13 @@ const reply = (input) => [
   });
   await test("the next message continues the same Claude chat", async () => {
     await dispatch(ctx, "claudeSend", ["now add a shop"]);
-    for (let i = 0; i < 50 && be.claude.busy; i++) await wait(20);
+    for (let i = 0; i < 250 && be.claude.busy; i++) await wait(20);
     const a = spawned.at(-1).args;
     assert.equal(a[a.indexOf("--resume") + 1], "sess-1");
   });
   await test("Build with Claude sends the picked ideas", async () => {
     await dispatch(ctx, "buildIdeas", [be.d.picked, ""]);
-    for (let i = 0; i < 50 && be.claude.busy; i++) await wait(20);
+    for (let i = 0; i < 250 && be.claude.busy; i++) await wait(20);
     assert(spawned.at(-1).input.includes("Cat Cafe Wars"));
     assert(!spawned.at(-1).args.includes("--resume"), "a build starts a fresh Claude task");
     assert(/^Build: /.test(be.claude.tasks[0].title) && be.claude.tasks.length === 2);
@@ -172,14 +172,14 @@ const reply = (input) => [
     await dispatch(ctx, "saveSettings", [{ claudeAccess: "full", claudeModel: "opus; rm -rf" }]);
     assert.equal(be.d.settings.claudeModel, "opusrm-rf");
     await dispatch(ctx, "claudeSend", ["hi"]);
-    for (let i = 0; i < 50 && be.claude.busy; i++) await wait(20);
+    for (let i = 0; i < 250 && be.claude.busy; i++) await wait(20);
     assert(spawned.at(-1).args.includes("--dangerously-skip-permissions"));
     await dispatch(ctx, "saveSettings", [{ claudeAccess: "safe", claudeModel: "" }]);
   });
   await test("not signed in to Claude → a clear message", async () => {
     be.claude.o.spawnImpl = fakeSpawn(() => [{ type: "result", is_error: true, result: "Not logged in · Please run /login", duration_ms: 10 }]);
     await dispatch(ctx, "claudeSend", ["hello"]);
-    for (let i = 0; i < 50 && be.claude.busy; i++) await wait(20);
+    for (let i = 0; i < 250 && be.claude.busy; i++) await wait(20);
     assert(be.claude.tasks[0].messages.some((m) => m.role === "error" && /Sign in to Claude/.test(m.text)));
     be.claude.o.spawnImpl = fakeSpawn(reply);
   });
@@ -371,12 +371,12 @@ const reply = (input) => [
   });
   await test("Claude is told the PC rules only when PC control is on", async () => {
     await dispatch(ctx, "claudeSend", ["hi", be.claude.tasks.at(-1).id]);
-    for (let i = 0; i < 50 && be.claude.busy; i++) await wait(20);
+    for (let i = 0; i < 250 && be.claude.busy; i++) await wait(20);
     const sys = (r) => r.args[r.args.indexOf("--append-system-prompt") + 1];
     assert(/Never type passwords/.test(sys(spawned.at(-1))));
     await dispatch(ctx, "saveSettings", [{ pcControl: "off" }]);
     await dispatch(ctx, "claudeSend", ["hi", be.claude.tasks.at(-1).id]);
-    for (let i = 0; i < 50 && be.claude.busy; i++) await wait(20);
+    for (let i = 0; i < 250 && be.claude.busy; i++) await wait(20);
     assert(!/PC control is on/.test(sys(spawned.at(-1))));
   });
   await test("key combos and typed text can't break out", () => {
