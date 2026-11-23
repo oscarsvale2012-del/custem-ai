@@ -402,7 +402,8 @@ class Backend extends EventEmitter {
     const alias = { modeler: "builder", uimaker: "ui", moneymaker: "money", sounds: "sound", music: "sound", audio: "sound", sfx: "sound", animation: "animator", animations: "animator", animate: "animator", debugger: "debug", qa: "debug", tester: "debug", bugs: "debug", bug: "debug" };
     const id = k && R.ROLE_IDS.find((x) => x === k || alias[k] === x || R.ROLES[x].name.toLowerCase().replace(/[^a-z]/g, "").startsWith(k)); if (!id) throw new Error("Unknown role " + r + ". Roles: " + R.ROLE_IDS.join(", ")); return id; }
   /** The roles the user added to the team (the Co-Founder is always there and isn't in this list). */
-  teamRoster() { return (Array.isArray(this.d.settings.teamRoles) ? this.d.settings.teamRoles : []).filter((r) => R.WORKERS.includes(r)); }
+  /** The Builder & Modeler is always in the team too: every model is made in Blender by it. */
+  teamRoster() { const set = (Array.isArray(this.d.settings.teamRoles) ? this.d.settings.teamRoles : []); return R.WORKERS.filter((r) => r === "builder" || set.includes(r)); }
   /**
    * "+" in the Team list: which roles are in the team. A team that is building right now gets the change too:
    * added roles start (the Co-Founder is told to give them jobs), removed roles stop.
@@ -410,7 +411,8 @@ class Backend extends EventEmitter {
   setTeamRoles(ids) {
     const want = [...new Set((Array.isArray(ids) ? ids : []).map((x) => this.roleId(x)))].filter((r) => R.WORKERS.includes(r));
     const before = this.teamRoster();
-    this.d.settings.teamRoles = R.WORKERS.filter((r) => want.includes(r)); // keep the team's order
+    this.d.settings.teamRoles = R.WORKERS.filter((r) => r === "builder" || want.includes(r)); // keep the team's order; the Builder always stays (it makes every model in Blender)
+    want.push("builder");
     const pid = this.d.settings.activeProjectId;
     const team = [...this.d.teams].reverse().find((t) => t.status === "building" && (!pid || t.projectId === pid || !t.projectId));
     if (team) {
@@ -835,7 +837,7 @@ class Backend extends EventEmitter {
       // 1. no Blender that works with the MCP add-on → get the newest one
       if (!pick) {
         const old = all.map((b) => b.version).filter(Boolean).sort(cmpVer).pop();
-        progress("blender", old ? `Blender ${old} can't run the MCP add-on (needs ${this.blenderNeeds()}) — getting the newest Blender…` : "No Blender yet — getting the newest Blender from blender.org…");
+        progress("blender", old ? `Blender ${old} can't run the MCP add-on (needs ${this.blenderNeeds()}) — getting the newest Blender next to it (your Blender ${old} and its files stay, nothing is deleted)…` : "No Blender yet — getting the newest Blender from blender.org…");
         const got = await this.installBlender(progress);
         pick = this.pickBlender();
         if (!pick) throw new Error(`Blender ${got.version} was unpacked, but VYRON can't find it.`);
@@ -907,12 +909,20 @@ class Backend extends EventEmitter {
   /**
    * Download the newest Blender (.zip, checksum-checked) and unpack it to %LOCALAPPDATA%\Programs — like a portable
    * Blender: no installer, no admin rights. VYRON then finds it like any other Blender and uses it from now on.
+   * SAFETY: VYRON never deletes, uninstalls, moves or overwrites a Blender you already have, or any of your files.
+   * Your old Blender stays exactly where it is. The new one is unpacked into a fresh empty folder of VYRON's own and only
+   * moved to a name nothing else uses; the only file VYRON ever removes is its own downloaded .zip.
    */
   async installBlender(progress = () => {}, env = process.env) {
     const rel = await this.blenderLatestDownload();
     const programs = path.join(env.LOCALAPPDATA || path.join(this.dataDir, "apps"), "Programs");
-    const folder = path.join(programs, rel.file.replace(/\.zip$/, ""));
-    const exe = path.join(folder, "blender.exe");
+    const base = rel.file.replace(/\.zip$/, "");
+    let folder = path.join(programs, base);
+    let exe = path.join(folder, "blender.exe");
+    if (!fs.existsSync(exe) && fs.existsSync(folder)) { // something else is already in that folder → never touch it, pick a new name
+      let n = 2; while (fs.existsSync(path.join(programs, `${base}-vyron${n}`)) && !fs.existsSync(path.join(programs, `${base}-vyron${n}`, "blender.exe"))) n++;
+      folder = path.join(programs, `${base}-vyron${n}`); exe = path.join(folder, "blender.exe");
+    }
     if (!fs.existsSync(exe)) {
       const dl = path.join(this.dataDir, "downloads");
       fs.mkdirSync(dl, { recursive: true }); fs.mkdirSync(programs, { recursive: true });
@@ -936,8 +946,18 @@ class Backend extends EventEmitter {
       } finally { await new Promise((r) => out.end(r)); }
       if (hash.digest("hex") !== rel.sha256) { fs.rmSync(zip, { force: true }); throw new Error("The Blender download didn't match blender.org's checksum, so VYRON didn't use it. Try again."); }
       progress("blender", `Unpacking Blender ${rel.version}…`);
-      await new Promise((resolve, reject) => (this.execFileImpl || require("child_process").execFile)("tar.exe", ["-xf", zip, "-C", programs], { windowsHide: true, timeout: 15 * 60 * 1000 }, (err) => (err ? reject(new Error("Couldn't unpack Blender: " + err.message)) : resolve())));
-      fs.rmSync(zip, { force: true });
+      // unpack into a brand-new empty folder (never into a folder that already has files), then move it into place
+      const stage = fs.mkdtempSync(path.join(programs, ".vyron-unpack-"));
+      try {
+        await new Promise((resolve, reject) => (this.execFileImpl || require("child_process").execFile)("tar.exe", ["-xf", zip, "-C", stage], { windowsHide: true, timeout: 15 * 60 * 1000 }, (err) => (err ? reject(new Error("Couldn't unpack Blender: " + err.message)) : resolve())));
+        const inner = fs.existsSync(path.join(stage, base, "blender.exe")) ? path.join(stage, base) : fs.existsSync(path.join(stage, "blender.exe")) ? stage : null;
+        if (!inner) throw new Error(`Blender ${rel.version} was unpacked, but blender.exe isn't where it should be. Nothing of yours was changed.`);
+        if (fs.existsSync(folder)) throw new Error(`A folder named ${path.basename(folder)} appeared while unpacking — VYRON left it alone. Try again.`);
+        fs.renameSync(inner, folder);
+      } finally {
+        fs.rmSync(zip, { force: true }); // VYRON's own download
+        fs.rmSync(stage, { recursive: true, force: true }); // VYRON's own unpack folder (already empty or moved when it worked)
+      }
       if (!fs.existsSync(exe)) throw new Error(`Blender ${rel.version} was unpacked, but blender.exe isn't where it should be.`);
       this.log(`Blender ${rel.version} downloaded from blender.org and set up in ${folder}`, "ok", "Blender");
     }
@@ -1017,6 +1037,7 @@ How:
 - See the screen with vyron_pc_screenshot, then use vyron_pc_click / vyron_pc_type / vyron_pc_key / vyron_pc_scroll. Take a new screenshot after each step to check it worked.
 - vyron_connect_blender tells you the next step; repeat until it says connected (at most 5 rounds), handling each step the same way (add-on, extension, restart, start). If it keeps stopping at the same step, tell the user what's wrong with vyron_notify and stop.
 - Never type passwords, never sign in for the user, never discard the user's unsaved work, never download or install anything except the official Blender MCP files named above.
+- NEVER uninstall, delete, move, rename or overwrite any Blender (old or new, even one that's "too old"), its add-ons, preferences or any of the user's files and folders — the user could lose their work. A wrong or old Blender simply stays installed next to the new one.
 - When it's connected, say so in one short sentence.`;
   }
 

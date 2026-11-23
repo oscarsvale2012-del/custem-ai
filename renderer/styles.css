@@ -599,3 +599,34 @@ body.noanim .cmsg.reveal{animation:none;-webkit-mask-image:none;mask-image:none}
 .proj-chev{position:absolute;right:6px;width:12px;height:12px;transform:rotate(90deg);opacity:.55;pointer-events:none}
 .studio-bar{display:flex;align-items:center;gap:10px;margin:10px 14px 0;padding:8px 10px 8px 12px;border-radius:12px;border:1px solid rgba(116,227,174,.3);background:rgba(116,227,174,.07);font-size:13px;animation:pageIn .25s var(--ease) both}
 .studio-bar>svg{width:17px;height:17px;flex:none;color:var(--ok)}
+
+/* ---------- Game setup as a full-screen quiz ---------- */
+#modalRoot .quiz{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;background:radial-gradient(1200px 600px at 50% -10%,color-mix(in srgb,var(--accent) 16%,transparent),transparent 60%),color-mix(in srgb,var(--bg) 96%,transparent);backdrop-filter:blur(18px)}
+.quiz.in{animation:quizIn .35s var(--ease) both}
+@keyframes quizIn{from{opacity:0;transform:scale(.985)}}
+.quiz-top{display:flex;align-items:center;gap:16px;padding:16px 26px;-webkit-app-region:no-drag}
+.quiz-brand{display:flex;align-items:center;gap:8px;font:600 14px var(--f-head);flex:none}.quiz-brand svg{width:18px;height:18px;color:#ffcc33}
+.quiz-steps{flex:1;display:flex;gap:6px;max-width:520px;margin:0 auto}.quiz-steps i{flex:1;height:5px;border-radius:5px;background:var(--surface-3);transition:background .35s}
+.quiz-steps i.done{background:color-mix(in srgb,var(--accent) 55%,var(--surface-3))}.quiz-steps i.on{background:var(--accent);box-shadow:0 0 12px color-mix(in srgb,var(--accent) 60%,transparent)}
+.quiz-count{font-size:12px;font-variant-numeric:tabular-nums;flex:none}
+.quiz-body{flex:1;overflow:auto;width:100%;max-width:980px;margin:0 auto;padding:18px 28px 10px}
+.quiz.in .quiz-body{animation:quizStep .4s var(--ease) both}
+@keyframes quizStep{from{opacity:0;transform:translateY(14px)}}
+.quiz-idea{display:inline-flex;align-items:center;gap:8px;max-width:100%;padding:6px 12px;border-radius:999px;background:var(--surface);border:1px solid var(--border);font-size:12.5px;color:var(--text-2);margin-bottom:14px}.quiz-idea svg{width:14px;height:14px;flex:none;color:var(--accent)}
+.quiz-hint{font-size:13px;color:var(--text-3);margin:-4px 0 6px}
+.quiz-q{font:700 clamp(22px,3vw,30px)/1.2 var(--f-head);letter-spacing:-.02em;margin:10px 0 18px}
+.quiz-q.sub{font-size:clamp(17px,2vw,21px);margin:22px 0 12px}.quiz-q .faint{font:500 13px var(--f-ui);letter-spacing:0}
+.quiz .gs-opts{gap:12px;grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+.quiz .gs-opts.levels{grid-template-columns:repeat(5,minmax(0,1fr))}
+.quiz .gs-opts.chips{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+.quiz .gs-opt{padding:16px;border-radius:16px;min-height:96px}
+.quiz .gs-opt b{font-size:15px}.quiz .gs-opt span:last-child{font-size:12.5px}
+.quiz.in .gs-opt{animation:quizTile .4s var(--ease) both;animation-delay:calc(var(--i,0) * 35ms + 60ms)}
+@keyframes quizTile{from{opacity:0;transform:translateY(10px) scale(.98)}}
+.quiz .gs-opt.on{transform:translateY(-2px)}
+.quiz .gs-swatch{height:64px}
+.quiz-foot{display:flex;align-items:center;gap:10px;padding:16px 28px 22px;width:100%;max-width:980px;margin:0 auto}
+.quiz-foot kbd{font:600 11px var(--f-mono);padding:1px 5px;border-radius:5px;border:1px solid var(--border-2)}
+.quiz-next{min-width:130px;justify-content:center}
+@media (prefers-reduced-motion:reduce){.quiz.in,.quiz.in .quiz-body,.quiz.in .gs-opt{animation:none}}
+body.noanim .quiz.in,body.noanim .quiz.in .quiz-body,body.noanim .quiz.in .gs-opt{animation:none}

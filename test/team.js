@@ -70,13 +70,16 @@ function fakeSpawn(exe, args, opts) {
     assert(/Creator Store/.test(R.ROLES.sound.prompt) && /SoundService/.test(R.ROLES.sound.prompt), "sounds from Roblox's Creator Store");
     assert(/R15/.test(R.ROLES.animator.prompt) && /Rig Builder/.test(R.ROLES.animator.prompt) && /generate_animation/.test(R.ROLES.animator.prompt), "official Roblox rigs + Studio's animation tool");
     for (const r of R.ROLE_IDS) assert(/You make Roblox games/.test(R.ROLES[r].prompt), r + " is made for Roblox game development");
+    assert(/EVERY 3D model in the game is made by you in Blender/.test(R.ROLES.builder.prompt) && /Never build a model out of Studio parts/.test(R.ROLES.builder.prompt) && /Import 3D/.test(R.ROLES.builder.prompt), "every model is made in Blender by the Builder");
+    assert(/give ALL model jobs to the Builder/.test(R.ROLES.cofounder.prompt));
+    assert(/goes in the builder's list, to be made in Blender/.test(R.planPrompt("x", ["builder", "coder"])));
   });
   await test("the team starts with only the Co-Founder; + adds the roles you pick (in the team's order)", async () => {
-    assert.deepEqual(be.teamRoster(), [], "nothing added yet");
+    assert.deepEqual(be.teamRoster(), ["builder"], "nothing added yet: just the Builder, who makes every model in Blender");
     assert(/nobody yet/.test(R.planPrompt("x", [])) && /"cofounder"/.test(R.planPrompt("x", [])), "alone → the Co-Founder plans its own jobs");
-    assert.deepEqual(await dispatch(ctx, "setTeamRoles", [["animator", "sound designer", "music"]]), ["sound", "animator"], "names work, doubles are dropped, the team's order is kept");
+    assert.deepEqual(await dispatch(ctx, "setTeamRoles", [["animator", "sound designer", "music"]]), ["builder", "sound", "animator"], "names work, doubles are dropped, the team's order is kept, the Builder always stays");
     await assert.rejects(dispatch(ctx, "setTeamRoles", [["dragon"]]), /Unknown role/);
-    assert.deepEqual(await dispatch(ctx, "setTeamRoles", [["cofounder"]]), [], "the Co-Founder is always there, so it isn't in the list");
+    assert.deepEqual(await dispatch(ctx, "setTeamRoles", [["cofounder"]]), ["builder"], "the Co-Founder is always there (not in the list), and the Builder can't be removed");
     const p = R.planPrompt("x", ["builder", "sound"]);
     assert(/Sound Designer \("sound"\)/.test(p) && /"sound": \[/.test(p) && !/"coder": \[/.test(p), "the plan only has jobs for the roles in the team");
     await dispatch(ctx, "setTeamRoles", [["builder", "coder", "ui", "money"]]);
@@ -635,6 +638,16 @@ function fakeSpawn(exe, args, opts) {
       assert(steps.some((t) => /100%/.test(t)) && steps.some((t) => /Unpacking/.test(t)), steps.join(" | "));
       // already there → no second download
       untar = null; await be.installBlender(() => {}, env); assert.equal(untar, null);
+      // SAFETY: an old Blender and a folder of yours with the same name are never deleted, moved or overwritten
+      const la2 = path.join(pc, "la2"), env2 = { LOCALAPPDATA: la2 };
+      const old = path.join(la2, "Programs", "blender-4.5.0-windows-x64"); fs.mkdirSync(old, { recursive: true }); fs.writeFileSync(path.join(old, "blender.exe"), "OLD"); fs.writeFileSync(path.join(old, "my-work.blend"), "PRECIOUS");
+      const same = path.join(la2, "Programs", "blender-5.3.0-windows-x64"); fs.mkdirSync(same, { recursive: true }); fs.writeFileSync(path.join(same, "notes.txt"), "MINE");
+      const r2 = await be.installBlender(() => {}, env2);
+      assert.equal(r2.exe, path.join(la2, "Programs", "blender-5.3.0-windows-x64-vyron2", "blender.exe"), "a new folder name instead of touching yours");
+      assert.equal(fs.readFileSync(path.join(old, "blender.exe"), "utf8"), "OLD"); assert.equal(fs.readFileSync(path.join(old, "my-work.blend"), "utf8"), "PRECIOUS");
+      assert.deepEqual(fs.readdirSync(same), ["notes.txt"], "your folder is exactly as it was"); assert.equal(fs.readFileSync(path.join(same, "notes.txt"), "utf8"), "MINE");
+      assert(!fs.readdirSync(path.join(la2, "Programs")).some((n) => n.startsWith(".vyron-unpack-")), "VYRON's temporary unpack folder is cleaned up");
+      assert(/NEVER uninstall, delete, move, rename or overwrite any Blender/.test(be.blenderHelpPrompt({ version: "5.3", exe: "x" }, { step: "addon", message: "" })), "Claude is told never to delete a Blender or files");
       // a download that doesn't match blender.org's checksum is thrown away
       shaFile = `${"f".repeat(64)}  blender-5.3.0-windows-x64.zip\n`;
       await assert.rejects(be.installBlender(() => {}, { LOCALAPPDATA: path.join(pc, "other") }), /checksum/);

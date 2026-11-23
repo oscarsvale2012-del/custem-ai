@@ -573,7 +573,7 @@ function teamColumn() {
       return `<div class="agent r-${r} st-${k}" ${tid ? `data-act="pickTask" data-id="${tid}"` : 'data-go="ideas"'} title="${why}">
         <span class="agent-ic">${ic(ROLE_ICON[r])}</span><div class="grow" style="min-width:0"><div class="agent-name ell">${esc(S.roles[r].name)}</div><div class="faint ell" style="font-size:11px">${why}</div></div>
         <span class="agent-st"><span class="dot"></span>${label}</span></div>`; }).join("")}
-    ${teamMembers(team).length === 1 ? `<button class="agent-add" data-act="teamPick">${ic("plus")}<span>Add roles <span class="faint">— Builder, Coder, UI, Money, Sound, Animator, Debugger</span></span></button>` : ""}</div>`;
+    ${teamMembers(team).length <= ALWAYS.length ? `<button class="agent-add" data-act="teamPick">${ic("plus")}<span>Add roles <span class="faint">— Coder, UI, Money, Sound, Animator, Debugger</span></span></button>` : ""}</div>`;
 }
 
 /* ---------- Blender & Builds: reviews ---------- */
@@ -614,8 +614,10 @@ VIEWS.blender = () => {
 const ROLE_ICON = { cofounder: "crown", builder: "cube", coder: "code", ui: "layout", money: "coin", sound: "music", animator: "run", debug: "bug" };
 const ROLE_ORDER = ["cofounder", "builder", "coder", "ui", "money", "sound", "animator", "debug"];
 /** Who's in the team: always the Co-Founder first, then the roles you added with + (and any role a team is using right now). */
+/** Always in the team: the Co-Founder (leads) and the Builder & Modeler (makes every model in Blender). */
+const ALWAYS = ["cofounder", "builder"];
 function teamMembers(team) {
-  const added = S.settings.teamRoles || [];
+  const added = [...ALWAYS, ...(S.settings.teamRoles || [])];
   return ROLE_ORDER.filter((r) => S.roles[r] && (r === "cofounder" || added.includes(r) || S.claude.tasks.some((x) => x.role === r && (x.busy || x.queued)) || (team?.roles?.[r]?.enabled && ["building", "proposed"].includes(team.status)) || (team && (team.plan?.work?.[r] || []).length && team.roles?.[r]?.enabled)));
 }
 /* ---------- Game setup questions (after you describe your game) ---------- */
@@ -631,14 +633,28 @@ const gsHas = (k, id) => { const v = ui.gs.prefs[k]; return Array.isArray(v) ? v
 function gameSetupModal() {
   const G = S.gameSetup, g = ui.gs, steps = gsSteps(), keys = gsKeys(g.step), last = g.step === steps.length - 1;
   const opt = (k, o) => `<button class="gs-opt ${gsHas(k, o.id) ? "on" : ""} ${k === "money" && o.id === "overload" ? "hot" : ""}" data-act="gsPick" data-key="${k}" data-id="${o.id}">${k === "texture" ? `<span class="gs-swatch t-${o.id}"></span>` : k === "modelQuality" || k === "featureQuality" ? `<span class="gs-level l-${o.id}"><i></i><i></i><i></i><i></i><i></i></span>` : ""}<b>${esc(o.name)}</b><span>${esc(o.desc)}</span></button>`;
-  const body = `<div class="gs-bar">${steps.map((_, i) => `<i class="${i < g.step ? "done" : i === g.step ? "on" : ""}"></i>`).join("")}</div>
-    ${g.step === 0 ? `<div class="faint" style="font-size:12.5px;margin:-2px 0 10px">A few quick choices so the team builds the game the way you want it. Skip anything you don't mind.</div>` : ""}
-    ${keys.map((k) => `<div class="gs-q">${esc(G[k].q)}${G[k].multi ? ` <span class="faint" style="font:500 12px var(--f-ui)">— pick as many as you like</span>` : ""}</div><div class="gs-opts ${k === "feature" ? "chips" : /Quality$/.test(k) ? "levels" : ""}">${G[k].options.map((o) => opt(k, o)).join("")}</div>`).join("")}
-    ${keys.includes("money") && ["lots", "overload"].includes(g.prefs.money) ? `<div class="gs-note">${ic("bell")}<span>Paid crates will show their odds before buying, and are hidden for players in countries where Roblox doesn't allow paid random items. Those are Roblox's own rules, so the game won't get taken down for them.</span></div>` : ""}`;
   const ready = keys.every((k) => (Array.isArray(g.prefs[k]) ? g.prefs[k].length : g.prefs[k]));
-  modal(`Set up your game <span class="faint" style="font-weight:500">· ${g.step + 1} of ${steps.length}</span>`, body,
-    `${g.step ? `<button class="btn ghost" data-act="gsBack">Back</button>` : ""}<div class="grow"></div><button class="btn ghost" data-act="gsSkip">Skip</button><button class="btn primary" data-act="gsNext" ${ready ? "" : "disabled"}>${last ? ic("crown") + "Plan it" : "Next"}</button>`, true);
+  const idea = g.text || (g.ideas.length ? `${g.ideas.length} picked idea${g.ideas.length > 1 ? "s" : ""}` : "");
+  // A full-screen quiz: one step at a time, big tiles, progress on top, your idea as a reminder.
+  const animate = ui.gsShown !== g.step; ui.gsShown = g.step;
+  $("#modalRoot").innerHTML = `<div class="quiz ${animate ? "in" : ""}" role="dialog" aria-label="Set up your game">
+    <div class="quiz-top"><div class="quiz-brand">${ic("crown")}<b>Set up your game</b></div><div class="quiz-steps">${steps.map((_, i) => `<i class="${i < g.step ? "done" : i === g.step ? "on" : ""}"></i>`).join("")}</div><span class="faint quiz-count">${g.step + 1} / ${steps.length}</span><button class="btn sm ghost icon" data-act="gsClose" title="Close (Esc)">${ic("x")}</button></div>
+    <div class="quiz-body">
+      ${idea ? `<div class="quiz-idea">${ic("sparkle")}<span class="ell">“${esc(idea)}”</span></div>` : ""}
+      ${g.step === 0 ? `<div class="quiz-hint">A few quick questions so the team builds it the way you want. Skip anything you don't mind.</div>` : ""}
+      ${keys.map((k, qi) => `<div class="quiz-q ${qi ? "sub" : ""}">${esc(G[k].q)}${G[k].multi ? ` <span class="faint">— pick as many as you like</span>` : ""}</div><div class="gs-opts ${k === "feature" ? "chips" : /Quality$/.test(k) ? "levels" : ""}">${G[k].options.map((o, oi) => opt(k, o).replace('<button class="gs-opt', `<button style="--i:${oi}" class="gs-opt`)).join("")}</div>`).join("")}
+      ${keys.includes("money") && ["lots", "overload"].includes(g.prefs.money) ? `<div class="gs-note">${ic("bell")}<span>Paid crates will show their odds before buying, and are hidden for players in countries where Roblox doesn't allow paid random items. Those are Roblox's own rules, so the game won't get taken down for them.</span></div>` : ""}
+    </div>
+    <div class="quiz-foot">${g.step ? `<button class="btn ghost" data-act="gsBack">← Back</button>` : `<span class="faint" style="font-size:12px">Tip: press <kbd>1</kbd>–<kbd>${Math.min(9, G[keys[0]].options.length)}</kbd> to pick, <kbd>Enter</kbd> for next</span>`}<div class="grow"></div><button class="btn ghost" data-act="gsSkip">Skip</button><button class="btn primary quiz-next" data-act="gsNext" ${ready ? "" : "disabled"}>${last ? ic("crown") + "Plan it" : "Next →"}</button></div>
+  </div>`;
 }
+/** Quiz keys: 1–9 picks an answer of the first question on the screen, Enter = Next, Esc = close. */
+document.addEventListener("keydown", (e) => {
+  if (!$("#modalRoot .quiz") || e.target.closest?.("input,textarea,select")) return;
+  const keys = gsKeys(ui.gs.step);
+  if (/^[1-9]$/.test(e.key)) { const o = S.gameSetup[keys[0]]?.options[Number(e.key) - 1]; if (o) { e.preventDefault(); ACT.gsPick({ dataset: { key: keys[0], id: o.id } }); } }
+  else if (e.key === "Enter") { const b = $("#modalRoot .quiz-next"); if (b && !b.disabled) { e.preventDefault(); ACT.gsNext(); } }
+});
 /** The chosen game settings as small tags on the plan. */
 function prefTags(p) {
   const G = S.gameSetup; if (!G || !p) return "";
@@ -650,9 +666,10 @@ function prefTags(p) {
 /** "+" in the Team list: pick which roles are in the team. */
 function teamPickModal() {
   const added = new Set(S.settings.teamRoles || []);
-  const body = `<div class="stack" style="gap:8px"><div class="muted" style="font-size:13px">The Co-Founder is always there. Add the roles you want — each is its own Claude, so fewer roles use less of your Claude usage.</div>
+  const body = `<div class="stack" style="gap:8px"><div class="muted" style="font-size:13px">The Co-Founder and the Builder &amp; Modeler are always there. Add the roles you want — each is its own Claude, so fewer roles use less of your Claude usage.</div>
     <div class="role-pick on locked"><span class="role-ic r-cofounder">${ic("crown")}</span><div class="grow"><b>Co-Founder</b><div class="faint" style="font-size:12px">${esc(S.roles.cofounder.short)} · always in the team</div></div>${ic("check")}</div>
-    ${ROLE_ORDER.filter((r) => r !== "cofounder" && S.roles[r]).map((r) => `<label class="role-pick ${added.has(r) ? "on" : ""}"><input type="checkbox" data-role-pick="${r}" ${added.has(r) ? "checked" : ""}><span class="role-ic r-${r}">${ic(ROLE_ICON[r])}</span><div class="grow"><b>${esc(S.roles[r].name)}</b><div class="faint" style="font-size:12px">${esc(S.roles[r].short)}</div></div><span class="check-box"></span></label>`).join("")}</div>`;
+    <div class="role-pick on locked"><span class="role-ic r-builder">${ic("cube")}</span><div class="grow"><b>Builder &amp; Modeler</b><div class="faint" style="font-size:12px">Makes every model in Blender so it all looks good · always in the team</div></div>${ic("check")}</div>
+    ${ROLE_ORDER.filter((r) => !ALWAYS.includes(r) && S.roles[r]).map((r) => `<label class="role-pick ${added.has(r) ? "on" : ""}"><input type="checkbox" data-role-pick="${r}" ${added.has(r) ? "checked" : ""}><span class="role-ic r-${r}">${ic(ROLE_ICON[r])}</span><div class="grow"><b>${esc(S.roles[r].name)}</b><div class="faint" style="font-size:12px">${esc(S.roles[r].short)}</div></div><span class="check-box"></span></label>`).join("")}</div>`;
   modal("Your team", body, `<button class="btn ghost" data-act="teamPickAll">Add all</button><div class="grow"></div><button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="teamPickSave">${ic("check")}Save team</button>`);
 }
 const STATE_DOT = { working: "working", waiting: "connecting", done: "connected", problem: "error", off: "unknown", "not started": "unknown", ready: "unknown" };
@@ -678,7 +695,7 @@ function teamCard(t) {
 function teamPanel() {
   const teams = S.teams || [];
   const n = S.ideas.picked.length;
-  return `<div class="panel pad stack cofounder-box"><div class="row" style="gap:12px"><span class="role-ic r-cofounder big">${ic("crown")}</span><div class="grow"><div class="h3">Ask the Co-Founder</div><div class="faint" style="font-size:12.5px">Say your idea — the Co-Founder plans the whole Roblox game and splits it into jobs for ${(S.settings.teamRoles || []).length ? "your team: " + esc((S.settings.teamRoles || []).map((r) => S.roles[r]?.name).filter(Boolean).join(", ")) : "itself (add roles with + to get a team)"}. Nothing is built until you press Accept.</div></div><button class="btn sm" data-act="teamPick">${ic("plus")}Team</button></div>
+  return `<div class="panel pad stack cofounder-box"><div class="row" style="gap:12px"><span class="role-ic r-cofounder big">${ic("crown")}</span><div class="grow"><div class="h3">Ask the Co-Founder</div><div class="faint" style="font-size:12.5px">Say your idea — the Co-Founder plans the whole Roblox game and splits it into jobs for your team: ${esc(teamMembers(null).filter((r) => r !== "cofounder").map((r) => S.roles[r]?.name).filter(Boolean).join(", "))} (add more with +). Nothing is built until you press Accept.</div></div><button class="btn sm" data-act="teamPick">${ic("plus")}Team</button></div>
     <div class="row" style="gap:8px"><input class="input grow" id="cfIdea" placeholder="e.g. a brainrot pet simulator with trading and a lava obby"><button class="btn primary" data-act="teamPlan">${ic("crown")}Plan it${n ? ` (+${n} picked)` : ""}</button></div></div>
     ${teams.map(teamCard).join("")}<div class="sp" style="height:14px"></div>`;
 }
@@ -1148,6 +1165,7 @@ const ACT = {
     if (!text && !S.ideas.picked.length) return toast("Tell the Co-Founder your idea first (or pick some ideas)", "error");
     let saved = {}; try { saved = JSON.parse(lsGet("gamePrefs") || "{}"); } catch { /* none */ }
     ui.gs = { text, ideas: [...S.ideas.picked], step: 0, prefs: { feature: "auto", ...saved } };
+    ui.gsShown = null;
     gameSetupModal();
   },
   gsPick: (el) => {
@@ -1161,6 +1179,7 @@ const ACT = {
     gameSetupModal();
   },
   gsBack: () => { ui.gs.step = Math.max(0, ui.gs.step - 1); gameSetupModal(); },
+  gsClose: () => { closeModal(); ui.gsShown = null; },
   gsSkip: () => { for (const k of gsSteps()[ui.gs.step]) if (k !== "feature") delete ui.gs.prefs[k]; ACT.gsNext(); },
   async gsNext() {
     if (ui.gs.step < gsSteps().length - 1) { ui.gs.step++; return gameSetupModal(); }
@@ -1288,6 +1307,7 @@ document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "b" && !document.body.classList.contains("locked")) { e.preventDefault(); ACT.toggleNav(); }
   if (e.target.id === "claudeInput" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ACT.claudeSend(); }
   if (e.target.id === "quickAsk" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ACT.quickAsk(); }
+  if (e.target.id === "cfIdea" && e.key === "Enter") { e.preventDefault(); ACT.teamPlan(); } // done describing the game → the quiz
   if (e.key === "Enter" && e.target.closest?.("#lockRoot") && e.target.tagName === "INPUT") { e.preventDefault(); $("#lockRoot [data-primary]")?.click(); }
 });
 $("#top").addEventListener("dblclick", (e) => { if (!e.target.closest("button")) B.host("toggleMaximize"); });
