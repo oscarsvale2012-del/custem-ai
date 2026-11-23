@@ -7,7 +7,7 @@ const METHODS = [
   "reviewDecide", "setAuto", "reviewImage", "clearReviews",
   "teamPlan", "teamRevise", "teamAccept", "teamSetRole", "teamDiscard",
   "listIdeas", "setPicked", "addCustomIdea", "removeCustomIdea", "ideaPrompt", "buildIdeas",
-  "checkBlender", "openBlender", "enableBlenderMcp", "makeModel", "finishSetup", "skipDiscord", "setDiscord", "clearDiscord", "testDiscord",
+  "checkBlender", "openBlender", "enableBlenderMcp", "connectBlender", "skipSetup", "makeModel", "finishSetup", "skipDiscord", "setDiscord", "clearDiscord", "testDiscord",
   "connectStudio", "detectStudios", "addProject", "updateProject", "removeProject", "setActiveProject", "refreshGame",
   "accountSyncNow", "linkRoblox", "unlinkRoblox", "setRobloxApiKey", "clearRobloxApiKey", "refreshRevenue", "refreshRates",
 ];

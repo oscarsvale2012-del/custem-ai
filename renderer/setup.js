@@ -67,6 +67,20 @@ If the connector doesn't answer: open VYRON, go to Settings → "Claude controls
    - ❌ what still needs me (for example: Roblox account and Discord, which I connect in VYRON's setup screen),
    - and the reminder to quit and reopen the Claude desktop app.`;
 
+/* ---------- "How to connect Blender" guide (setup list + Blender panel) ---------- */
+// step ids match connectBlender()'s `step`, so the step that needs the user is highlighted.
+const BLENDER_STEPS = [
+  ["install", "Install Blender 5.1 or newer", `It's free. Older Blender (like 4.5) doesn't work with the MCP add-on. <a data-act="openUrl" data-id="https://www.blender.org/download/">Download Blender</a>`],
+  ["extension", "Turn on the Blender extension in Claude desktop", `Claude desktop → <b>Settings → Extensions</b> → search <b>Blender</b> → <b>Install</b> and switch it on.`],
+  ["addon", "Install the MCP add-on in Blender", `Open Blender → <b>Edit → Preferences → Get Extensions</b> → search <b>MCP</b> → <b>Install</b>. If Blender asks to allow online access, allow it. Not listed? Get it from <a data-act="openUrl" data-id="https://www.blender.org/lab/mcp-server/">blender.org/lab/mcp-server</a> and use <b>Install from Disk</b> (the ▾ menu at the top right).`],
+  ["restart", "Close Blender, then press Connect", `Save your work and close Blender. Press <b>Connect</b> here — VYRON turns on Blender's MCP server for good (Auto Start + online access), opens Blender and waits until it's connected.`],
+  ["start", "Still not connected?", `In Blender: <b>Edit → Preferences → Add-ons → MCP</b> → tick it, tick <b>Auto Start</b>, press <b>Start</b>, then <b>Save Preferences</b> (☰ menu bottom left). Press Connect again.`],
+  ["claude", "Restart Claude desktop", `Quit the Claude desktop app from the tray icon (bottom right) and open it again, so it picks up Blender.`],
+];
+function blenderGuide(active) {
+  return `<div class="ob-prompt bl-guide"><b style="font-size:13px">How to connect Blender</b><ol>${BLENDER_STEPS.map(([id, t, d]) => `<li class="${id === active ? "now" : ""}"><b>${t}</b><div class="faint">${d}</div></li>`).join("")}</ol></div>`;
+}
+
 const SETUP_ICON = { claude: "claude", desktop: "dashboard", code: "code", studio: "roblox", blender: "cube", roblox: "revenue", discord: "mail" };
 const HELLO = ["Hi", "Hej", "Hola", "Bonjour", "Hallo", "Ciao", "こんにちは"];
 
@@ -104,17 +118,18 @@ function showSetupList() {
 function setupItem(it) {
   const st = it.ok ? `<span class="ob-ok">${ic("check")}Connected</span>` : it.skipped ? `<span class="ob-no">Skipped</span>` : it.optional ? `<span class="ob-no">Optional</span>` : `<span class="ob-no">Not connected</span>`;
   let act = "";
+  const help = it.id === "blender" ? `<button class="btn sm ghost" data-act="obBlenderHelp">${ui.obBlenderHelp ? "Hide guide" : "How?"}</button>` : "";
   if (!it.ok && it.installed === false) act = `<button class="btn sm primary" data-act="openUrl" data-id="${esc(it.download)}">${ic("download")}Download ${esc(it.downloadName)}</button>`;
   else if (!it.ok) {
     if (it.id === "claude") act = S.claude.found ? `<button class="btn sm primary" data-act="claudeLogin">Sign in to Claude</button>` : `<button class="btn sm" data-act="openUrl" data-id="https://claude.ai/download">Get Claude</button>`;
     if (it.id === "desktop") act = `<button class="btn sm primary" data-act="controlDesktop" data-val="on">Connect</button>`;
-    if (it.id === "code") act = `<button class="btn sm primary" data-act="obPrompt">Copy setup prompt</button>`;
+    if (it.id === "code") act = `<div class="row" style="gap:6px"><button class="btn sm primary" data-act="obPrompt">Copy setup prompt</button>${it.skipped ? "" : `<button class="btn sm ghost" data-act="obSkipItem" data-id="code">Skip</button>`}</div>`;
     if (it.id === "studio") act = `<button class="btn sm" data-act="obRecheck">${ic("refresh")}Check again</button>`;
-    if (it.id === "blender") act = `<button class="btn sm primary" data-act="openBlender">${ic("cube")}Open Blender</button>`;
+    if (it.id === "blender") act = `<button class="btn sm primary" data-act="connectBlender">${ic("cube")}Connect</button>`;
     if (it.id === "roblox") act = `<button class="btn sm primary" data-act="linkRoblox">Sign in with Roblox</button>`;
     if (it.id === "discord") act = `<div class="row" style="gap:6px"><input class="input" id="obDiscord" placeholder="https://discord.com/api/webhooks/…" style="height:32px;width:240px"><button class="btn sm primary" data-act="obDiscord">Connect</button>${it.skipped ? "" : `<button class="btn sm ghost" data-act="obSkipDiscord">Skip</button>`}</div>`;
   }
-  return `<div class="ob-item ${it.ok ? "ok" : ""} ${it.skipped && !it.ok ? "skipped" : ""}"><span class="ob-ic">${ic(SETUP_ICON[it.id])}</span><div class="grow" style="min-width:0"><div class="row" style="gap:8px"><b>${esc(it.name)}</b>${st}</div>${it.ok ? "" : `<div class="faint" style="font-size:12px">${it.installed === false ? (it.tooOld ? `Blender ${esc(it.tooOld)} is too old for the MCP add-on — get Blender 5.1 or newer (it's free), then come back.` : `${esc(it.downloadName)} isn't installed on this PC yet — download it from the official site (free), then come back.`) : esc(it.how)}</div>`}</div>${act}</div>`;
+  return `<div class="ob-item ${it.ok ? "ok" : ""} ${it.skipped && !it.ok ? "skipped" : ""}"><span class="ob-ic">${ic(SETUP_ICON[it.id])}</span><div class="grow" style="min-width:0"><div class="row" style="gap:8px"><b>${esc(it.name)}</b>${st}</div>${it.ok ? "" : `<div class="faint" style="font-size:12px">${it.installed === false ? (it.tooOld ? `Blender ${esc(it.tooOld)} is too old for the MCP add-on — get Blender 5.1 or newer (it's free), then come back.` : `${esc(it.downloadName)} isn't installed on this PC yet — download it from the official site (free), then come back.`) : esc(it.how)}</div>`}</div><div class="row" style="gap:6px">${act}${it.ok ? "" : help}</div></div>${it.id === "blender" && !it.ok && ui.obBlenderHelp ? blenderGuide(ui.blenderStep) : ""}`;
 }
 
 function updateSetupList() {
@@ -125,7 +140,7 @@ function updateSetupList() {
     ${ui.obPrompt ? `<div class="ob-prompt"><ol><li>Open the <b>Claude desktop app</b> and go to the <b>Code</b> tab.</li><li>Paste the prompt (Ctrl+V) and press Enter.</li><li>Watch Claude work; it asks you when it needs you. This list turns green as things connect.</li></ol>
       <textarea class="input mono" readonly id="obPromptText" data-fresh>${esc(SETUP_PROMPT)}</textarea><div class="row"><span class="faint" style="font-size:12px">Your Roblox account and Discord stay with you — connect those below.</span><div class="grow"></div><button class="btn primary" data-act="obCopy">${ic("copy")}Copy prompt</button></div></div>` : ""}
     <div class="ob-list">${s.items.map(setupItem).join("")}</div>
-    <div class="row" style="margin-top:18px"><span class="faint" style="font-size:12px">Everything except Discord is needed to use VYRON.</span><div class="grow"></div><button class="btn ${all ? "primary" : ""} ob-finish" data-act="obFinish" ${all ? "" : "disabled"}>${all ? "Finish — let's build!" : `Finish (${s.total - s.done} left)`}</button></div>`;
+    <div class="row" style="margin-top:18px"><span class="faint" style="font-size:12px">Everything except Claude Code / web and Discord is needed to use VYRON.</span><div class="grow"></div><button class="btn ${all ? "primary" : ""} ob-finish" data-act="obFinish" ${all ? "" : "disabled"}>${all ? "Finish — let's build!" : `Finish (${s.total - s.done} left)`}</button></div>`;
   if (html === setupListHtml) return;
   const card = document.getElementById("obCard");
   const keep = preserve(card);

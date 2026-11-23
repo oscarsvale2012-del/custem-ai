@@ -235,6 +235,10 @@ class ControlServer {
       await this.state();
       return this.call("openBlender");
     });
+    tool("vyron_connect_blender", "One step to connect Blender: finds Blender 5.1+, turns on its MCP server for good, opens it and waits until it's connected. If it stops, `step` says what's needed: install (get Blender 5.1+), addon (install the MCP add-on in Blender), restart (close Blender, then call again) or start (press Start in the MCP add-on).", {}, async () => {
+      await this.state();
+      return this.call("connectBlender");
+    });
     tool("vyron_check_connections", "Re-check Roblox Studio and Blender right now.", {}, async () => {
       await this.state();
       await this.call("connectStudio").catch(() => {});

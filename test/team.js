@@ -343,7 +343,7 @@ function fakeSpawn(exe, args, opts) {
   });
   await test("the setup prompt's tools work through the connector", async () => {
     const st = await tool("vyron_setup_status", {});
-    assert.equal(st.total, 6, "Discord is optional");
+    assert.equal(st.total, 5, "Claude Code / web and Discord are optional");
     assert.equal(st.items.length, 7);
     assert(st.items.every((i) => i.how));
     const LA = path.join(TMP, "LA"); fs.mkdirSync(path.join(LA, "Claude-Data", "acc"), { recursive: true });
@@ -354,11 +354,50 @@ function fakeSpawn(exe, args, opts) {
     const cc = await tool("vyron_check_connections", {});
     assert("studio" in cc && "blender" in cc);
   });
-  await test("Finish needs everything except Discord", async () => {
+  await test("Finish needs everything except Claude Code / web and Discord", async () => {
     await assert.rejects(dispatch(ctx, "finishSetup", []), /Connect these first: .*Roblox Studio.*Blender.*Roblox account/);
-    assert(!/Discord/.test(await dispatch(ctx, "finishSetup", []).catch((e) => e.message)));
+    const msg = await dispatch(ctx, "finishSetup", []).catch((e) => e.message);
+    assert(!/Discord/.test(msg) && !/Claude Code \/ web/.test(msg), msg);
     await dispatch(ctx, "skipDiscord", []);
     assert(be.publicState().setup.items.find((i) => i.id === "discord").skipped);
+  });
+  await test("Skip: Claude Code / web and Discord can be skipped, nothing else", async () => {
+    const code = () => be.publicState().setup.items.find((i) => i.id === "code");
+    assert(code().optional && !code().skipped);
+    await dispatch(ctx, "skipSetup", ["code"]);
+    assert(code().skipped);
+    await dispatch(ctx, "skipSetup", ["discord"]);
+    await assert.rejects(dispatch(ctx, "skipSetup", ["blender"]), /can't be skipped/);
+  });
+  await test("Connect Blender: one click turns on MCP, opens Blender and says which step needs the user", async () => {
+    const pc = path.join(TMP, "pcE"), exeDir = path.join(pc, "PF", "Blender Foundation", "Blender 5.2");
+    const env = { ProgramFiles: path.join(pc, "PF"), USERPROFILE: path.join(pc, "home"), APPDATA: path.join(pc, "ad"), LOCALAPPDATA: path.join(pc, "la") };
+    const realFind = be.findBlenders.bind(be), realAddon = be.blenderAddon.bind(be), realCheck = be.checkBlender.bind(be), realList = be.listWindows.bind(be);
+    be.findBlenders = () => realFind(env); be.blenderAddon = (v) => realAddon(v, env);
+    let open = false, running = false, enabled = 0, started = 0;
+    be.checkBlender = async () => (be.blenderInfo = { found: true, open });
+    be.listWindows = async () => (running ? [{ title: "Blender" }] : []);
+    be.execFileImpl = (exe, args, opts, cb) => { enabled++; cb(null, "VYRON_RESULT " + JSON.stringify({ ok: true })); };
+    be.spawnImpl = () => { started++; running = true; setTimeout(() => (open = true), 50); return { unref() {} }; };
+    const saved = be.d.blenderMcpEnabled; delete be.d.blenderMcpEnabled;
+    try {
+      assert.equal((await dispatch(ctx, "connectBlender", [])).step, "install", "no Blender yet");
+      fs.mkdirSync(exeDir, { recursive: true }); fs.writeFileSync(path.join(exeDir, "blender.exe"), "");
+      assert.equal((await be.connectBlender({ wait: 1 })).step, "addon", "Blender but no MCP add-on");
+      const addonDir = path.join(pc, "ad", "Blender Foundation", "Blender", "5.2", "extensions", "user_default", "mcp");
+      fs.mkdirSync(addonDir, { recursive: true }); fs.writeFileSync(path.join(addonDir, "__init__.py"), "");
+      running = true;
+      assert.equal((await be.connectBlender({ wait: 1 })).step, "restart", "Blender open without MCP → close it first");
+      running = false;
+      const r = await be.connectBlender({ wait: 10 });
+      assert(r.ok && r.step === "done", r.message);
+      assert(enabled >= 1 && started === 1, "turned MCP on and opened Blender once");
+      assert((await be.connectBlender()).ok, "already connected");
+      assert.equal(started, 1, "doesn't open a second Blender");
+    } finally {
+      be.findBlenders = realFind; be.blenderAddon = realAddon; be.checkBlender = realCheck; be.listWindows = realList;
+      delete be.execFileImpl; delete be.spawnImpl; be.d.blenderMcpEnabled = saved;
+    }
   });
   await test("Finish marks this PC as set up (not synced to other PCs)", async () => {
     be.setupStatus = () => ({ items: [], done: 6, total: 6, ready: true, onboarded: (be.d.setupDoneFor || []).includes(be.setupKey()) });

@@ -590,6 +590,27 @@ class Backend extends EventEmitter {
     return { ok: true, version: pick.version, module, message: `Turned on the MCP server in Blender ${pick.version} for good (add-on enabled, Auto Start on, online access allowed). Blender starts it by itself from now on.${(await this.listWindows("blender.exe")).length ? " Blender is open right now — close and reopen it (or press Open Blender) so it picks this up." : ""}` };
   }
 
+  /**
+   * One-click "Connect Blender": find Blender 5.1+, turn on its MCP server for good, open Blender and wait
+   * until VYRON can reach it. Returns { ok, step, message } — step says what the user must do if it stops:
+   * "install" (no Blender 5.1+), "addon" (MCP add-on missing), "restart" (Blender open without MCP), "start" (press Start).
+   */
+  async connectBlender({ wait = 45 } = {}) {
+    const cur = await this.checkBlender().catch(() => null);
+    if (cur?.open) return { ok: true, step: "done", message: "Blender is already connected." };
+    const all = this.findBlenders();
+    if (!all.some((b) => this.blenderOk(b.version))) {
+      const old = all.map((b) => b.version).filter(Boolean).sort().pop();
+      return { ok: false, step: "install", message: old ? `Your Blender ${old} is too old. Get the free Blender 5.1 or newer, then press Connect again.` : "Blender isn't installed. Get the free Blender 5.1 or newer, then press Connect again." };
+    }
+    const en = await this.enableBlenderMcp().catch((e) => ({ ok: false, message: e.message }));
+    if (en.needsInstall) return { ok: false, step: "addon", message: en.message };
+    let r;
+    try { r = await this.openBlender({ wait }); } catch (e) { return { ok: false, step: /add-on isn't installed/.test(e.message) ? "addon" : "install", message: e.message }; }
+    if (r.ok) return { ok: true, step: "done", message: r.message };
+    return { ok: false, step: r.running ? "restart" : "start", message: r.running ? "Blender is open, but without its MCP server. Close Blender (save your work first), then press Connect again." : r.message };
+  }
+
   /** Before a Builder or "Make a 3D model" works: open Blender if it's closed (setting, on by default). */
   ensureBlender() {
     if (this.d.settings.autoOpenBlender === false || this.blenderInfo?.open || this._openingBlender) return;
@@ -623,7 +644,7 @@ class Backend extends EventEmitter {
     const items = [
       { id: "claude", name: "Claude", installed: A.claude, ...dl("Claude desktop", "https://claude.ai/download"), ok: !!(C.found && C.auth?.loggedIn), how: C.found ? "Sign in to Claude (button below)." : "Install the Claude desktop app (it includes Claude Code)." },
       { id: "desktop", name: "Claude desktop", installed: A.claude, ...dl("Claude desktop", "https://claude.ai/download"), ok: !!(X?.desktop?.connected), active: fresh("desktop"), how: "Press Connect, then quit and reopen the Claude desktop app." },
-      { id: "code", name: "Claude Code / web", installed: A.claude, ...dl("Claude desktop", "https://claude.ai/download"), ok: fresh("code"), how: "Paste the setup prompt into the Claude desktop app's Code tab — it connects to VYRON while it sets everything up." },
+      { id: "code", name: "Claude Code / web", optional: true, skipped: !!this.d.codeSkipped, installed: A.claude, ...dl("Claude desktop", "https://claude.ai/download"), ok: fresh("code"), how: "Optional. Paste the setup prompt into the Claude desktop app's Code tab — it connects to VYRON while it sets everything up. You can skip this and connect things yourself." },
       { id: "studio", name: "Roblox Studio", installed: A.studio, ...dl("Roblox Studio", "https://create.roblox.com/landing"), ok: studioOn && this.studios.length > 0, how: studioOn ? "Open your place in Roblox Studio." : "Open Roblox Studio and turn on its AI / MCP connection (Assistant settings)." },
       { id: "blender", name: "Blender", installed: A.blender && A.blenderMcp, ...(A.blender ? dl("Blender MCP add-on", "https://www.blender.org/lab/mcp-server/") : dl("Blender (free)", "https://www.blender.org/download/")), ...(A.blenderOld ? { tooOld: A.blenderOld } : {}), ok: !!b.open, how: !A.blender ? (A.blenderOld ? `Your Blender ${A.blenderOld} is too old for the MCP add-on — it needs Blender 5.1 or newer (free).` : "Blender isn't installed. Get the free Blender 5.1 or newer.") : b.found ? "Open Blender 5.1+ and turn on its MCP add-on (Edit → Preferences → Get Extensions → search “MCP” → Install, then enable it)." : "Install Blender's MCP: Claude desktop → Settings → Extensions → Blender, plus the MCP add-on in Blender (Edit → Preferences → Get Extensions → search “MCP”)." },
       { id: "roblox", name: "Roblox account", ok: !!this.d.roblox.account, how: "Sign in with Roblox (you type your own password on roblox.com)." },
@@ -635,6 +656,12 @@ class Backend extends EventEmitter {
   /** Setup is done per account on each device: this PC's data folder + the signed-in account. */
   setupKey() { return this.account?.user?.id || this.d.account?.owner || "local"; }
   skipDiscord() { this.d.discordSkipped = true; this.save(); }
+  /** Skip an optional setup step (Claude Code / web, Discord). */
+  skipSetup(id) {
+    if (id === "discord") return this.skipDiscord();
+    if (id === "code") { this.d.codeSkipped = true; this.save(); return; }
+    throw new Error("That step can't be skipped");
+  }
   finishSetup() {
     const s = this.setupStatus();
     if (!s.ready) throw new Error("Connect these first: " + s.items.filter((i) => !i.optional && !i.ok).map((i) => i.name).join(", "));
