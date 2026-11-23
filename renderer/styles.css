@@ -126,6 +126,8 @@ textarea.input{height:auto;min-height:96px;padding:10px 12px;resize:vertical;lin
 .radio-card:hover{background:var(--surface)}
 .radio-card.on{border-color:var(--border-2);background:var(--surface-2);box-shadow:var(--hl),var(--glow)}
 .radio-card .dot{margin-top:5px}
+.radio-card.off{opacity:.55;cursor:default}.radio-card.off:hover{background:none}
+.modal .stack .radio-card{margin-bottom:0}
 
 /* status */
 .dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--off)}

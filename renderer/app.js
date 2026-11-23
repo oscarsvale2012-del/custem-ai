@@ -141,6 +141,7 @@ function draw() {
   document.body.classList.toggle("reduce", !!S.settings.reduceEffects);
   drawNav();
   if (typeof drawSetup === "function") drawSetup();
+  if (typeof maybeBlenderStart === "function") maybeBlenderStart();
   const page = $("#page");
   const keep = preserve(page);
   const th0 = $("#thread");
@@ -694,6 +695,7 @@ VIEWS.settings = () => {
       <div class="label" style="margin-top:6px">What Claude may do</div>
       ${[["safe", "Studio, VYRON and project files (recommended)", "Claude builds in Roblox Studio, uses VYRON, and reads/edits files in the project folder. No shell commands."], ["full", "Full access", "Claude may also run commands on this PC without asking. Only turn this on if you trust what you ask for."]].map(([k, t, d]) => `<div class="radio-card ${(s.claudeAccess || "safe") === k ? "on" : ""}" data-act="setting" data-key="claudeAccess" data-val="${k}"><span class="dot ${(s.claudeAccess || "safe") === k ? "connected" : "unknown"}"></span><div><b style="font-weight:600">${t}</b><div class="faint" style="font-size:12.5px">${d}</div></div></div>`).join("")}
       <label class="field"><span>Model</span><select class="select" data-change="setting" data-key="claudeModel">${[["", "Default (your plan's default)"], ["opus", "Opus — strongest"], ["sonnet", "Sonnet — balanced"], ["haiku", "Haiku — fastest"]].map(([k, l]) => `<option value="${k}" ${(s.claudeModel || "") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <div class="row"><span class="grow">Connect Blender when VYRON starts <span class="faint" style="font-size:12px">(${S.settings.blenderExe ? "Blender " + esc((S.setup?.apps?.blenders || []).find((b) => b.exe === S.settings.blenderExe)?.version || "picked") : "newest Blender"})</span></span><button class="btn sm ghost" data-act="openBlenderConnect">Choose Blender…</button><div class="toggle ${s.autoConnectBlender === true ? "on" : ""}" data-act="setting" data-key="autoConnectBlender" data-val="${s.autoConnectBlender !== true}"></div></div>
       <div class="row"><span class="grow">Open Blender by itself when Claude needs it</span><div class="toggle ${s.autoOpenBlender !== false ? "on" : ""}" data-act="setting" data-key="autoOpenBlender" data-val="${s.autoOpenBlender === false}"></div></div>
       <div class="row"><span class="grow">Blender for Claude <span class="faint" style="font-size:12px">(${S.blender?.found ? "found" : "Blender extension not found"})</span></span><div class="toggle ${s.blender !== false ? "on" : ""}" data-act="setting" data-key="blender" data-val="${s.blender === false}"></div></div>
       <div class="row"><span class="grow">Usage meter <span class="faint" style="font-size:12px">(Claude usage left, in the sidebar)</span></span><div class="seg">${[["circle", "Circle"], ["bar", "Bar"], ["off", "Off"]].map(([k, l]) => `<button class="${(s.usageStyle || "circle") === k ? "on" : ""}" data-act="setting" data-key="usageStyle" data-val="${k}">${l}</button>`).join("")}</div></div>
@@ -934,6 +936,19 @@ const ACT = {
       toast(r.message, r.ok ? "" : "error");
     } finally { setupListHtml = ""; render(); if (setupPhase === "list") updateSetupList(); }
   },
+  blPick: (el) => { ui.blExe = el.dataset.id; ui.blMsg = ""; ui.blenderStep = null; blenderConnectModal(); },
+  async blAuto() { await call("saveSettings", { autoConnectBlender: S.settings.autoConnectBlender !== true }); S.settings.autoConnectBlender = S.settings.autoConnectBlender !== true; blenderConnectModal(); },
+  async blNoAsk() { closeModal(); await call("saveSettings", { blenderStartPrompt: false }); toast("OK — connect Blender any time from the Blender page or Settings."); },
+  async blConnect(el) {
+    if (el) { el.disabled = true; el.innerHTML = '<span class="spinner"></span>Connecting… (up to a minute)'; }
+    try {
+      const exe = blenderPickExe();
+      const r = await call("connectBlender", exe ? { exe } : {});
+      ui.blOk = r.ok; ui.blMsg = r.message; ui.blenderStep = r.ok ? null : r.step;
+      if (r.ok) { closeModal(); toast(r.message); ui.blMsg = ""; } else blenderConnectModal();
+    } catch { blenderConnectModal(); } finally { render(); }
+  },
+  openBlenderConnect: () => { ui.blMsg = ""; ui.blenderStep = null; blenderConnectModal(); },
   obBlenderHelp: () => { ui.obBlenderHelp = !ui.obBlenderHelp; updateSetupList(); },
   blenderHelp: () => { ui.blenderHelp = !ui.blenderHelp; render(); },
   async obSkipItem(el) { await call("skipSetup", el.dataset.id); },

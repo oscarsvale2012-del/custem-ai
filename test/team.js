@@ -386,6 +386,9 @@ function fakeSpawn(exe, args, opts) {
       assert.equal((await be.connectBlender({ wait: 1 })).step, "addon", "Blender but no MCP add-on");
       const addonDir = path.join(pc, "ad", "Blender Foundation", "Blender", "5.2", "extensions", "user_default", "mcp");
       fs.mkdirSync(addonDir, { recursive: true }); fs.writeFileSync(path.join(addonDir, "__init__.py"), "");
+      be.blenderMcpServer = () => null;
+      assert.equal((await be.connectBlender({ wait: 1 })).step, "extension", "no Blender extension in Claude desktop");
+      be.blenderMcpServer = () => ({ command: "blender-mcp.exe" });
       running = true;
       assert.equal((await be.connectBlender({ wait: 1 })).step, "restart", "Blender open without MCP → close it first");
       running = false;
@@ -396,7 +399,73 @@ function fakeSpawn(exe, args, opts) {
       assert.equal(started, 1, "doesn't open a second Blender");
     } finally {
       be.findBlenders = realFind; be.blenderAddon = realAddon; be.checkBlender = realCheck; be.listWindows = realList;
-      delete be.execFileImpl; delete be.spawnImpl; be.d.blenderMcpEnabled = saved;
+      delete be.execFileImpl; delete be.spawnImpl; delete be.blenderMcpServer; be.d.blenderMcpEnabled = saved;
+    }
+  });
+  await test("Any Blender the MCP add-on supports: version range from the add-on's manifest, versions from any folder", () => {
+    const pc = path.join(TMP, "pcF");
+    const env = { ProgramFiles: path.join(pc, "PF"), "ProgramFiles(x86)": path.join(pc, "PF86"), USERPROFILE: path.join(pc, "home"), APPDATA: path.join(pc, "ad"), LOCALAPPDATA: path.join(pc, "la") };
+    const mk = (p, inner) => { fs.mkdirSync(path.join(p, inner || ""), { recursive: true }); fs.writeFileSync(path.join(p, "blender.exe"), ""); };
+    const manifest = (v, body) => { const d = path.join(pc, "ad", "Blender Foundation", "Blender", v, "extensions", "user_default", "mcp"); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, "__init__.py"), ""); fs.writeFileSync(path.join(d, "blender_manifest.toml"), body); };
+    mk(path.join(pc, "PF", "Blender Foundation", "Blender 4.5"));
+    mk(path.join(pc, "PF86", "Steam", "steamapps", "common", "Blender"), "5.3"); // no version in the folder name
+    const ver = (exe) => be.findBlenders(env).find((b) => b.exe.includes(exe)).version;
+    assert.equal(ver("Steam"), "5.3", "version read from Blender's own 5.3 folder");
+    be._mcpRange = null;
+    assert.deepEqual(be.blenderMcpRange(env), { min: "5.1", max: null }, "no add-on yet → 5.1 or newer");
+    assert(!be.blenderOk("4.5", env) && be.blenderOk("5.3", env) && be.blenderOk("6.0", env) && be.blenderOk("5.10", env));
+    manifest("5.3", 'id = "mcp"\nblender_version_min = "4.2.0"\n');
+    be._mcpRange = null;
+    assert.equal(be.blenderMcpRange(env).min, "4.2");
+    assert(be.blenderOk("4.5", env), "a newer add-on that supports 4.2+ makes Blender 4.5 work");
+    assert.equal(be.blenderNeeds(env), "4.2 or newer");
+    manifest("4.5", 'id = "mcp"\nblender_version_min = "4.2.0"\nblender_version_max = "6.0.0"\n');
+    be._mcpRange = null;
+    assert(!be.blenderOk("6.0", env) && be.blenderOk("5.9", env), "blender_version_max is respected");
+    const ch = be.blenderChoices(env);
+    assert.deepEqual(ch.map((b) => b.version), ["5.3", "4.5"], "newest first");
+    assert(ch.every((b) => b.supported && b.addon));
+    // a portable Blender keeps its add-ons in its own "portable" folder
+    const port = path.join(pc, "home", "Downloads", "blender-5.4.0-windows-x64");
+    mk(port); fs.mkdirSync(path.join(port, "portable", "extensions", "blender_org", "mcp"), { recursive: true }); fs.writeFileSync(path.join(port, "portable", "extensions", "blender_org", "mcp", "__init__.py"), "");
+    assert.equal(be.blenderAddon("5.4.0", env, path.join(port, "blender.exe")), "bl_ext.blender_org.mcp");
+    be._mcpRange = null; be._apps = null;
+  });
+  await test("Connect Blender: pick which Blender (remembered), and connect by itself at start when turned on", async () => {
+    const pc = path.join(TMP, "pcG"), env = { ProgramFiles: path.join(pc, "PF"), USERPROFILE: path.join(pc, "home"), APPDATA: path.join(pc, "ad"), LOCALAPPDATA: path.join(pc, "la") };
+    for (const v of ["4.5", "5.1", "5.2"]) { const d = path.join(pc, "PF", "Blender Foundation", "Blender " + v); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, "blender.exe"), ""); }
+    for (const v of ["5.1", "5.2"]) { const d = path.join(pc, "ad", "Blender Foundation", "Blender", v, "extensions", "user_default", "mcp"); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, "__init__.py"), ""); }
+    const exe = (v) => path.join(pc, "PF", "Blender Foundation", "Blender " + v, "blender.exe");
+    const realFind = be.findBlenders.bind(be), realAddon = be.blenderAddon.bind(be), realCheck = be.checkBlender.bind(be), realList = be.listWindows.bind(be);
+    be.findBlenders = () => realFind(env); be.blenderAddon = (v, e, x) => realAddon(v, env, x);
+    let open = false, opened = [];
+    be.checkBlender = async () => (be.blenderInfo = { found: true, open });
+    be.listWindows = async () => [];
+    be.blenderMcpServer = () => ({ command: "blender-mcp.exe" });
+    be.execFileImpl = (x, args, opts, cb) => cb(null, "VYRON_RESULT " + JSON.stringify({ ok: true }));
+    be.spawnImpl = (x) => { opened.push(x); setTimeout(() => (open = true), 30); return { unref() {} }; };
+    const savedS = { ...be.d.settings };
+    try {
+      assert.equal(be.pickBlender().exe, exe("5.2"), "newest with the add-on by default");
+      const old = await dispatch(ctx, "connectBlender", [{ exe: exe("4.5") }]);
+      assert(!old.ok && old.step === "install" && /5\.1 or newer/.test(old.message), "4.5 can't run the add-on");
+      const r = await dispatch(ctx, "connectBlender", [{ exe: exe("5.1"), wait: 5 }]);
+      assert(r.ok, r.message);
+      assert.equal(opened[0], exe("5.1"), "opened the Blender the user picked");
+      assert.equal(be.d.settings.blenderExe, exe("5.1"), "remembered");
+      assert.equal(be.pickBlender().exe, exe("5.1"));
+      assert(be.installedApps(env).blenders.some((b) => b.version === "4.5" && !b.supported), "the picker shows 4.5 as not supported");
+      // start: nothing happens unless "Connect Blender when VYRON starts" is on
+      open = false; opened = [];
+      be.d.settings.autoConnectBlender = false; await be.autoConnectBlender(); assert.equal(opened.length, 0);
+      be.d.settings.autoConnectBlender = true; await be.autoConnectBlender(); assert.equal(opened.length, 1, "connects by itself at start");
+      await be.autoConnectBlender(); assert.equal(opened.length, 1, "already connected → nothing");
+      await dispatch(ctx, "saveSettings", [{ autoConnectBlender: false, blenderStartPrompt: false }]);
+      assert(be.d.settings.blenderStartPrompt === false && be.d.settings.autoConnectBlender === false, "settings are saved");
+    } finally {
+      be.findBlenders = realFind; be.blenderAddon = realAddon; be.checkBlender = realCheck; be.listWindows = realList;
+      delete be.execFileImpl; delete be.spawnImpl; delete be.blenderMcpServer; be.d.settings = Object.assign(be.d.settings, savedS); delete be.d.settings.blenderExe; be._apps = null;
+      if (savedS.blenderExe) be.d.settings.blenderExe = savedS.blenderExe;
     }
   });
   await test("Finish marks this PC as set up (not synced to other PCs)", async () => {

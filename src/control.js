@@ -231,11 +231,11 @@ class ControlServer {
       await this.state();
       return this.call("enableBlenderMcp");
     });
-    tool("vyron_open_blender", "Open Blender (5.1 or newer) with the MCP add-on turned on, so it connects to VYRON and Claude by itself. Waits up to 45 seconds and says if it worked.", {}, async () => {
+    tool("vyron_open_blender", "Open Blender (any version the MCP add-on supports — 5.1 or newer today) with the MCP add-on turned on, so it connects to VYRON and Claude by itself. Waits up to 45 seconds and says if it worked.", {}, async () => {
       await this.state();
       return this.call("openBlender");
     });
-    tool("vyron_connect_blender", "One step to connect Blender: finds Blender 5.1+, turns on its MCP server for good, opens it and waits until it's connected. If it stops, `step` says what's needed: install (get Blender 5.1+), addon (install the MCP add-on in Blender), restart (close Blender, then call again) or start (press Start in the MCP add-on).", {}, async () => {
+    tool("vyron_connect_blender", "One step to connect Blender: finds a Blender the MCP add-on supports (5.1 or newer today; VYRON reads the add-on's own version range), turns on its MCP server for good, opens it and waits until it's connected. If it stops, `step` says what's needed: install (get a supported Blender), addon (install the MCP add-on in Blender), extension (turn on the Blender extension in Claude desktop), restart (close Blender, then call again) or start (press Start in the MCP add-on).", {}, async () => {
       await this.state();
       return this.call("connectBlender");
     });

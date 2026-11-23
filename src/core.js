@@ -21,6 +21,9 @@ const STUDIO_ID = "studio";
 const REVIEW_KINDS = ["model", "build", "ui", "gamepass"];
 const REVIEW_NAME = { model: "3D model", build: "Build", ui: "UI", gamepass: "Gamepasses" };
 const BLENDER_ID = "blender";
+const BLENDER_MCP_MIN = "5.1"; // used until the MCP add-on is installed and its manifest says otherwise
+/** Compare version strings like "5.2.4" and "5.10" by number. */
+const cmpVer = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
 
 class Backend extends EventEmitter {
   constructor({ dataDir, encrypt, decrypt, host = {}, fetchImpl, claude, studio = true, pc }) {
@@ -76,7 +79,7 @@ class Backend extends EventEmitter {
     this.log("VYRON started", "info", "System");
     if (this.useStudio) {
       this.connectStudio().catch(() => {});
-      setTimeout(() => this.checkBlender().catch(() => {}), 3000);
+      setTimeout(() => this.autoConnectBlender().catch(() => {}).then(() => this.blenderInfo || this.checkBlender()).catch(() => {}), 3000);
       this._blenderTimer = setInterval(() => { this.checkBlender().catch(() => {}); this.scanWindows().catch(() => {}); }, 20000);
       this.scanWindows().catch(() => {});
       this._studioTimer = setInterval(() => this.detectStudios(true).catch(() => {}), 15000);
@@ -127,7 +130,7 @@ class Backend extends EventEmitter {
       claude: this.claude.public(),
       teams: this.teamsPublic(),
       roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { name: R.ROLES[r].name, short: R.ROLES[r].short }])),
-      blender: { found: !!blenderServer(), on: this.d.settings.blender !== false, ...(this.blenderInfo || {}) },
+      blender: { found: !!blenderServer(), on: this.d.settings.blender !== false, ...(this.blenderInfo || {}), checked: !!this.blenderInfo, connecting: !!this._openingBlender },
       pc: { mode: this.d.settings.pcControl || "off", asks: this.pcAsks.map(({ resolve, reject, timer, ...a }) => a), allowedUntil: this.pcUntil > now() ? this.pcUntil : 0, activeAt: this.pcLast },
       workDir: this.workDir(),
       notes: this.notes.slice(-20),
@@ -138,7 +141,7 @@ class Backend extends EventEmitter {
   }
 
   saveSettings(patch) {
-    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook", "uiSounds", "uiHover", "uiPack", "blender", "autoApprove", "usageStyle", "autoOpenBlender"]) if (k in patch) this.d.settings[k] = patch[k];
+    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook", "uiSounds", "uiHover", "uiPack", "blender", "autoApprove", "usageStyle", "autoOpenBlender", "autoConnectBlender", "blenderStartPrompt", "blenderExe"]) if (k in patch) this.d.settings[k] = patch[k];
     const S = this.d.settings;
     if (!["vyron", "windows", "off"].includes(S.notifyStyle)) S.notifyStyle = "vyron";
     S.keepRunning = S.keepRunning !== false;
@@ -523,7 +526,14 @@ class Backend extends EventEmitter {
     const ls = (d) => { try { return fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name); } catch { return []; } };
     const home = env.USERPROFILE || "", la = env.LOCALAPPDATA || "";
     const out = [];
-    const add = (dir) => { const exe = path.join(dir, "blender.exe"); if (fs.existsSync(exe)) { const m = dir.match(/blender[ -]?(\d+)\.(\d+)(?:\.(\d+))?/i); out.push({ exe, version: m ? `${m[1]}.${m[2]}${m[3] ? "." + m[3] : ""}` : null }); } };
+    const add = (dir) => {
+      const exe = path.join(dir, "blender.exe");
+      if (!fs.existsSync(exe) || out.some((o) => o.exe.toLowerCase() === exe.toLowerCase())) return;
+      const m = dir.match(/blender[ -]?(\d+)\.(\d+)(?:\.(\d+))?/i);
+      // Folder without a version (Steam, "Blender", custom names): Blender keeps its files in a "<major>.<minor>" folder next to blender.exe.
+      const inner = ls(dir).filter((x) => /^\d+\.\d+$/.test(x)).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0];
+      out.push({ exe, version: m ? `${m[1]}.${m[2]}${m[3] ? "." + m[3] : ""}` : inner || null });
+    };
     for (const pf of [env.ProgramFiles, env["ProgramFiles(x86)"]].filter(Boolean)) for (const v of ls(path.join(pf, "Blender Foundation"))) add(path.join(pf, "Blender Foundation", v));
     if (la) for (const v of ls(path.join(la, "Programs")).filter((x) => /blender/i.test(x))) add(path.join(la, "Programs", v));
     for (const steam of [env["ProgramFiles(x86)"], env.ProgramFiles].filter(Boolean)) add(path.join(steam, "Steam", "steamapps", "common", "Blender"));
@@ -532,14 +542,60 @@ class Backend extends EventEmitter {
     return out;
   }
   /** Where the MCP add-on is installed for a Blender version: returns the add-on module, e.g. bl_ext.user_default.mcp. */
-  blenderAddon(version, env = process.env) {
+  blenderAddon(version, env = process.env, exe = null) {
     if (!version) return null;
-    const mm = version.split(".").slice(0, 2).join(".");
-    const ext = path.join(env.APPDATA || "", "Blender Foundation", "Blender", mm, "extensions");
-    let repos = []; try { repos = fs.readdirSync(ext); } catch { /* none */ }
-    for (const r of repos) if (fs.existsSync(path.join(ext, r, "mcp", "__init__.py"))) return `bl_ext.${r}.mcp`;
+    for (const dir of this.blenderConfigDirs(version, env, exe)) {
+      const ext = path.join(dir, "extensions");
+      let repos = []; try { repos = fs.readdirSync(ext); } catch { /* none */ }
+      for (const r of repos) if (fs.existsSync(path.join(ext, r, "mcp", "__init__.py"))) return `bl_ext.${r}.mcp`;
+      if (fs.existsSync(path.join(dir, "scripts", "addons", "mcp", "__init__.py"))) return "mcp"; // installed as a legacy add-on
+    }
     return null;
   }
+  /** Blender's user folders for a version: the normal one in AppData, and a portable copy's own "portable" folder. */
+  blenderConfigDirs(version, env = process.env, exe = null) {
+    const mm = String(version).split(".").slice(0, 2).join(".");
+    const dirs = [];
+    if (exe) dirs.push(path.join(path.dirname(exe), "portable"));
+    dirs.push(path.join(env.APPDATA || "", "Blender Foundation", "Blender", mm));
+    return dirs;
+  }
+  /**
+   * Which Blender versions the MCP add-on supports. Read from the add-on's own blender_manifest.toml
+   * (blender_version_min / _max), so a newer add-on that supports other versions works without a VYRON update.
+   */
+  blenderMcpRange(env = process.env) {
+    if (this._mcpRange && this._mcpRange.env === env && now() - this._mcpRange.at < 30000) return this._mcpRange.r;
+    const ls = (d) => { try { return fs.readdirSync(d); } catch { return []; } };
+    const base = path.join(env.APPDATA || "", "Blender Foundation", "Blender");
+    let min = null, max = null;
+    for (const v of ls(base)) for (const repo of ls(path.join(base, v, "extensions"))) {
+      let toml = ""; try { toml = fs.readFileSync(path.join(base, v, "extensions", repo, "mcp", "blender_manifest.toml"), "utf8"); } catch { continue; }
+      const lo = (toml.match(/^\s*blender_version_min\s*=\s*"([\d.]+)"/m) || [])[1], hi = (toml.match(/^\s*blender_version_max\s*=\s*"([\d.]+)"/m) || [])[1];
+      if (lo && (!min || cmpVer(lo, min) < 0)) min = lo;
+      if (hi && (!max || cmpVer(hi, max) > 0)) max = hi;
+    }
+    const mm = (v) => v.split(".").slice(0, 2).join(".");
+    const r = { min: mm(min || BLENDER_MCP_MIN), max: max ? mm(max) : null }; // max is the first version NOT supported
+    this._mcpRange = { env, at: now(), r };
+    return r;
+  }
+  /** All Blenders on this PC, newest first, with whether the MCP add-on supports them and is installed. */
+  blenderChoices(env) {
+    const range = this.blenderMcpRange(env);
+    return this.findBlenders(env)
+      .map((b) => ({ ...b, supported: this.blenderOk(b.version, env), addon: !!this.blenderAddon(b.version, env, b.exe) }))
+      .sort((a, b) => cmpVer(b.version || "0", a.version || "0"))
+      .map((b) => ({ ...b, min: range.min }));
+  }
+  /** The Blender to use: the one picked in VYRON (if still there and supported), else the newest with the add-on, else the newest supported. */
+  pickBlender() {
+    const good = this.blenderChoices().filter((b) => b.supported);
+    const want = this.d.settings.blenderExe;
+    return good.find((b) => want && b.exe.toLowerCase() === String(want).toLowerCase()) || good.find((b) => b.addon) || good[0] || null;
+  }
+  /** Blender's MCP server (from the Claude desktop Blender extension). Separate so tests can swap it. */
+  blenderMcpServer() { return blenderServer(); }
   /**
    * Open Blender (5.1+) with the MCP add-on turned on and online access allowed for this session,
    * so the add-on starts its server by itself, then wait until VYRON can reach it.
@@ -547,10 +603,9 @@ class Backend extends EventEmitter {
   async openBlender({ wait = 45 } = {}) {
     const cur = await this.checkBlender().catch(() => null);
     if (cur?.open) return { ok: true, already: true, message: "Blender is already open and connected." };
-    const good = this.findBlenders().filter((b) => this.blenderOk(b.version)).sort((a, b) => String(b.version).localeCompare(String(a.version), undefined, { numeric: true }));
-    if (!good.length) throw new Error("No Blender 5.1 or newer on this PC. Get it free at https://www.blender.org/download/");
-    const pick = good.find((b) => this.blenderAddon(b.version)) || good[0];
-    const addon = this.blenderAddon(pick.version);
+    const pick = this.pickBlender();
+    if (!pick) throw new Error(`No Blender ${this.blenderNeeds()} on this PC. Get it free at https://www.blender.org/download/`);
+    const addon = this.blenderAddon(pick.version, undefined, pick.exe);
     if (!addon) throw new Error(`The MCP add-on isn't installed in Blender ${pick.version}. In Blender: Edit → Preferences → Get Extensions → search "MCP" → Install (see https://www.blender.org/lab/mcp-server/), then try again.`);
     if (!this.d.blenderMcpEnabled) await this.enableBlenderMcp().catch(() => null);
     const running = await this.listWindows("blender.exe");
@@ -571,11 +626,10 @@ class Backend extends EventEmitter {
    * save Blender's preferences. Runs Blender invisibly in the background (src/blender-enable-mcp.py).
    */
   async enableBlenderMcp() {
-    const good = this.findBlenders().filter((b) => this.blenderOk(b.version)).sort((a, b) => String(b.version).localeCompare(String(a.version), undefined, { numeric: true }));
-    if (!good.length) throw new Error("No Blender 5.1 or newer on this PC. Get it free at https://www.blender.org/download/");
-    const pick = good.find((b) => this.blenderAddon(b.version));
-    if (!pick) return { ok: false, needsInstall: true, version: good[0].version, message: `The MCP add-on isn't installed in Blender ${good[0].version} yet. Install it in Blender: Edit → Preferences → Get Extensions → search "MCP" → Install (or from https://www.blender.org/lab/mcp-server/), then run this again.` };
-    const module = this.blenderAddon(pick.version);
+    const pick = this.pickBlender();
+    if (!pick) throw new Error(`No Blender ${this.blenderNeeds()} on this PC. Get it free at https://www.blender.org/download/`);
+    const module = this.blenderAddon(pick.version, undefined, pick.exe);
+    if (!module) return { ok: false, needsInstall: true, version: pick.version, message: `The MCP add-on isn't installed in Blender ${pick.version} yet. Install it in Blender: Edit → Preferences → Get Extensions → search "MCP" → Install (or from https://www.blender.org/lab/mcp-server/), then run this again.` };
     let script = path.join(__dirname, "blender-enable-mcp.py");
     if (script.includes(".asar" + path.sep)) script = script.replace(".asar" + path.sep, ".asar.unpacked" + path.sep);
     const out = await new Promise((resolve) => {
@@ -591,19 +645,28 @@ class Backend extends EventEmitter {
   }
 
   /**
-   * One-click "Connect Blender": find Blender 5.1+, turn on its MCP server for good, open Blender and wait
+   * One-click "Connect Blender": find a Blender the MCP add-on supports, turn on its MCP server for good, open Blender and wait
    * until VYRON can reach it. Returns { ok, step, message } — step says what the user must do if it stops:
-   * "install" (no Blender 5.1+), "addon" (MCP add-on missing), "restart" (Blender open without MCP), "start" (press Start).
+   * "install" (no supported Blender), "addon" (MCP add-on missing), "extension" (Claude's Blender extension missing),
+   * "restart" (Blender open without MCP), "start" (press Start).
+   * `exe` picks a specific Blender (remembered for next time).
    */
-  async connectBlender({ wait = 45 } = {}) {
+  async connectBlender({ wait = 45, exe = null } = {}) {
+    if (exe) {
+      const c = this.blenderChoices().find((b) => b.exe.toLowerCase() === String(exe).toLowerCase());
+      if (!c) return { ok: false, step: "install", message: "That Blender isn't on this PC any more. Pick another one." };
+      if (!c.supported) return { ok: false, step: "install", message: `Blender ${c.version} doesn't work with the MCP add-on — it needs Blender ${this.blenderNeeds()}. Pick another Blender or get the free newest one.` };
+      if (this.d.settings.blenderExe !== c.exe) { this.d.settings.blenderExe = c.exe; this.save(); }
+    }
     const cur = await this.checkBlender().catch(() => null);
     if (cur?.open) return { ok: true, step: "done", message: "Blender is already connected." };
     const all = this.findBlenders();
     if (!all.some((b) => this.blenderOk(b.version))) {
-      const old = all.map((b) => b.version).filter(Boolean).sort().pop();
-      return { ok: false, step: "install", message: old ? `Your Blender ${old} is too old. Get the free Blender 5.1 or newer, then press Connect again.` : "Blender isn't installed. Get the free Blender 5.1 or newer, then press Connect again." };
+      const old = all.map((b) => b.version).filter(Boolean).sort(cmpVer).pop();
+      return { ok: false, step: "install", message: old ? `Your Blender ${old} doesn't work with the MCP add-on — it needs Blender ${this.blenderNeeds()}. Get the free newest Blender, then press Connect again.` : `Blender isn't installed. Get the free Blender (${this.blenderNeeds()}), then press Connect again.` };
     }
     const en = await this.enableBlenderMcp().catch((e) => ({ ok: false, message: e.message }));
+    if (!en.needsInstall && !this.blenderMcpServer()) return { ok: false, step: "extension", message: "Turn on the Blender extension in the Claude desktop app (Settings → Extensions → Blender), then press Connect again." };
     if (en.needsInstall) return { ok: false, step: "addon", message: en.message };
     let r;
     try { r = await this.openBlender({ wait }); } catch (e) { return { ok: false, step: /add-on isn't installed/.test(e.message) ? "addon" : "install", message: e.message }; }
@@ -618,7 +681,27 @@ class Backend extends EventEmitter {
     this.openBlender().catch((e) => this.log("Couldn't open Blender: " + e.message, "warn", "Blender")).finally(() => (this._openingBlender = false));
   }
 
-  blenderOk(v) { if (!v) return true; const [a, b] = v.split(".").map(Number); return a > 5 || (a === 5 && b >= 1); }
+  /** Does the MCP add-on support this Blender version? (Unknown version: let it try.) */
+  blenderOk(v, env) {
+    if (!v) return true;
+    const { min, max } = this.blenderMcpRange(env);
+    const mm = v.split(".").slice(0, 2).join(".");
+    return cmpVer(mm, min) >= 0 && (!max || cmpVer(mm, max) < 0);
+  }
+  /** "5.1 or newer" (or "5.1 to 6.0" if the add-on has a top version). */
+  blenderNeeds(env) { const { min, max } = this.blenderMcpRange(env); return max ? `${min} or newer, below ${max}` : `${min} or newer`; }
+
+  /** On start: connect Blender by itself if the user turned that on. */
+  async autoConnectBlender() {
+    if (this.d.settings.autoConnectBlender !== true || this.d.settings.blender === false) return;
+    const b = await this.checkBlender().catch(() => null);
+    if (b?.open || this._openingBlender) return;
+    this._openingBlender = true; this.changed();
+    try {
+      const r = await this.connectBlender();
+      this.log(r.ok ? r.message : "Couldn't connect Blender at start: " + r.message, r.ok ? "ok" : "warn", "Blender");
+    } finally { this._openingBlender = false; }
+  }
 
   /** Which apps are installed on this PC (official download links for the missing ones). */
   installedApps(env = process.env) {
@@ -627,10 +710,11 @@ class Backend extends EventEmitter {
     const la = env.LOCALAPPDATA || "", pf = [env.ProgramFiles, env["ProgramFiles(x86)"], la && path.join(la, "Programs")].filter(Boolean);
     const studio = !!la && (fs.existsSync(path.join(la, "Roblox", "mcp.bat")) || ls(path.join(la, "Roblox", "Versions")).some((v) => fs.existsSync(path.join(la, "Roblox", "Versions", v, "RobloxStudioBeta.exe"))));
     const blenders = this.findBlenders(env);
-    const good = blenders.filter((x) => this.blenderOk(x.version));
+    const good = blenders.filter((x) => this.blenderOk(x.version, env));
     const blender = good.length > 0;
-    const blenderOld = !blender && blenders.length > 0 ? blenders.map((x) => x.version).filter(Boolean).sort().pop() || "old" : null;
-    this._apps = { at: now(), claude: !!this.claude.exe, studio, blender, blenderOld, blenders: blenders.map((x) => ({ version: x.version, exe: x.exe })), blenderMcp: !!blenderServer() };
+    const blenderOld = !blender && blenders.length > 0 ? blenders.map((x) => x.version).filter(Boolean).sort(cmpVer).pop() || "old" : null;
+    const choices = this.blenderChoices(env).map(({ exe, version, supported, addon }) => ({ exe, version, supported, addon }));
+    this._apps = { at: now(), claude: !!this.claude.exe, studio, blender, blenderOld, blenderNeeds: this.blenderNeeds(env), blenders: choices, blenderMcp: !!this.blenderMcpServer() };
     return this._apps;
   }
 
@@ -646,7 +730,7 @@ class Backend extends EventEmitter {
       { id: "desktop", name: "Claude desktop", installed: A.claude, ...dl("Claude desktop", "https://claude.ai/download"), ok: !!(X?.desktop?.connected), active: fresh("desktop"), how: "Press Connect, then quit and reopen the Claude desktop app." },
       { id: "code", name: "Claude Code / web", optional: true, skipped: !!this.d.codeSkipped, installed: A.claude, ...dl("Claude desktop", "https://claude.ai/download"), ok: fresh("code"), how: "Optional. Paste the setup prompt into the Claude desktop app's Code tab — it connects to VYRON while it sets everything up. You can skip this and connect things yourself." },
       { id: "studio", name: "Roblox Studio", installed: A.studio, ...dl("Roblox Studio", "https://create.roblox.com/landing"), ok: studioOn && this.studios.length > 0, how: studioOn ? "Open your place in Roblox Studio." : "Open Roblox Studio and turn on its AI / MCP connection (Assistant settings)." },
-      { id: "blender", name: "Blender", installed: A.blender && A.blenderMcp, ...(A.blender ? dl("Blender MCP add-on", "https://www.blender.org/lab/mcp-server/") : dl("Blender (free)", "https://www.blender.org/download/")), ...(A.blenderOld ? { tooOld: A.blenderOld } : {}), ok: !!b.open, how: !A.blender ? (A.blenderOld ? `Your Blender ${A.blenderOld} is too old for the MCP add-on — it needs Blender 5.1 or newer (free).` : "Blender isn't installed. Get the free Blender 5.1 or newer.") : b.found ? "Open Blender 5.1+ and turn on its MCP add-on (Edit → Preferences → Get Extensions → search “MCP” → Install, then enable it)." : "Install Blender's MCP: Claude desktop → Settings → Extensions → Blender, plus the MCP add-on in Blender (Edit → Preferences → Get Extensions → search “MCP”)." },
+      { id: "blender", name: "Blender", installed: A.blender && A.blenderMcp, ...(A.blender ? dl("Blender MCP add-on", "https://www.blender.org/lab/mcp-server/") : dl("Blender (free)", "https://www.blender.org/download/")), ...(A.blenderOld ? { tooOld: A.blenderOld } : {}), ok: !!b.open, how: !A.blender ? (A.blenderOld ? `Your Blender ${A.blenderOld} is too old for the MCP add-on — it needs Blender ${A.blenderNeeds} (free).` : `Blender isn't installed. Get the free Blender (${A.blenderNeeds}).`) : b.found ? "Press Connect — VYRON turns on Blender's MCP add-on, opens Blender and connects it. (The add-on itself: Edit → Preferences → Get Extensions → search “MCP” → Install.)" :"Install Blender's MCP: Claude desktop → Settings → Extensions → Blender, plus the MCP add-on in Blender (Edit → Preferences → Get Extensions → search “MCP”)." },
       { id: "roblox", name: "Roblox account", ok: !!this.d.roblox.account, how: "Sign in with Roblox (you type your own password on roblox.com)." },
       { id: "discord", name: "Discord", optional: true, skipped: !!this.d.discordSkipped, ok: !!this.d.secrets.discordWebhook, how: "Paste a Discord channel webhook link (Channel settings → Integrations → Webhooks → New Webhook → Copy URL)." },
     ];

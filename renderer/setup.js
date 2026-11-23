@@ -70,7 +70,7 @@ If the connector doesn't answer: open VYRON, go to Settings → "Claude controls
 /* ---------- "How to connect Blender" guide (setup list + Blender panel) ---------- */
 // step ids match connectBlender()'s `step`, so the step that needs the user is highlighted.
 const BLENDER_STEPS = [
-  ["install", "Install Blender 5.1 or newer", `It's free. Older Blender (like 4.5) doesn't work with the MCP add-on. <a data-act="openUrl" data-id="https://www.blender.org/download/">Download Blender</a>`],
+  ["install", "Install a Blender the MCP add-on supports", `It's free. VYRON works with every Blender the MCP add-on supports (5.1 or newer today) — older Blender (like 4.5) can't run the add-on. <a data-act="openUrl" data-id="https://www.blender.org/download/">Download Blender</a>`],
   ["extension", "Turn on the Blender extension in Claude desktop", `Claude desktop → <b>Settings → Extensions</b> → search <b>Blender</b> → <b>Install</b> and switch it on.`],
   ["addon", "Install the MCP add-on in Blender", `Open Blender → <b>Edit → Preferences → Get Extensions</b> → search <b>MCP</b> → <b>Install</b>. If Blender asks to allow online access, allow it. Not listed? Get it from <a data-act="openUrl" data-id="https://www.blender.org/lab/mcp-server/">blender.org/lab/mcp-server</a> and use <b>Install from Disk</b> (the ▾ menu at the top right).`],
   ["restart", "Close Blender, then press Connect", `Save your work and close Blender. Press <b>Connect</b> here — VYRON turns on Blender's MCP server for good (Auto Start + online access), opens Blender and waits until it's connected.`],
@@ -79,6 +79,38 @@ const BLENDER_STEPS = [
 ];
 function blenderGuide(active) {
   return `<div class="ob-prompt bl-guide"><b style="font-size:13px">How to connect Blender</b><ol>${BLENDER_STEPS.map(([id, t, d]) => `<li class="${id === active ? "now" : ""}"><b>${t}</b><div class="faint">${d}</div></li>`).join("")}</ol></div>`;
+}
+
+/* ---------- "Connect Blender" card when VYRON starts ---------- */
+// Shows once per start if Blender isn't connected (and setup isn't on screen). Pick which Blender, press Connect.
+function maybeBlenderStart() {
+  if (ui.blStartShown || setupPhase || !S.blender || S.blender.on === false || !S.blender.checked || S.blender.open) return;
+  if (S.settings.blenderStartPrompt === false || S.settings.autoConnectBlender === true || S.blender.connecting) return;
+  if (document.getElementById("modalRoot").innerHTML) return;
+  ui.blStartShown = true;
+  blenderConnectModal();
+}
+function blenderPickExe() {
+  const list = S.setup?.apps?.blenders || [];
+  const want = ui.blExe || S.settings.blenderExe;
+  const ok = list.filter((b) => b.supported);
+  return (ok.find((b) => want && b.exe.toLowerCase() === want.toLowerCase()) || ok.find((b) => b.addon) || ok[0] || {}).exe || null;
+}
+function blenderConnectModal() {
+  const list = S.setup?.apps?.blenders || [], needs = S.setup?.apps?.blenderNeeds || "5.1 or newer", pick = blenderPickExe();
+  const row = (b) => {
+    const chip = !b.supported ? `<span class="chip bad">Needs Blender ${esc(needs)}</span>` : b.addon ? `<span class="chip ok">Ready</span>` : `<span class="chip">Needs the MCP add-on</span>`;
+    return `<div class="radio-card ${b.exe === pick ? "on" : ""} ${b.supported ? "" : "off"}" ${b.supported ? `data-act="blPick" data-id="${esc(b.exe)}"` : ""}><span class="dot ${b.exe === pick ? "connected" : "unknown"}"></span><div class="grow" style="min-width:0"><div class="row" style="gap:8px"><b style="font-weight:600">Blender ${esc(b.version || "(version unknown)")}</b>${chip}</div><div class="faint ell mono" style="font-size:11px" title="${esc(b.exe)}">${esc(b.exe)}</div></div></div>`;
+  };
+  const body = `<div class="stack" style="gap:10px">
+    <div class="muted" style="font-size:13px">Connect Blender so Claude can make 3D models. One click: VYRON turns on Blender's MCP add-on, opens Blender and connects it. Works with every Blender the MCP add-on supports (${esc(needs)}).</div>
+    ${list.length ? `<div class="label">Which Blender?</div><div class="stack" style="gap:6px">${list.map(row).join("")}</div>` : `<div class="panel pad">No Blender found on this PC. <a data-act="openUrl" data-id="https://www.blender.org/download/" style="cursor:pointer;text-decoration:underline">Download Blender (free)</a>, then press Connect.</div>`}
+    ${ui.blMsg ? `<div class="${ui.blOk ? "" : "lv-warn"}" style="font-size:12.5px">${esc(ui.blMsg)}</div>` : ""}
+    ${ui.blenderStep && ui.blenderStep !== "done" ? blenderGuide(ui.blenderStep) : ""}
+    <div class="row"><span class="grow">Connect Blender by itself when VYRON starts</span><div class="toggle ${S.settings.autoConnectBlender === true ? "on" : ""}" data-act="blAuto"></div></div>
+  </div>`;
+  const foot = `<button class="btn ghost" data-act="blNoAsk">Don't ask at start</button><div class="grow"></div><button class="btn" data-act="closeModal">Not now</button><button class="btn primary" data-act="blConnect" ${pick || !list.length ? "" : "disabled"}>${ic("cube")}Connect</button>`;
+  modal("Connect Blender", body, foot);
 }
 
 const SETUP_ICON = { claude: "claude", desktop: "dashboard", code: "code", studio: "roblox", blender: "cube", roblox: "revenue", discord: "mail" };
