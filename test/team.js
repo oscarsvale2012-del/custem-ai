@@ -468,17 +468,37 @@ function fakeSpawn(exe, args, opts) {
       if (savedS.blenderExe) be.d.settings.blenderExe = savedS.blenderExe;
     }
   });
-  await test("Do it for me: checks Blender versions first, then Claude connects it by controlling the PC", async () => {
+  await test("Do it for me: checks versions, downloads + installs the MCP add-on, connects — and glows while it works", async () => {
     const pc = path.join(TMP, "pcH"), env = { ProgramFiles: path.join(pc, "PF"), USERPROFILE: path.join(pc, "home"), APPDATA: path.join(pc, "ad"), LOCALAPPDATA: path.join(pc, "la") };
     const mkB = (v) => { const d = path.join(pc, "PF", "Blender Foundation", "Blender " + v); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, "blender.exe"), ""); };
     mkB("4.5");
-    const realFind = be.findBlenders.bind(be), realAddon = be.blenderAddon.bind(be), realCheck = be.checkBlender.bind(be), realList = be.listWindows.bind(be);
+    const realFind = be.findBlenders.bind(be), realAddon = be.blenderAddon.bind(be), realCheck = be.checkBlender.bind(be), realList = be.listWindows.bind(be), realFetch = be.fetch;
     be.findBlenders = () => realFind(env); be.blenderAddon = (v, e, x) => realAddon(v, env, x);
-    be.checkBlender = async () => (be.blenderInfo = { found: true, open: false });
+    let open = false, server = null, installs = [], opened = [], fetched = [], glows = [];
+    be.checkBlender = async () => (be.blenderInfo = { found: true, open });
     be.listWindows = async () => [];
-    be.blenderMcpServer = () => ({ command: "blender-mcp.exe" });
-    be.execFileImpl = (x, args, opts, cb) => cb(null, "VYRON_RESULT " + JSON.stringify({ ok: true }));
-    be.spawnImpl = () => ({ unref() {} });
+    be.blenderMcpServer = () => server;
+    // projects.blender.org: the newest release with the add-on (.zip) and the Claude extension (.mcpb)
+    const ZIP = Buffer.from("PK-fake-addon"), MCPB = Buffer.from("PK-fake-mcpb");
+    const base = "https://projects.blender.org/lab/blender_mcp/releases/download/v1.0.3/";
+    be.fetch = async (url) => {
+      fetched.push(url);
+      if (/releases\/latest$/.test(url)) return { ok: true, json: async () => ({ tag_name: "v1.0.3", assets: [{ name: "mcp-1.0.3.zip", size: ZIP.length, browser_download_url: base + "mcp-1.0.3.zip" }, { name: "blender-1.0.3.mcpb", size: MCPB.length, browser_download_url: base + "blender-1.0.3.mcpb" }, { name: "evil.zip", size: 1, browser_download_url: "https://evil.example/mcp-9.zip" }] }) };
+      if (url === base + "mcp-1.0.3.zip") return { ok: true, arrayBuffer: async () => ZIP };
+      if (url === base + "blender-1.0.3.mcpb") return { ok: true, arrayBuffer: async () => MCPB };
+      return { ok: false, status: 404 };
+    };
+    be.execFileImpl = (exe, args, opts, cb) => {
+      if (args[0] === "--command") { // Blender's own installer: puts the add-on in the user extensions folder
+        installs.push({ exe, args });
+        const d = path.join(pc, "ad", "Blender Foundation", "Blender", "5.2", "extensions", "user_default", "mcp"); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, "__init__.py"), "");
+        return cb(null, "Installed \"mcp\"", "");
+      }
+      cb(null, "VYRON_RESULT " + JSON.stringify({ ok: true }));
+    };
+    be.spawnImpl = () => { setTimeout(() => (open = true), 30); return { unref() {} }; };
+    const realOpenPath = be.host.openPath; be.host.openPath = async (p) => opened.push(p);
+    const onGlow = (g) => glows.push(g.on); be.on("glow", onGlow);
     const savedPc = be.d.settings.pcControl, savedExe = be.d.settings.blenderExe; delete be.d.settings.blenderExe;
     try {
       const tasks0 = be.claude.tasks.length;
@@ -486,21 +506,55 @@ function fakeSpawn(exe, args, opts) {
       assert(!no.ok && !no.started && no.step === "install", "only Blender 4.5 → won't work");
       assert(/4\.5/.test(no.message) && /5\.1 or newer/.test(no.message), no.message);
       assert.equal(be.claude.tasks.length, tasks0, "no Claude task when the version is wrong");
+      assert.equal(fetched.length, 0, "nothing downloaded"); assert.deepEqual(glows, [], "no glow");
+      // Blender 5.2 without the add-on and without Claude's Blender extension
       mkB("5.2");
       be.d.settings.pcControl = "off";
       const r = await dispatch(ctx, "blenderDoItForMe", []);
-      assert(r.ok && r.started && r.step === "addon", JSON.stringify(r));
+      const zip = path.join(TMP, "downloads", "mcp-1.0.3.zip"), mcpb = path.join(TMP, "downloads", "blender-1.0.3.mcpb");
+      assert(fs.existsSync(zip) && fs.readFileSync(zip).equals(ZIP), "downloaded the add-on from projects.blender.org");
+      assert(!fetched.some((u) => /evil/.test(u)), "only official projects.blender.org/lab files");
+      assert.equal(installs.length, 1);
+      assert.deepEqual(installs[0].args, ["--command", "extension", "install-file", "-r", "user_default", "-e", zip], "Blender installs + enables it");
+      assert(/Blender 5\.2/.test(installs[0].exe));
+      assert.deepEqual(opened, [mcpb], "opened the Claude Blender extension so Claude desktop installs it");
+      assert(r.ok && r.started && r.step === "extension", JSON.stringify(r));
       assert.equal(be.d.settings.pcControl, "ask", "PC control: ask before each step");
       const t = be.claude.tasks.find((x) => x.id === r.taskId);
-      assert(t && /Connect Blender/.test(t.title));
       const sent = t.messages.find((m) => m.role === "user").text;
-      assert(/Blender 5\.2/.test(sent) && /Get Extensions/.test(sent) && /vyron_connect_blender/.test(sent) && /Never type passwords/.test(sent), "Claude gets the steps for the add-on");
+      assert(/Install/.test(sent) && sent.includes(mcpb) && /vyron_connect_blender/.test(sent) && /Never type passwords/.test(sent), "Claude presses Install in Claude desktop");
+      assert.equal(glows[0], true, "glows while VYRON works");
+      assert(be.publicState().pc.glow && be.publicState().pc.doItTask === r.taskId, "still glowing while Claude does the last step");
+      be.claude.emit("finished", { id: r.taskId, outcome: "done", title: t.title });
+      assert.equal(be.glowOn(), false, "glow goes away when Claude is done");
       for (let i = 0; i < 50 && be.claude.busy; i++) await new Promise((res) => setTimeout(res, 20));
+      // Everything there: VYRON finishes on its own, no Claude needed
+      server = { command: "blender-mcp.exe" }; glows = [];
+      const done = await dispatch(ctx, "blenderDoItForMe", []);
+      assert(done.ok && !done.started && done.step === "done", JSON.stringify(done));
+      assert.equal(installs.length, 1, "add-on already there → not installed again");
+      assert.deepEqual(glows, [true, false], "glow on while working, off when done");
+      assert((await dispatch(ctx, "blenderDoItForMe", [])).message.match(/already connected/));
+      // Stop: Ctrl+Alt+X / Stop button clears the glow
+      be.glow("doit", true); be.pcRevoke(); assert.equal(be.glowOn(), false, "Stop turns the glow off");
     } finally {
-      be.findBlenders = realFind; be.blenderAddon = realAddon; be.checkBlender = realCheck; be.listWindows = realList;
+      be.off("glow", onGlow);
+      be.findBlenders = realFind; be.blenderAddon = realAddon; be.checkBlender = realCheck; be.listWindows = realList; be.fetch = realFetch; be.host.openPath = realOpenPath;
       delete be.execFileImpl; delete be.spawnImpl; delete be.blenderMcpServer; be.d.settings.pcControl = savedPc;
       if (savedExe) be.d.settings.blenderExe = savedExe; be._apps = null;
     }
+  });
+  await test("PC control makes the screen glow for 15 s after Claude's last action", async () => {
+    const saved = be.d.settings.pcControl, savedPc = be.pc;
+    let glows = []; const onGlow = (g) => glows.push(g.on); be.on("glow", onGlow);
+    be.pc = { key: async () => "ok" };
+    try {
+      be.d.settings.pcControl = "on";
+      await be.pcAction("key", { keys: "enter" });
+      assert.deepEqual(glows, [true]); assert(be.publicState().pc.glow);
+      be.pcLast = Date.now() - 16000; be.glowChanged(true);
+      assert.deepEqual(glows, [true, false], "fades after 15 s without actions");
+    } finally { be.off("glow", onGlow); be.d.settings.pcControl = saved; be.pc = savedPc; be.pcLast = 0; }
   });
   await test("Open apps: brings an open app to the front, or starts Studio / Claude desktop / Blender", async () => {
     const pc = path.join(TMP, "pcI"), la = path.join(pc, "la"), env = { LOCALAPPDATA: la };

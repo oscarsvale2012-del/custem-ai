@@ -96,12 +96,13 @@ function blenderPickExe() {
   const ok = list.filter((b) => b.supported);
   return (ok.find((b) => want && b.exe.toLowerCase() === want.toLowerCase()) || ok.find((b) => b.addon) || ok[0] || {}).exe || null;
 }
-/** "Let Claude do it": Claude controls the PC to finish connecting. Only when a supported Blender is on this PC. */
+/** "Do it for me": VYRON downloads the MCP add-on, installs and connects everything. Only when a supported Blender is on this PC. */
 function blenderDoItRow() {
   const list = S.setup?.apps?.blenders || [], needs = S.setup?.apps?.blenderNeeds || "5.1 or newer";
-  const ok = list.some((b) => b.supported);
-  const why = ok ? "Claude uses your mouse and keyboard to install the MCP add-on, turn things on and connect Blender. It asks before each step." : list.length ? `Not possible: you have Blender ${list.map((b) => esc(b.version || "?")).join(", ")}, and the MCP add-on needs Blender ${esc(needs)}. Install the newest Blender first.` : `Not possible yet: no Blender on this PC. Install Blender (${esc(needs)}) first.`;
-  return `<div class="bl-doit ${ok ? "" : "off"}"><span class="ob-ic">${ic("sparkle")}</span><div class="grow" style="min-width:0"><b>Let Claude do it for you</b><div class="faint" style="font-size:12px">${why}</div></div><button class="btn sm ${ok ? "primary" : ""}" data-act="blDoIt" ${ok ? "" : "disabled"}>Do it for me</button></div>`;
+  const ok = list.some((b) => b.supported), D = S.pc?.doIt, task = S.pc?.doItTask;
+  if (D || task) return `<div class="bl-doit working"><span class="ob-ic"><span class="spinner"></span></span><div class="grow" style="min-width:0"><b>${D ? "VYRON is connecting Blender…" : "Claude is doing the last steps…"}</b><div class="faint" style="font-size:12px">${esc(D ? D.text : "Answer Claude's questions in VYRON. Your screen glows purple while it works.")}</div></div>${task ? `<button class="btn sm" data-act="openTask" data-id="${esc(task)}">Watch</button>` : ""}<button class="btn sm danger" data-act="pcRevoke">Stop</button></div>`;
+  const why = ok ? "VYRON downloads Blender's MCP add-on, installs it, turns it on and connects Blender. If something needs clicks, Claude does them on your screen (it asks first). Your screen glows purple while it works." : list.length ? `Not possible: you have Blender ${list.map((b) => esc(b.version || "?")).join(", ")}, and the MCP add-on needs Blender ${esc(needs)}. Install the newest Blender first.` : `Not possible yet: no Blender on this PC. Install Blender (${esc(needs)}) first.`;
+  return `<div class="bl-doit ${ok ? "" : "off"}"><span class="ob-ic">${ic("sparkle")}</span><div class="grow" style="min-width:0"><b>Do everything for me</b><div class="faint" style="font-size:12px">${why}</div></div><button class="btn sm ${ok ? "primary" : ""}" data-act="blDoIt" ${ok ? "" : "disabled"}>Do it for me</button></div>`;
 }
 function blenderConnectModal() {
   const list = S.setup?.apps?.blenders || [], needs = S.setup?.apps?.blenderNeeds || "5.1 or newer", pick = blenderPickExe();

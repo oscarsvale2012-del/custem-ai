@@ -158,6 +158,10 @@ function draw() {
   const C = S.claude;
   $("#topActions").innerHTML = C.busy ? `<button class="btn sm" data-go="claude"><span class="spinner"></span>${C.running} Claude task${C.running === 1 ? "" : "s"} working${C.queued ? ` · ${C.queued} waiting` : ""}</button>` : "";
   const ov = pcOverlay(); if (ov !== lastOverlay) { $("#drawerRoot").innerHTML = ov; lastOverlay = ov; }
+  // The installed app glows the whole screen (separate windows); the browser version glows inside the page.
+  document.body.classList.toggle("vy-glow", !desktop && !!S.pc?.glow);
+  const doing = !!(S.pc?.doIt || S.pc?.doItTask), shown = $("#modalRoot .bl-doit");
+  if (shown && doing !== shown.classList.contains("working")) blenderConnectModal();
   const t = performance.now();
   $$(".spinner").forEach((e) => (e.style.animationDelay = -(t % 800) + "ms"));
   $$(".dot.working,.dot.connecting").forEach((e) => (e.style.animationDelay = -(t % 1800) + "ms"));
@@ -985,7 +989,8 @@ const ACT = {
     } catch { blenderConnectModal(); } finally { render(); }
   },
   async blDoIt(el) {
-    if (el) { el.disabled = true; el.innerHTML = '<span class="spinner"></span>Checking Blender…'; }
+    if (el) { el.disabled = true; el.innerHTML = '<span class="spinner"></span>Working…'; }
+    setTimeout(() => { if ($("#modalRoot").innerHTML && S.pc?.doIt) blenderConnectModal(); }, 400);
     try {
       const r = await call("blenderDoItForMe");
       ui.blOk = r.ok; ui.blMsg = r.message; ui.blenderStep = r.ok ? null : r.step;

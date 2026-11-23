@@ -212,11 +212,37 @@ function applyHotkeys() {
     } catch { ok = false; }
     if (!ok) errors[id] = `${key} is taken by another program. Pick another shortcut.`;
   }
+  // While VYRON uses the computer: Ctrl+Alt+X stops it (shown on the purple glow).
+  if (glowWins.length) { try { globalShortcut.register(STOP_KEY, () => backend.pcRevoke()); } catch { /* taken */ } }
   backend.hotkeyErrors = errors;
   backend.hotkeysLive = !hotkeysPaused;
   backend.changed();
 }
 app.on("will-quit", () => globalShortcut.unregisterAll());
+
+/* Purple glow around every screen while VYRON (or Claude through PC control) uses the computer.
+   Click-through, never takes focus, and hidden from screenshots so Claude doesn't see it. */
+const STOP_KEY = "Ctrl+Alt+X";
+let glowWins = [];
+function showGlow(on) {
+  if (!on) { for (const w of glowWins) if (!w.isDestroyed()) w.destroy(); glowWins = []; applyHotkeys(); return; }
+  if (glowWins.length) return;
+  glowWins = screen.getAllDisplays().map((d) => {
+    const w = new BrowserWindow({
+      ...d.bounds, frame: false, transparent: true, resizable: false, movable: false, minimizable: false, maximizable: false, fullscreenable: false,
+      focusable: false, skipTaskbar: true, hasShadow: false, show: false, alwaysOnTop: true, backgroundColor: "#00000000",
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+    });
+    w.setIgnoreMouseEvents(true);
+    w.setAlwaysOnTop(true, "screen-saver");
+    w.setContentProtection(true); // left out of screenshots (Windows 10 2004+)
+    w.setVisibleOnAllWorkspaces(true);
+    w.loadFile(path.join(__dirname, "renderer", "glow.html"), { query: { stop: STOP_KEY } });
+    w.once("ready-to-show", () => w.showInactive());
+    return w;
+  });
+  applyHotkeys();
+}
 
 app.whenReady().then(async () => {
   if (!gotLock) return;
@@ -253,8 +279,12 @@ app.whenReady().then(async () => {
     applyHotkeys();
   };
   backend.on("hotkeys", applyHotkeys);
+  backend.on("glow", (g) => showGlow(!!g.on));
+  screen.on("display-added", () => { if (glowWins.length) { showGlow(false); showGlow(true); } });
+  screen.on("display-removed", () => { if (glowWins.length) { showGlow(false); showGlow(true); } });
   robloxHost.showWindow = showWindow;
   robloxHost.openExternal = (u) => shell.openExternal(u);
+  robloxHost.openPath = async (p) => { const err = await shell.openPath(p); if (err) throw new Error(err); };
   const sendState = () => send("state", !auth.locked && started ? backend.publicState() : lockedState(auth));
   backend.on("state", (s) => !auth.locked && send("state", s));
   backend.on("log", (l) => !auth.locked && send("log", l));

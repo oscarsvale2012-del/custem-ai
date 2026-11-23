@@ -75,6 +75,8 @@ class Backend extends EventEmitter {
     });
     this.claude.on("change", () => this.changed());
     this.claude.on("finished", (f) => this.teamTaskFinished(f.id));
+    // The "Connect Blender for me" task is done → the glow goes away and VYRON checks Blender again.
+    this.claude.on("finished", (f) => { if (f.id && f.id === this._doItTask) { this._doItTask = null; this.glow("doit-task", false); this.checkBlender().catch(() => {}); } });
     // Tell the user (sound + Windows notification) when a task ends.
     this.claude.on("finished", (f) => {
       const msg = {
@@ -148,7 +150,7 @@ class Backend extends EventEmitter {
       teams: this.teamsPublic(),
       roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { name: R.ROLES[r].name, short: R.ROLES[r].short }])),
       blender: { found: !!blenderServer(), on: this.d.settings.blender !== false, ...(this.blenderInfo || {}), checked: !!this.blenderInfo, connecting: !!this._openingBlender },
-      pc: { mode: this.d.settings.pcControl || "off", asks: this.pcAsks.map(({ resolve, reject, timer, ...a }) => a), allowedUntil: this.pcUntil > now() ? this.pcUntil : 0, activeAt: this.pcLast },
+      pc: { mode: this.d.settings.pcControl || "off", asks: this.pcAsks.map(({ resolve, reject, timer, ...a }) => a), allowedUntil: this.pcUntil > now() ? this.pcUntil : 0, activeAt: this.pcLast, glow: this.glowOn(), doIt: this._doIt || null, doItTask: this._doItTask || null },
       hotkeys: { on: this.d.settings.hotkeysOn !== false, keys: { ...HOTKEY_DEFAULTS, ...(this.d.settings.hotkeys || {}) }, defaults: HOTKEY_DEFAULTS, names: HOTKEY_NAMES, errors: this.hotkeyErrors || {}, live: !!this.hotkeysLive },
       workDir: this.workDir(),
       notes: this.notes.slice(-20),
@@ -313,7 +315,9 @@ class Backend extends EventEmitter {
     if (mode === "off") throw new Error("PC control is off. The user can turn it on in VYRON → Settings → PC control.");
     const what = pcDescribe(kind, args);
     if (mode === "ask" && now() > this.pcUntil) await this.pcApproval(kind, what);
+    const glowBefore = this.glowOn();
     this.pcLast = now();
+    this.glowChanged(glowBefore);
     this.log("Claude: " + what, "info", "PC control");
     const P = this.pc;
     if (kind === "screenshot") return P.screenshot();
@@ -347,6 +351,10 @@ class Backend extends EventEmitter {
   /** Stop button: take back "Allow 10 min", refuse anything waiting and stop all Claude tasks. */
   pcRevoke() {
     this.pcUntil = 0;
+    const before = this.glowOn();
+    this.pcLast = 0; this._doItTask = null;
+    (this._glow || new Set()).clear();
+    this.glowChanged(before);
     for (const a of [...this.pcAsks]) this.pcAnswer(a.id, "deny");
     this.claude.stop();
     this.log("PC control stopped by you", "warn", "PC control");
@@ -730,11 +738,17 @@ class Backend extends EventEmitter {
   blenderNeeds(env) { const { min, max } = this.blenderMcpRange(env); return max ? `${min} or newer, below ${max}` : `${min} or newer`; }
 
   /**
-   * "Do it for me": checks the Blender versions first — with no Blender the MCP add-on supports, nothing starts.
-   * Then tries the one-click connect; if a step needs hands (install the add-on, turn on Claude's Blender extension,
-   * close Blender, press Start), a Claude task does it by controlling the PC (PC control "Ask me each time" at least).
+   * "Do it for me": VYRON connects Blender all by itself.
+   *  1. Checks the Blender versions — with no Blender the MCP add-on supports, nothing starts.
+   *  2. Downloads the official MCP add-on (projects.blender.org/lab/blender_mcp) and installs + enables it in that Blender.
+   *  3. Turns on the MCP server for good, opens Blender and connects it.
+   *  4. Missing Claude desktop Blender extension: downloads it and opens its installer in Claude desktop.
+   *  5. Anything that needs clicks (Install in Claude desktop, closing Blender, pressing Start) → a Claude task does it
+   *     by controlling the PC (PC control "Ask me each time" at least).
+   * While VYRON works, the screen glows purple ("VYRON is using your computer").
    */
   async blenderDoItForMe() {
+    if (this._doIt) return { ok: true, started: false, busy: true, message: "VYRON is already connecting Blender." };
     const cur = await this.checkBlender().catch(() => null);
     if (cur?.open) return { ok: true, started: false, step: "done", message: "Blender is already connected." };
     const all = this.blenderChoices();
@@ -743,35 +757,123 @@ class Backend extends EventEmitter {
       const have = all.map((b) => b.version).filter(Boolean).sort(cmpVer).pop();
       return { ok: false, started: false, step: "install", versions: all.map((b) => b.version), message: have ? `You have Blender ${all.map((b) => b.version || "?").join(", ")}, but the MCP add-on only works with Blender ${this.blenderNeeds()}, so it can't be connected. Install the free newest Blender from blender.org, then try again.` : `No Blender on this PC. Install the free Blender (${this.blenderNeeds()}) from blender.org, then try again.` };
     }
-    const r = await this.connectBlender({ wait: 30 });
-    if (r.ok) return { ok: true, started: false, step: "done", message: r.message };
-    if (r.step === "install") return { ...r, started: false };
-    if ((this.d.settings.pcControl || "off") === "off") {
-      this.d.settings.pcControl = "ask"; this.save();
-      this.log("PC control set to “Ask me each time” so Claude can connect Blender for you", "info", "PC control");
+    this._doIt = { step: "check", text: `Blender ${pick.version} works with the MCP add-on`, at: now() };
+    this.glow("doit", true);
+    const progress = (step, text) => { this._doIt = { step, text, at: now() }; this.log(text, "info", "Blender"); this.changed(); };
+    let handedOff = false;
+    try {
+      // 2. the MCP add-on in Blender
+      let addonZip = null;
+      if (!this.blenderAddon(pick.version, undefined, pick.exe)) {
+        progress("addon", "Downloading Blender's MCP add-on from projects.blender.org…");
+        addonZip = await this.downloadBlenderMcp("addon");
+        progress("addon", `Installing the MCP add-on in Blender ${pick.version}…`);
+        const ins = await this.installBlenderAddon(pick, addonZip);
+        if (!ins.ok) this.log("Couldn't install the add-on by itself: " + ins.message, "warn", "Blender");
+      }
+      // 3 + 4. extension, MCP server on, open Blender, connect
+      let mcpb = null;
+      if (!this.blenderMcpServer()) {
+        progress("extension", "Downloading the Blender extension for Claude desktop…");
+        mcpb = await this.downloadBlenderMcp("extension").catch((e) => { this.log(e.message, "warn", "Blender"); return null; });
+        if (mcpb && this.host.openPath) { progress("extension", "Opening the Blender extension in Claude desktop…"); await this.host.openPath(mcpb); }
+      }
+      progress("connect", `Opening Blender ${pick.version} and connecting it…`);
+      const r = await this.connectBlender({ wait: 40 });
+      if (r.ok) { this.log("Blender connected — all done", "ok", "Blender"); return { ok: true, started: false, step: "done", message: "Done! Blender is connected. " + r.message }; }
+      if (r.step === "install") return { ...r, started: false };
+      // 5. the rest needs clicks: Claude does it
+      if ((this.d.settings.pcControl || "off") === "off") {
+        this.d.settings.pcControl = "ask"; this.save();
+        this.log("PC control set to “Ask me each time” so Claude can finish connecting Blender", "info", "PC control");
+      }
+      progress("claude", "Claude is doing the last steps on your screen…");
+      const id = this.claude.newTask("Connect Blender for me");
+      this._doItTask = id;
+      this.glow("doit-task", true);
+      handedOff = true;
+      this.claudeSend(this.blenderHelpPrompt(pick, r, { addonZip, mcpb }), id);
+      return { ok: true, started: true, taskId: id, step: r.step, message: `Almost there — Claude is doing the last step on your screen (${{ addon: "install the MCP add-on", extension: "install the Blender extension in Claude desktop", restart: "close Blender", start: "start the MCP server" }[r.step] || r.step}). It asks before each click — answer in VYRON.` };
+    } catch (e) {
+      return { ok: false, started: false, step: "error", message: "Couldn't connect Blender: " + e.message };
+    } finally {
+      this._doIt = null;
+      this.glow("doit", false);
+      if (!handedOff) this.changed();
     }
-    const id = this.claude.newTask("Connect Blender for me");
-    this.claudeSend(this.blenderHelpPrompt(pick, r), id);
-    return { ok: true, started: true, taskId: id, step: r.step, message: `Claude is connecting Blender ${pick.version} for you. It asks before each click — answer in VYRON.` };
   }
-  blenderHelpPrompt(pick, r) {
+
+  /** Where VYRON gets Blender's official MCP pieces: the Blender Lab repository's newest release. */
+  async blenderMcpRelease() {
+    const api = "https://projects.blender.org/api/v1/repos/lab/blender_mcp/releases/latest";
+    const res = await this.fetch(api, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(20000) }).catch(() => null);
+    if (!res?.ok) throw new Error("Couldn't reach projects.blender.org to get the MCP add-on.");
+    const rel = await res.json();
+    const asset = (re) => (rel.assets || []).find((a) => re.test(a.name) && /^https:\/\/projects\.blender\.org\/lab\/blender_mcp\/releases\/download\//.test(a.browser_download_url || ""));
+    return { tag: rel.tag_name, addon: asset(/^mcp-[\d.]+\.zip$/), extension: asset(/^blender-[\d.]+\.mcpb$/) };
+  }
+  /** Download the add-on (.zip, for Blender) or the extension (.mcpb, for Claude desktop) into VYRON's folder. */
+  async downloadBlenderMcp(kind) {
+    const rel = await this.blenderMcpRelease();
+    const a = rel[kind];
+    if (!a) throw new Error(`The newest MCP release (${rel.tag}) has no ${kind === "addon" ? "add-on" : "Claude extension"} file.`);
+    const dir = path.join(this.dataDir, "downloads");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, path.basename(a.name));
+    if (fs.existsSync(file) && fs.statSync(file).size === a.size) return file;
+    const res = await this.fetch(a.browser_download_url, { signal: AbortSignal.timeout(180000) }).catch(() => null);
+    if (!res?.ok) throw new Error("Couldn't download " + a.name + " from projects.blender.org.");
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (a.size && buf.length !== a.size) throw new Error(`The download of ${a.name} was incomplete. Try again.`);
+    fs.writeFileSync(file, buf);
+    this.log(`Downloaded ${a.name} (${rel.tag}) from projects.blender.org`, "ok", "Blender");
+    return file;
+  }
+  /** Install + enable the add-on .zip in a Blender with Blender's own command line (works while Blender is closed or open). */
+  async installBlenderAddon(pick, zip) {
+    const out = await new Promise((resolve) => {
+      (this.execFileImpl || require("child_process").execFile)(pick.exe, ["--command", "extension", "install-file", "-r", "user_default", "-e", zip], { windowsHide: true, timeout: 120000, cwd: path.dirname(pick.exe) }, (err, stdout, stderr) => resolve({ err, text: String(stdout || "") + String(stderr || "") }));
+    });
+    this._apps = null; this._mcpRange = null;
+    const module = this.blenderAddon(pick.version, undefined, pick.exe);
+    if (!module) return { ok: false, message: clip((out.text.trim().split(/\r?\n/).filter(Boolean).pop() || out.err?.message || "Blender didn't install it"), 300) };
+    this.log(`MCP add-on installed in Blender ${pick.version}`, "ok", "Blender");
+    return { ok: true, module };
+  }
+
+  /** Purple glow around the screen while VYRON (or Claude through PC control) uses the computer. */
+  glow(reason, on) {
+    this._glow = this._glow || new Set();
+    const before = this.glowOn();
+    if (on) this._glow.add(reason); else this._glow.delete(reason);
+    this.glowChanged(before);
+  }
+  glowOn() { return !!((this._glow && this._glow.size) || (this.pcLast && now() - this.pcLast < 15000)); }
+  glowChanged(before) {
+    const on = this.glowOn();
+    if (on !== before) { this.emit("glow", { on }); this.changed(); }
+    clearTimeout(this._glowT);
+    if (on && this.pcLast && now() - this.pcLast < 15000) this._glowT = setTimeout(() => this.glowChanged(true), 15500 - (now() - this.pcLast));
+  }
+
+  blenderHelpPrompt(pick, r, files = {}) {
     const steps = {
-      addon: `The MCP add-on isn't installed in this Blender. Open Blender with vyron_open_app (app "blender"). In Blender: Edit → Preferences → Get Extensions. If Blender asks to allow online access, allow it. Search "MCP", find "MCP" by Blender Lab and press Install. If it isn't listed, tell the user (vyron_notify) to get it from https://www.blender.org/lab/mcp-server/ and stop — don't download files yourself. When it's installed, close Blender (File → Quit) and call vyron_connect_blender.`,
-      extension: `The Blender extension isn't turned on in the Claude desktop app. Open Claude desktop with vyron_open_app (app "claude"), go to Settings → Extensions, search "Blender", Install it and switch it on. If a dialog asks the user to accept permissions or terms, stop and ask the user (vyron_notify) to press it themselves. Then call vyron_connect_blender.`,
+      addon: `The MCP add-on isn't installed in this Blender yet${files.addonZip ? `, and installing it automatically didn't work. VYRON already downloaded it here: ${files.addonZip}` : ""}. Open Blender with vyron_open_app (app "blender"). In Blender: Edit → Preferences → Get Extensions. If Blender asks to allow online access, allow it. ${files.addonZip ? `Use the ▾ menu at the top right → "Install from Disk…", paste the path above into the file name box and press Install from Disk.` : `Search "MCP" and install "MCP" by Blender Lab.`} When it's installed, close Blender (File → Quit) and call vyron_connect_blender.`,
+      extension: `The Blender extension isn't installed in the Claude desktop app yet. ${files.mcpb ? `VYRON downloaded the official one (${files.mcpb}) and opened it in Claude desktop, so an install window should be showing. The user asked VYRON to install it: press "Install" in that window.` : `Open Claude desktop with vyron_open_app (app "claude"), go to Settings → Extensions, search "Blender" and press Install.`} Make sure it's switched on. If anything asks for a password, a sign-in or other terms, stop and ask the user (vyron_notify). Then call vyron_connect_blender.`,
       restart: `Blender is open without its MCP server. Bring Blender to the front (vyron_open_app "blender"), then close it with File → Quit. If Blender asks to save changes, DON'T choose "Don't Save": stop and ask the user (vyron_notify) to save or close it themselves, and wait for them. When Blender is closed, call vyron_connect_blender.`,
       start: `Blender opened but its MCP server didn't start. Bring Blender to the front (vyron_open_app "blender"): Edit → Preferences → Add-ons → search "MCP" → tick it, tick "Auto Start", press "Start", then Save Preferences (☰ menu, bottom left). Then call vyron_connect_blender.`,
     };
-    return `Connect Blender to VYRON for the user, by controlling their PC. VYRON already checked the versions: Blender ${pick.version} (${pick.exe}) is supported by the MCP add-on (needs ${this.blenderNeeds()}). Don't use any other Blender.
+    return `Connect Blender to VYRON for the user, by controlling their PC — the user asked VYRON to do everything for them. VYRON already checked the versions: Blender ${pick.version} (${pick.exe}) is supported by the MCP add-on (needs ${this.blenderNeeds()}). Don't use any other Blender.
 
-VYRON's one-click connect stopped at step "${r.step}": ${r.message}
+VYRON did what it could by itself and stopped at step "${r.step}": ${r.message}
 
 What to do:
 ${steps[r.step] || steps.start}
 
 How:
 - See the screen with vyron_pc_screenshot, then use vyron_pc_click / vyron_pc_type / vyron_pc_key / vyron_pc_scroll. Take a new screenshot after each step to check it worked.
-- vyron_connect_blender tells you the next step; repeat until it says connected (at most 4 rounds). If it keeps stopping at the same step, tell the user what's wrong with vyron_notify and stop.
-- Never type passwords, never accept terms or permission dialogs for the user, never discard the user's unsaved work, never download or install anything other than the MCP add-on from Blender's own Get Extensions.
+- vyron_connect_blender tells you the next step; repeat until it says connected (at most 5 rounds), handling each step the same way (add-on, extension, restart, start). If it keeps stopping at the same step, tell the user what's wrong with vyron_notify and stop.
+- Never type passwords, never sign in for the user, never discard the user's unsaved work, never download or install anything except the official Blender MCP files named above.
 - When it's connected, say so in one short sentence.`;
   }
 
