@@ -1,5 +1,5 @@
 // VYRON — Electron main process. Hosts the backend and the window.
-const { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, session, Tray, Menu, Notification, nativeImage, screen } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, session, Tray, Menu, Notification, nativeImage, screen, globalShortcut } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { Backend } = require("./src/core");
@@ -191,8 +191,32 @@ ipcMain.handle("host", async (_e, cmd, arg) => {
   if (cmd === "popupOpen") { hidePopup(); showWindow(); if (arg) win.webContents.send("event", "openTask", String(arg)); return null; }
   if (cmd === "testPopup") return showPopup({ kind: "done", title: "Claude finished", body: "This is how VYRON tells you when a task is done." });
   if (cmd === "openUrl" && SAFE_LINK.test(String(arg))) return shell.openExternal(arg);
+  if (cmd === "hotkeysPause") { hotkeysPaused = !!arg; applyHotkeys(); return null; } // while a shortcut box is recording keys
   return null;
 });
+
+/* Keyboard shortcuts that open VYRON, Roblox Studio, Claude desktop and Blender from anywhere in Windows. */
+let hotkeysPaused = false;
+function applyHotkeys() {
+  globalShortcut.unregisterAll();
+  if (!backend || !started) return;
+  const errors = {};
+  if (!hotkeysPaused) for (const [id, key] of Object.entries(backend.hotkeys())) {
+    if (!key) continue;
+    let ok = false;
+    try {
+      ok = globalShortcut.register(key, () => {
+        if (id === "vyron") return showWindow();
+        backend.openApp(id).then((r) => { if (!r.ok) alertUser({ kind: "message", title: "Couldn't open it", body: r.message }); }).catch((e) => alertUser({ kind: "message", title: "Couldn't open it", body: e.message }));
+      });
+    } catch { ok = false; }
+    if (!ok) errors[id] = `${key} is taken by another program. Pick another shortcut.`;
+  }
+  backend.hotkeyErrors = errors;
+  backend.hotkeysLive = !hotkeysPaused;
+  backend.changed();
+}
+app.on("will-quit", () => globalShortcut.unregisterAll());
 
 app.whenReady().then(async () => {
   if (!gotLock) return;
@@ -226,7 +250,11 @@ app.whenReady().then(async () => {
     started = true;
     await backend.init();
     if (control.cfg.enabled) await control.start();
+    applyHotkeys();
   };
+  backend.on("hotkeys", applyHotkeys);
+  robloxHost.showWindow = showWindow;
+  robloxHost.openExternal = (u) => shell.openExternal(u);
   const sendState = () => send("state", !auth.locked && started ? backend.publicState() : lockedState(auth));
   backend.on("state", (s) => !auth.locked && send("state", s));
   backend.on("log", (l) => !auth.locked && send("log", l));

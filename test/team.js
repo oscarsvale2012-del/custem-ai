@@ -468,6 +468,88 @@ function fakeSpawn(exe, args, opts) {
       if (savedS.blenderExe) be.d.settings.blenderExe = savedS.blenderExe;
     }
   });
+  await test("Do it for me: checks Blender versions first, then Claude connects it by controlling the PC", async () => {
+    const pc = path.join(TMP, "pcH"), env = { ProgramFiles: path.join(pc, "PF"), USERPROFILE: path.join(pc, "home"), APPDATA: path.join(pc, "ad"), LOCALAPPDATA: path.join(pc, "la") };
+    const mkB = (v) => { const d = path.join(pc, "PF", "Blender Foundation", "Blender " + v); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, "blender.exe"), ""); };
+    mkB("4.5");
+    const realFind = be.findBlenders.bind(be), realAddon = be.blenderAddon.bind(be), realCheck = be.checkBlender.bind(be), realList = be.listWindows.bind(be);
+    be.findBlenders = () => realFind(env); be.blenderAddon = (v, e, x) => realAddon(v, env, x);
+    be.checkBlender = async () => (be.blenderInfo = { found: true, open: false });
+    be.listWindows = async () => [];
+    be.blenderMcpServer = () => ({ command: "blender-mcp.exe" });
+    be.execFileImpl = (x, args, opts, cb) => cb(null, "VYRON_RESULT " + JSON.stringify({ ok: true }));
+    be.spawnImpl = () => ({ unref() {} });
+    const savedPc = be.d.settings.pcControl, savedExe = be.d.settings.blenderExe; delete be.d.settings.blenderExe;
+    try {
+      const tasks0 = be.claude.tasks.length;
+      const no = await dispatch(ctx, "blenderDoItForMe", []);
+      assert(!no.ok && !no.started && no.step === "install", "only Blender 4.5 → won't work");
+      assert(/4\.5/.test(no.message) && /5\.1 or newer/.test(no.message), no.message);
+      assert.equal(be.claude.tasks.length, tasks0, "no Claude task when the version is wrong");
+      mkB("5.2");
+      be.d.settings.pcControl = "off";
+      const r = await dispatch(ctx, "blenderDoItForMe", []);
+      assert(r.ok && r.started && r.step === "addon", JSON.stringify(r));
+      assert.equal(be.d.settings.pcControl, "ask", "PC control: ask before each step");
+      const t = be.claude.tasks.find((x) => x.id === r.taskId);
+      assert(t && /Connect Blender/.test(t.title));
+      const sent = t.messages.find((m) => m.role === "user").text;
+      assert(/Blender 5\.2/.test(sent) && /Get Extensions/.test(sent) && /vyron_connect_blender/.test(sent) && /Never type passwords/.test(sent), "Claude gets the steps for the add-on");
+      for (let i = 0; i < 50 && be.claude.busy; i++) await new Promise((res) => setTimeout(res, 20));
+    } finally {
+      be.findBlenders = realFind; be.blenderAddon = realAddon; be.checkBlender = realCheck; be.listWindows = realList;
+      delete be.execFileImpl; delete be.spawnImpl; delete be.blenderMcpServer; be.d.settings.pcControl = savedPc;
+      if (savedExe) be.d.settings.blenderExe = savedExe; be._apps = null;
+    }
+  });
+  await test("Open apps: brings an open app to the front, or starts Studio / Claude desktop / Blender", async () => {
+    const pc = path.join(TMP, "pcI"), la = path.join(pc, "la"), env = { LOCALAPPDATA: la };
+    const studio = path.join(la, "Roblox", "Versions", "version-abc", "RobloxStudioBeta.exe");
+    fs.mkdirSync(path.dirname(studio), { recursive: true }); fs.writeFileSync(studio, "");
+    fs.mkdirSync(path.join(la, "Packages", "Claude_pzs8sxrjxfjjc"), { recursive: true });
+    const realList = be.listWindows.bind(be), realPick = be.pickBlender.bind(be);
+    let running = {}, focused = [], started = [];
+    be.listWindows = async (img) => running[img] || [];
+    be.focusImpl = async (pid) => focused.push(pid);
+    be.spawnImpl = (cmd, args) => { started.push([cmd, ...(args || [])]); return { unref() {} }; };
+    try {
+      assert((await be.openApp("studio", env)).ok); assert.equal(started.at(-1)[0], studio, "starts Roblox Studio");
+      assert((await be.openApp("claude", env)).ok); assert.deepEqual(started.at(-1), ["explorer.exe", "shell:AppsFolder\\Claude_pzs8sxrjxfjjc!Claude"], "starts the Claude desktop app");
+      running = { "RobloxStudioBeta.exe": [{ pid: 42, title: "Place1 - Roblox Studio" }], "claude.exe": [{ pid: 7, title: "" }, { pid: 8, title: "Claude" }] };
+      const n = started.length;
+      await be.openApp("studio", env); await be.openApp("claude", env);
+      assert.deepEqual(focused, [42, 8], "already open → to the front (the Claude window, not Claude Code)");
+      assert.equal(started.length, n, "doesn't start a second copy");
+      be.pickBlender = () => null;
+      const nb = await dispatch(ctx, "openApp", ["blender"]);
+      assert(!nb.ok && /MCP add-on/.test(nb.message), "no supported Blender → says so");
+      const none = await be.openApp("studio", { LOCALAPPDATA: path.join(pc, "nothing") });
+      assert(none.ok || /isn't installed/.test(none.message));
+      await assert.rejects(be.openApp("notepad", env), /Unknown app/);
+    } finally { be.listWindows = realList; be.pickBlender = realPick; delete be.focusImpl; delete be.spawnImpl; }
+  });
+  await test("Keyboard shortcuts: defaults, change, clear, reset, off — and bad or doubled keys are refused", async () => {
+    const saved = { on: be.d.settings.hotkeysOn, keys: be.d.settings.hotkeys };
+    let events = 0; const on = () => events++; be.on("hotkeys", on);
+    try {
+      delete be.d.settings.hotkeys; be.d.settings.hotkeysOn = true;
+      assert.deepEqual(be.hotkeys(), { vyron: "Ctrl+Alt+V", studio: "Ctrl+Alt+R", claude: "Ctrl+Alt+C", blender: "Ctrl+Alt+B" });
+      await dispatch(ctx, "saveSettings", [{ hotkeys: { blender: "Ctrl+Shift+F9" } }]);
+      assert.equal(be.hotkeys().blender, "Ctrl+Shift+F9"); assert.equal(events, 1, "main process is told to re-register");
+      await assert.rejects(dispatch(ctx, "saveSettings", [{ hotkeys: { studio: "Shift+R" } }]), /can't be a shortcut/);
+      await assert.rejects(dispatch(ctx, "saveSettings", [{ hotkeys: { studio: "B" } }]), /can't be a shortcut/);
+      await assert.rejects(dispatch(ctx, "saveSettings", [{ hotkeys: { studio: "Ctrl+Alt+C" } }]), /already the shortcut for Claude desktop/);
+      await dispatch(ctx, "saveSettings", [{ hotkeys: { claude: "" } }]);
+      assert.equal(be.hotkeys().claude, "", "cleared");
+      assert.equal(be.publicState().hotkeys.keys.claude, "");
+      await dispatch(ctx, "saveSettings", [{ hotkeysOn: false }]);
+      assert.deepEqual(be.hotkeys(), {}, "off → nothing registered");
+      await dispatch(ctx, "saveSettings", [{ hotkeysOn: true, hotkeysReset: true }]);
+      assert.equal(be.hotkeys().blender, "Ctrl+Alt+B", "reset to defaults");
+      await dispatch(ctx, "saveSettings", [{ volume: 0.5 }]);
+      const ev = events; await dispatch(ctx, "saveSettings", [{ volume: 0.4 }]); assert.equal(events, ev, "other settings don't re-register shortcuts");
+    } finally { be.off("hotkeys", on); be.d.settings.hotkeysOn = saved.on; if (saved.keys) be.d.settings.hotkeys = saved.keys; else delete be.d.settings.hotkeys; }
+  });
   await test("Finish marks this PC as set up (not synced to other PCs)", async () => {
     be.setupStatus = () => ({ items: [], done: 6, total: 6, ready: true, onboarded: (be.d.setupDoneFor || []).includes(be.setupKey()) });
     await dispatch(ctx, "finishSetup", []);

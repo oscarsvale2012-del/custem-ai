@@ -96,6 +96,13 @@ function blenderPickExe() {
   const ok = list.filter((b) => b.supported);
   return (ok.find((b) => want && b.exe.toLowerCase() === want.toLowerCase()) || ok.find((b) => b.addon) || ok[0] || {}).exe || null;
 }
+/** "Let Claude do it": Claude controls the PC to finish connecting. Only when a supported Blender is on this PC. */
+function blenderDoItRow() {
+  const list = S.setup?.apps?.blenders || [], needs = S.setup?.apps?.blenderNeeds || "5.1 or newer";
+  const ok = list.some((b) => b.supported);
+  const why = ok ? "Claude uses your mouse and keyboard to install the MCP add-on, turn things on and connect Blender. It asks before each step." : list.length ? `Not possible: you have Blender ${list.map((b) => esc(b.version || "?")).join(", ")}, and the MCP add-on needs Blender ${esc(needs)}. Install the newest Blender first.` : `Not possible yet: no Blender on this PC. Install Blender (${esc(needs)}) first.`;
+  return `<div class="bl-doit ${ok ? "" : "off"}"><span class="ob-ic">${ic("sparkle")}</span><div class="grow" style="min-width:0"><b>Let Claude do it for you</b><div class="faint" style="font-size:12px">${why}</div></div><button class="btn sm ${ok ? "primary" : ""}" data-act="blDoIt" ${ok ? "" : "disabled"}>Do it for me</button></div>`;
+}
 function blenderConnectModal() {
   const list = S.setup?.apps?.blenders || [], needs = S.setup?.apps?.blenderNeeds || "5.1 or newer", pick = blenderPickExe();
   const row = (b) => {
@@ -106,6 +113,7 @@ function blenderConnectModal() {
     <div class="muted" style="font-size:13px">Connect Blender so Claude can make 3D models. One click: VYRON turns on Blender's MCP add-on, opens Blender and connects it. Works with every Blender the MCP add-on supports (${esc(needs)}).</div>
     ${list.length ? `<div class="label">Which Blender?</div><div class="stack" style="gap:6px">${list.map(row).join("")}</div>` : `<div class="panel pad">No Blender found on this PC. <a data-act="openUrl" data-id="https://www.blender.org/download/" style="cursor:pointer;text-decoration:underline">Download Blender (free)</a>, then press Connect.</div>`}
     ${ui.blMsg ? `<div class="${ui.blOk ? "" : "lv-warn"}" style="font-size:12.5px">${esc(ui.blMsg)}</div>` : ""}
+    ${blenderDoItRow()}
     ${ui.blenderStep && ui.blenderStep !== "done" ? blenderGuide(ui.blenderStep) : ""}
     <div class="row"><span class="grow">Connect Blender by itself when VYRON starts</span><div class="toggle ${S.settings.autoConnectBlender === true ? "on" : ""}" data-act="blAuto"></div></div>
   </div>`;
@@ -157,7 +165,7 @@ function setupItem(it) {
     if (it.id === "desktop") act = `<button class="btn sm primary" data-act="controlDesktop" data-val="on">Connect</button>`;
     if (it.id === "code") act = `<div class="row" style="gap:6px"><button class="btn sm primary" data-act="obPrompt">Copy setup prompt</button>${it.skipped ? "" : `<button class="btn sm ghost" data-act="obSkipItem" data-id="code">Skip</button>`}</div>`;
     if (it.id === "studio") act = `<button class="btn sm" data-act="obRecheck">${ic("refresh")}Check again</button>`;
-    if (it.id === "blender") act = `<button class="btn sm primary" data-act="connectBlender">${ic("cube")}Connect</button>`;
+    if (it.id === "blender") act = `<button class="btn sm primary" data-act="connectBlender">${ic("cube")}Connect</button><button class="btn sm" data-act="blDoIt" ${(S.setup?.apps?.blenders || []).some((b) => b.supported) ? "" : "disabled"} title="Claude controls your PC and does the steps for you">Do it for me</button>`;
     if (it.id === "roblox") act = `<button class="btn sm primary" data-act="linkRoblox">Sign in with Roblox</button>`;
     if (it.id === "discord") act = `<div class="row" style="gap:6px"><input class="input" id="obDiscord" placeholder="https://discord.com/api/webhooks/…" style="height:32px;width:240px"><button class="btn sm primary" data-act="obDiscord">Connect</button>${it.skipped ? "" : `<button class="btn sm ghost" data-act="obSkipDiscord">Skip</button>`}</div>`;
   }

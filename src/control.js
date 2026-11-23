@@ -239,6 +239,10 @@ class ControlServer {
       await this.state();
       return this.call("connectBlender");
     });
+    tool("vyron_open_app", "Open an app on the user's PC, or bring it to the front if it's already open: \"blender\" (the Blender VYRON uses — only versions the MCP add-on supports), \"studio\" (Roblox Studio) or \"claude\" (the Claude desktop app). Use it instead of the Start menu when controlling the PC.", { app: z.enum(["blender", "studio", "claude"]) }, async ({ app }) => {
+      await this.state();
+      return this.call("openApp", app);
+    });
     tool("vyron_check_connections", "Re-check Roblox Studio and Blender right now.", {}, async () => {
       await this.state();
       await this.call("connectStudio").catch(() => {});

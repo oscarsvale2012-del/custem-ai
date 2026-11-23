@@ -407,6 +407,7 @@ function blenderPanel() {
   return `<div class="panel"><div class="panel-h"><h3>Blender</h3><div class="grow"></div><span class="chip ${b.open ? "ok" : ""}"><span class="dot ${b.open ? "connected" : b.found ? "unknown" : "error"}"></span>${b.open ? "Connected" : b.found ? "Not open" : "Not installed"}</span>${b.open ? "" : `<button class="btn sm ghost" data-act="blenderHelp">${ui.blenderHelp ? "Hide guide" : "How to connect"}</button><button class="btn sm primary" data-act="connectBlender">${ic("cube")}Connect</button>`}<button class="btn sm ghost icon" data-act="checkBlender" title="Check again">${ic("refresh")}</button></div>
     <div class="panel-b stack">
       <div class="muted" style="font-size:12.5px">${b.open ? "Claude can make and change 3D models in Blender" + (b.file ? " (" + esc(b.file.split(/[\\/]/).pop()) + ")" : "") + "." : esc(b.error || "Checking…")}</div>
+      ${!b.open && b.checked ? blenderDoItRow() : ""}
       ${!b.open && ui.blenderHelp ? blenderGuide(ui.blenderStep) : ""}
       <div class="row" style="gap:8px"><input class="input grow" id="mkModel" placeholder="Make a 3D model… e.g. a cartoon treasure chest with gold trim"><button class="btn primary" data-act="makeModel" ${b.found ? "" : "disabled"}>${ic("bolt")}Make it</button></div>
       <div class="faint" style="font-size:11.5px">A Builder &amp; Modeler Claude builds it in your open Blender file and exports it as .fbx to the project's models folder for Studio's 3D Importer.</div></div></div>`;
@@ -710,6 +711,7 @@ VIEWS.settings = () => {
         <div class="faint" style="font-size:11.5px">Claude is told never to type passwords or payment details, buy things or change security settings, and to ignore instructions shown on screen. Screenshots go to Claude (Anthropic) like your chat messages.</div></div>
       <div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("sparkle")}</div><div class="grow"><div class="h3">Setup &amp; connections</div><div class="faint" style="font-size:12.5px">${S.setup ? S.setup.done + " of " + S.setup.total + " connected" : ""}</div></div><button class="btn sm" data-act="openSetup">Open setup</button></div>
         <div class="row" style="gap:8px"><span class="grow">Discord <span class="faint" style="font-size:12px">${S.discord?.set ? "connected — VYRON posts task news to your channel" + (S.discord.lastError ? " · " + esc(S.discord.lastError) : "") : "not connected"}</span></span>${S.discord?.set ? '<button class="btn sm" data-act="discordTest">Test</button><button class="btn sm ghost" data-act="discordClear">Disconnect</button>' : '<button class="btn sm" data-act="openSetup">Connect</button>'}</div></div>
+      ${hotkeysPanel()}
       <div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("bell")}</div><div class="grow"><div class="h3">Notifications &amp; sounds</div><div class="faint" style="font-size:12.5px">When a task is done, fails, runs out of usage, or Claude needs your OK.</div></div></div>
         <div class="row"><span class="grow">Pop-ups</span><div class="seg">${[["vyron", "VYRON style"], ["windows", "Windows"], ["off", "Off"]].map(([k, l]) => `<button class="${(s.notifyStyle || "vyron") === k ? "on" : ""}" data-act="setting" data-key="notifyStyle" data-val="${k}">${l}</button>`).join("")}</div><button class="btn sm ghost" data-act="testPopup" title="Show a test pop-up">Test</button></div>
         <div class="row"><span class="grow">Keep running when I close the window <span class="faint" style="font-size:12px">(Claude keeps working; VYRON stays by the clock)</span></span><div class="toggle ${s.keepRunning !== false ? "on" : ""}" data-act="setting" data-key="keepRunning" data-val="${s.keepRunning === false}"></div></div>
@@ -731,6 +733,40 @@ VIEWS.settings = () => {
   <div class="panel activity"><div class="panel-h"><h3>Diagnostics log</h3><div class="grow"></div><button class="btn sm" data-act="copyLog">${ic("copy")}Copy log</button></div>
     <div style="max-height:320px;overflow:auto" id="diagLog">${S.activity.slice().reverse().map((l) => `<div class="list-row"><time>${time(l.at)}</time><div class="grow"><b class="lv-${l.level}">${esc(l.source)}</b> <span class="muted">${esc(l.text)}</span></div></div>`).join("")}</div></div>`;
 };
+
+/* ---------------- keyboard shortcuts (open apps from anywhere) ---------------- */
+const HK_ICON = { vyron: "sparkle", studio: "roblox", claude: "claude", blender: "cube" };
+function hotkeysPanel() {
+  const H = S.hotkeys;
+  if (!H) return "";
+  const row = (id) => {
+    const k = H.keys[id] || "", err = H.on && H.errors[id];
+    return `<div class="row hk-row" style="gap:8px"><span class="hk-ic">${ic(HK_ICON[id])}</span><span class="grow">${esc(H.names[id])}${err ? `<div class="lv-warn" style="font-size:11.5px">${esc(err)}</div>` : ""}</span>
+      <input class="input mono hk-input ${err ? "bad" : ""}" id="hk-${id}" data-hk="${id}" data-fresh readonly value="${esc(k)}" placeholder="None — click, then press keys" title="Click, then press the keys you want (Esc cancels, Backspace removes)" ${H.on ? "" : "disabled"}>
+      ${k ? `<button class="btn sm ghost icon" data-act="hkClear" data-id="${id}" title="Remove this shortcut" ${H.on ? "" : "disabled"}>${ic("x")}</button>` : ""}
+      ${id === "vyron" ? "" : `<button class="btn sm ghost" data-act="openApp" data-id="${id}">Open</button>`}</div>`;
+  };
+  return `<div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("bolt")}</div><div class="grow"><div class="h3">Keyboard shortcuts</div><div class="faint" style="font-size:12.5px">Open VYRON, Roblox Studio, Claude desktop or Blender from anywhere — even when VYRON is in the tray. If the app is already open, it comes to the front.</div></div><div class="toggle ${H.on ? "on" : ""}" data-act="setting" data-key="hotkeysOn" data-val="${!H.on}"></div></div>
+    ${Object.keys(H.names).map(row).join("")}
+    <div class="row"><span class="faint grow" style="font-size:11.5px">${desktop ? "Click a box and press the new keys, e.g. Ctrl+Alt+B." : "Shortcuts work in the installed VYRON app."}</span><button class="btn sm ghost" data-act="hkReset">Reset to defaults</button></div></div>`;
+}
+const HK_CODE = (e) => (/^Key[A-Z]$/.test(e.code) ? e.code.slice(3) : /^Digit\d$/.test(e.code) ? e.code.slice(5) : /^F(\d|1[0-2])$/.test(e.code) ? e.code : null);
+document.addEventListener("focusin", (e) => { if (e.target.dataset?.hk) { e.target.classList.add("rec"); e.target.dataset.was = e.target.value; e.target.value = "Press keys…"; B.host("hotkeysPause", true); } });
+document.addEventListener("focusout", (e) => { if (e.target.dataset?.hk) { e.target.classList.remove("rec"); if (e.target.value === "Press keys…") e.target.value = e.target.dataset.was || ""; B.host("hotkeysPause", false); } });
+document.addEventListener("keydown", async (e) => {
+  const el = e.target;
+  if (!el.dataset?.hk) return;
+  e.preventDefault(); e.stopPropagation();
+  if (e.key === "Escape") return el.blur();
+  if (e.key === "Backspace" || e.key === "Delete") { el.dataset.was = ""; el.blur(); return call("saveSettings", { hotkeys: { [el.dataset.hk]: "" } }).catch(() => {}); }
+  const key = HK_CODE(e);
+  if (!key) return; // only modifiers so far
+  const mods = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Super"].filter(Boolean);
+  if (!mods.some((m) => m !== "Shift")) { el.value = "Add Ctrl or Alt…"; return; }
+  const acc = [...mods, key].join("+");
+  el.dataset.was = acc; el.value = acc; el.blur();
+  try { await call("saveSettings", { hotkeys: { [el.dataset.hk]: acc } }); toast(`${S.hotkeys.names[el.dataset.hk]}: ${acc}`); } catch { /* toast shown */ }
+}, true);
 
 /* ---------------- modals ---------------- */
 function modal(title, body, foot, wide) {
@@ -948,6 +984,20 @@ const ACT = {
       if (r.ok) { closeModal(); toast(r.message); ui.blMsg = ""; } else blenderConnectModal();
     } catch { blenderConnectModal(); } finally { render(); }
   },
+  async blDoIt(el) {
+    if (el) { el.disabled = true; el.innerHTML = '<span class="spinner"></span>Checking Blender…'; }
+    try {
+      const r = await call("blenderDoItForMe");
+      ui.blOk = r.ok; ui.blMsg = r.message; ui.blenderStep = r.ok ? null : r.step;
+      toast(r.message, r.ok ? (r.started ? "note" : "") : "error");
+      if (r.started) { closeModal(); ui.taskId = r.taskId; if (!setupPhase) go("claude"); }
+      else if (r.ok) closeModal();
+      else if ($("#modalRoot").innerHTML) blenderConnectModal();
+    } finally { render(); if (setupPhase === "list") { setupListHtml = ""; updateSetupList(); } }
+  },
+  openApp: async (el) => { const r = await call("openApp", el.dataset.id); toast(r.message, r.ok ? "" : "error"); },
+  async hkReset() { await call("saveSettings", { hotkeysReset: true }); toast("Shortcuts reset"); },
+  async hkClear(el) { await call("saveSettings", { hotkeys: { [el.dataset.id]: "" } }); },
   openBlenderConnect: () => { ui.blMsg = ""; ui.blenderStep = null; blenderConnectModal(); },
   obBlenderHelp: () => { ui.obBlenderHelp = !ui.obBlenderHelp; updateSetupList(); },
   blenderHelp: () => { ui.blenderHelp = !ui.blenderHelp; render(); },

@@ -24,6 +24,23 @@ const BLENDER_ID = "blender";
 const BLENDER_MCP_MIN = "5.1"; // used until the MCP add-on is installed and its manifest says otherwise
 /** Compare version strings like "5.2.4" and "5.10" by number. */
 const cmpVer = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+/** Keyboard shortcuts that open apps from anywhere in Windows (Electron accelerator format). */
+const HOTKEY_APPS = ["vyron", "studio", "claude", "blender"];
+const HOTKEY_DEFAULTS = { vyron: "Ctrl+Alt+V", studio: "Ctrl+Alt+R", claude: "Ctrl+Alt+C", blender: "Ctrl+Alt+B" };
+const HOTKEY_RE = /^(?:(?:Ctrl|Alt|Shift|Super)\+)*(?:[A-Z0-9]|F(?:[1-9]|1[0-2]))$/;
+const HOTKEY_NAMES = { vyron: "VYRON", studio: "Roblox Studio", claude: "Claude desktop", blender: "Blender" };
+const validHotkey = (k) => typeof k === "string" && HOTKEY_RE.test(k) && /(?:Ctrl|Alt|Super)\+/.test(k);
+/** Bring another program's window to the front (restore it if minimized). */
+function focusWindow(pid) {
+  if (process.platform !== "win32") return Promise.resolve();
+  const ps = `Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class VyWin { [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h); [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h, int n); [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h); [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, UIntPtr e); }
+"@
+$h = (Get-Process -Id ${Number(pid) | 0}).MainWindowHandle
+if ($h -ne 0) { if ([VyWin]::IsIconic($h)) { [VyWin]::ShowWindowAsync($h, 9) | Out-Null }; [VyWin]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); [VyWin]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero); [VyWin]::SetForegroundWindow($h) | Out-Null }`;
+  return new Promise((resolve) => require("child_process").execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(ps, "utf16le").toString("base64")], { windowsHide: true, timeout: 10000 }, () => resolve()));
+}
 
 class Backend extends EventEmitter {
   constructor({ dataDir, encrypt, decrypt, host = {}, fetchImpl, claude, studio = true, pc }) {
@@ -132,6 +149,7 @@ class Backend extends EventEmitter {
       roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { name: R.ROLES[r].name, short: R.ROLES[r].short }])),
       blender: { found: !!blenderServer(), on: this.d.settings.blender !== false, ...(this.blenderInfo || {}), checked: !!this.blenderInfo, connecting: !!this._openingBlender },
       pc: { mode: this.d.settings.pcControl || "off", asks: this.pcAsks.map(({ resolve, reject, timer, ...a }) => a), allowedUntil: this.pcUntil > now() ? this.pcUntil : 0, activeAt: this.pcLast },
+      hotkeys: { on: this.d.settings.hotkeysOn !== false, keys: { ...HOTKEY_DEFAULTS, ...(this.d.settings.hotkeys || {}) }, defaults: HOTKEY_DEFAULTS, names: HOTKEY_NAMES, errors: this.hotkeyErrors || {}, live: !!this.hotkeysLive },
       workDir: this.workDir(),
       notes: this.notes.slice(-20),
       auth: this.authInfo ? this.authInfo() : null,
@@ -141,8 +159,21 @@ class Backend extends EventEmitter {
   }
 
   saveSettings(patch) {
-    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook", "uiSounds", "uiHover", "uiPack", "blender", "autoApprove", "usageStyle", "autoOpenBlender", "autoConnectBlender", "blenderStartPrompt", "blenderExe"]) if (k in patch) this.d.settings[k] = patch[k];
+    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook", "uiSounds", "uiHover", "uiPack", "blender", "autoApprove", "usageStyle", "autoOpenBlender", "autoConnectBlender", "blenderStartPrompt", "blenderExe", "hotkeysOn"]) if (k in patch) this.d.settings[k] = patch[k];
     const S = this.d.settings;
+    const hk0 = JSON.stringify([S.hotkeysOn, S.hotkeys]);
+    if (patch.hotkeys && typeof patch.hotkeys === "object") {
+      for (const [id, k] of Object.entries(patch.hotkeys)) {
+        if (!HOTKEY_APPS.includes(id)) continue;
+        if (k !== "" && !validHotkey(k)) throw new Error(`“${k}” can't be a shortcut. Use Ctrl or Alt with a letter, number or F-key, like Ctrl+Alt+B.`);
+        const clash = Object.entries({ ...this.hotkeys(), [id]: k }).find(([o, v]) => o !== id && v && v === k);
+        if (clash) throw new Error(`${k} is already the shortcut for ${HOTKEY_NAMES[clash[0]]}.`);
+        S.hotkeys = { ...(S.hotkeys || {}), [id]: k };
+      }
+    }
+    if (patch.hotkeysReset) delete S.hotkeys;
+    S.hotkeysOn = S.hotkeysOn !== false;
+    if (JSON.stringify([S.hotkeysOn, S.hotkeys]) !== hk0) this.emit("hotkeys", this.hotkeys());
     if (!["vyron", "windows", "off"].includes(S.notifyStyle)) S.notifyStyle = "vyron";
     S.keepRunning = S.keepRunning !== false;
     S.sounds = S.sounds !== false;
@@ -164,6 +195,13 @@ class Backend extends EventEmitter {
     this.claude.pump();
     this.d.settings.claudeModel = String(this.d.settings.claudeModel || "").replace(/[^\w.:\-[\]]/g, "").slice(0, 60);
     this.save();
+  }
+
+  /** The keyboard shortcuts in use: { vyron: "Ctrl+Alt+V", … } ("" = none). Empty when turned off. */
+  hotkeys() {
+    if (this.d.settings.hotkeysOn === false) return {};
+    const own = this.d.settings.hotkeys || {};
+    return Object.fromEntries(HOTKEY_APPS.map((id) => [id, id in own ? own[id] : HOTKEY_DEFAULTS[id]]));
   }
 
   /* ================= Claude ================= */
@@ -690,6 +728,92 @@ class Backend extends EventEmitter {
   }
   /** "5.1 or newer" (or "5.1 to 6.0" if the add-on has a top version). */
   blenderNeeds(env) { const { min, max } = this.blenderMcpRange(env); return max ? `${min} or newer, below ${max}` : `${min} or newer`; }
+
+  /**
+   * "Do it for me": checks the Blender versions first — with no Blender the MCP add-on supports, nothing starts.
+   * Then tries the one-click connect; if a step needs hands (install the add-on, turn on Claude's Blender extension,
+   * close Blender, press Start), a Claude task does it by controlling the PC (PC control "Ask me each time" at least).
+   */
+  async blenderDoItForMe() {
+    const cur = await this.checkBlender().catch(() => null);
+    if (cur?.open) return { ok: true, started: false, step: "done", message: "Blender is already connected." };
+    const all = this.blenderChoices();
+    const pick = this.pickBlender();
+    if (!pick) {
+      const have = all.map((b) => b.version).filter(Boolean).sort(cmpVer).pop();
+      return { ok: false, started: false, step: "install", versions: all.map((b) => b.version), message: have ? `You have Blender ${all.map((b) => b.version || "?").join(", ")}, but the MCP add-on only works with Blender ${this.blenderNeeds()}, so it can't be connected. Install the free newest Blender from blender.org, then try again.` : `No Blender on this PC. Install the free Blender (${this.blenderNeeds()}) from blender.org, then try again.` };
+    }
+    const r = await this.connectBlender({ wait: 30 });
+    if (r.ok) return { ok: true, started: false, step: "done", message: r.message };
+    if (r.step === "install") return { ...r, started: false };
+    if ((this.d.settings.pcControl || "off") === "off") {
+      this.d.settings.pcControl = "ask"; this.save();
+      this.log("PC control set to “Ask me each time” so Claude can connect Blender for you", "info", "PC control");
+    }
+    const id = this.claude.newTask("Connect Blender for me");
+    this.claudeSend(this.blenderHelpPrompt(pick, r), id);
+    return { ok: true, started: true, taskId: id, step: r.step, message: `Claude is connecting Blender ${pick.version} for you. It asks before each click — answer in VYRON.` };
+  }
+  blenderHelpPrompt(pick, r) {
+    const steps = {
+      addon: `The MCP add-on isn't installed in this Blender. Open Blender with vyron_open_app (app "blender"). In Blender: Edit → Preferences → Get Extensions. If Blender asks to allow online access, allow it. Search "MCP", find "MCP" by Blender Lab and press Install. If it isn't listed, tell the user (vyron_notify) to get it from https://www.blender.org/lab/mcp-server/ and stop — don't download files yourself. When it's installed, close Blender (File → Quit) and call vyron_connect_blender.`,
+      extension: `The Blender extension isn't turned on in the Claude desktop app. Open Claude desktop with vyron_open_app (app "claude"), go to Settings → Extensions, search "Blender", Install it and switch it on. If a dialog asks the user to accept permissions or terms, stop and ask the user (vyron_notify) to press it themselves. Then call vyron_connect_blender.`,
+      restart: `Blender is open without its MCP server. Bring Blender to the front (vyron_open_app "blender"), then close it with File → Quit. If Blender asks to save changes, DON'T choose "Don't Save": stop and ask the user (vyron_notify) to save or close it themselves, and wait for them. When Blender is closed, call vyron_connect_blender.`,
+      start: `Blender opened but its MCP server didn't start. Bring Blender to the front (vyron_open_app "blender"): Edit → Preferences → Add-ons → search "MCP" → tick it, tick "Auto Start", press "Start", then Save Preferences (☰ menu, bottom left). Then call vyron_connect_blender.`,
+    };
+    return `Connect Blender to VYRON for the user, by controlling their PC. VYRON already checked the versions: Blender ${pick.version} (${pick.exe}) is supported by the MCP add-on (needs ${this.blenderNeeds()}). Don't use any other Blender.
+
+VYRON's one-click connect stopped at step "${r.step}": ${r.message}
+
+What to do:
+${steps[r.step] || steps.start}
+
+How:
+- See the screen with vyron_pc_screenshot, then use vyron_pc_click / vyron_pc_type / vyron_pc_key / vyron_pc_scroll. Take a new screenshot after each step to check it worked.
+- vyron_connect_blender tells you the next step; repeat until it says connected (at most 4 rounds). If it keeps stopping at the same step, tell the user what's wrong with vyron_notify and stop.
+- Never type passwords, never accept terms or permission dialogs for the user, never discard the user's unsaved work, never download or install anything other than the MCP add-on from Blender's own Get Extensions.
+- When it's connected, say so in one short sentence.`;
+  }
+
+  /* ================= open apps (keyboard shortcuts) ================= */
+  /** Open (or bring to the front) VYRON's apps: Roblox Studio, Claude desktop, Blender. */
+  async openApp(id, env = process.env) {
+    const front = async (image, titled) => {
+      const w = (await this.listWindows(image)).filter((x) => !titled || x.title);
+      if (!w.length) return false;
+      await (this.focusImpl || focusWindow)(w[0].pid);
+      return true;
+    };
+    const run = (cmd, args = []) => (this.spawnImpl || require("child_process").spawn)(cmd, args, { detached: true, stdio: "ignore" }).unref?.();
+    if (typeof env !== "object" || !env) env = process.env;
+    if (id === "vyron") { this.host.showWindow?.(); return { ok: true, message: "VYRON is in front." }; }
+    if (id === "studio") {
+      if (await front("RobloxStudioBeta.exe")) return { ok: true, message: "Roblox Studio is in front." };
+      const la = env.LOCALAPPDATA || "", vdir = path.join(la, "Roblox", "Versions");
+      let exe = null; try { exe = fs.readdirSync(vdir).map((v) => path.join(vdir, v, "RobloxStudioBeta.exe")).filter((f) => fs.existsSync(f)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0]; } catch { /* none */ }
+      if (exe) { run(exe); return { ok: true, message: "Opening Roblox Studio…" }; }
+      if (this.host.openExternal) { await this.host.openExternal("roblox-studio:"); return { ok: true, message: "Opening Roblox Studio…" }; }
+      return { ok: false, message: "Roblox Studio isn't installed. Get it at https://create.roblox.com/landing" };
+    }
+    if (id === "claude") {
+      if (await front("claude.exe", true)) return { ok: true, message: "Claude is in front." };
+      const la = env.LOCALAPPDATA || "";
+      let pkg = null; try { pkg = fs.readdirSync(path.join(la, "Packages")).find((x) => /^Claude_[a-z0-9]+$/i.test(x)); } catch { /* none */ }
+      if (pkg) { run("explorer.exe", [`shell:AppsFolder\\${pkg}!Claude`]); return { ok: true, message: "Opening Claude…" }; }
+      const exe = [path.join(la, "AnthropicClaude", "claude.exe"), path.join(la, "Programs", "Claude", "Claude.exe")].find((f) => fs.existsSync(f));
+      if (exe) { run(exe); return { ok: true, message: "Opening Claude…" }; }
+      return { ok: false, message: "The Claude desktop app isn't installed. Get it at https://claude.ai/download" };
+    }
+    if (id === "blender") {
+      if (await front("blender.exe")) return { ok: true, message: "Blender is in front." };
+      const pick = this.pickBlender();
+      if (!pick) return { ok: false, message: `No Blender that works with the MCP add-on (${this.blenderNeeds()}). Get the free newest Blender at blender.org.` };
+      if (this.blenderAddon(pick.version, undefined, pick.exe)) { this.openBlender({ wait: 45 }).catch(() => {}); return { ok: true, message: `Opening Blender ${pick.version} with MCP on…` }; }
+      (this.spawnImpl || require("child_process").spawn)(pick.exe, ["--online-mode"], { detached: true, stdio: "ignore", cwd: path.dirname(pick.exe) }).unref?.();
+      return { ok: true, message: `Opening Blender ${pick.version}…` };
+    }
+    throw new Error("Unknown app " + id);
+  }
 
   /** On start: connect Blender by itself if the user turned that on. */
   async autoConnectBlender() {
