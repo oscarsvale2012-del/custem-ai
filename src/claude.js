@@ -68,8 +68,53 @@ function blenderServer(env = process.env) {
     const ext = path.join(base, acct, "Claude Extensions");
     for (const e of ls(ext).filter((x) => /blender/i.test(x))) {
       const exe = path.join(ext, e, ".venv", "Scripts", "blender-mcp.exe");
-      if (fs.existsSync(exe)) return { type: "stdio", command: exe, args: [], env: {} };
+      if (fs.existsSync(exe)) return { type: "stdio", ...venvLaunch(exe, env) };
     }
+  }
+  return null;
+}
+
+/**
+ * How to start a Python program from a uv virtual env (.venv\Scripts\<name>.exe).
+ * The Claude desktop app from the Microsoft Store is packaged: files it makes in AppData really live in
+ * %LOCALAPPDATA%\Packages\Claude_…\LocalCache\…, and only Claude itself sees them at the normal path.
+ * The venv's Python ("home" in pyvenv.cfg) is one of those, so blender-mcp.exe fails when VYRON starts it
+ * ("did not find executable at …\uv\python\…\python.exe"). Then VYRON runs the real Python from Claude's
+ * package folder with the venv's packages and the program's entry point instead.
+ */
+function venvLaunch(exe, env = process.env) {
+  const plain = { command: exe, args: [], env: {} };
+  const venv = path.dirname(path.dirname(exe));
+  let home = null; try { home = (fs.readFileSync(path.join(venv, "pyvenv.cfg"), "utf8").match(/^home\s*=\s*(.+?)\s*$/m) || [])[1] || null; } catch { /* not a venv */ }
+  if (!home || fs.existsSync(path.join(home, "python.exe"))) return plain;
+  const real = packagedPath(home, env);
+  if (!real) return plain;
+  const site = path.join(venv, "Lib", "site-packages");
+  const entry = venvEntryPoint(site, path.basename(exe, ".exe"));
+  if (!entry) return plain;
+  const code = `import site, sys; site.addsitedir(${JSON.stringify(site)}); sys.argv[0] = ${JSON.stringify(exe)}; from ${entry.module} import ${entry.func} as _main; sys.exit(_main())`;
+  return { command: path.join(real, "python.exe"), args: ["-I", "-c", code], env: { VIRTUAL_ENV: venv } };
+}
+/** A path under AppData as the packaged (Store) Claude app really stores it, if it exists there. */
+function packagedPath(p, env = process.env) {
+  const la = env.LOCALAPPDATA;
+  if (!la) return null;
+  const roots = [[env.APPDATA, "Roaming"], [la, "Local"]].filter(([r]) => r);
+  let pkgs = []; try { pkgs = fs.readdirSync(path.join(la, "Packages")).filter((x) => /^Claude_[a-z0-9]+$/i.test(x)); } catch { return null; }
+  for (const [root, sub] of roots) {
+    if (!p.toLowerCase().startsWith(root.toLowerCase() + path.sep)) continue;
+    const rel = p.slice(root.length + 1);
+    for (const pkg of pkgs) { const cand = path.join(la, "Packages", pkg, "LocalCache", sub, rel); if (fs.existsSync(path.join(cand, "python.exe"))) return cand; }
+  }
+  return null;
+}
+/** "blender-mcp = blmcp:main" from the installed package's entry_points.txt. */
+function venvEntryPoint(site, name) {
+  let dirs = []; try { dirs = fs.readdirSync(site).filter((d) => d.endsWith(".dist-info")); } catch { return null; }
+  for (const d of dirs) {
+    let txt = ""; try { txt = fs.readFileSync(path.join(site, d, "entry_points.txt"), "utf8"); } catch { continue; }
+    const m = txt.match(new RegExp(`^\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*=\\s*([\\w.]+)\\s*:\\s*(\\w+)`, "m"));
+    if (m) return { module: m[1], func: m[2] };
   }
   return null;
 }
@@ -374,4 +419,4 @@ function toolLabel(name, input = {}) {
   return clip(n + (hint ? " — " + String(hint) : ""), 160);
 }
 
-module.exports = { USAGE, modelName, ClaudeRunner, findClaude, studioServer, blenderServer, SYSTEM };
+module.exports = { USAGE, modelName, ClaudeRunner, findClaude, studioServer, blenderServer, venvLaunch, packagedPath, SYSTEM };

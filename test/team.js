@@ -544,6 +544,41 @@ function fakeSpawn(exe, args, opts) {
       if (savedExe) be.d.settings.blenderExe = savedExe; be._apps = null;
     }
   });
+  await test("Blender MCP from the Store Claude app: runs its real Python when the normal AppData path isn't visible", () => {
+    const { blenderServer } = require("../src/claude");
+    const pc = path.join(TMP, "pcJ"), ad = path.join(pc, "ad"), la = path.join(pc, "la"), env = { APPDATA: ad, LOCALAPPDATA: la };
+    const venv = path.join(la, "Claude-Data", "claude_abc", "Claude Extensions", "ant.dir.gh.blender.blender-mcp", ".venv");
+    const exe = path.join(venv, "Scripts", "blender-mcp.exe");
+    fs.mkdirSync(path.dirname(exe), { recursive: true }); fs.writeFileSync(exe, "");
+    const home = path.join(ad, "uv", "python", "cpython-3.14.0-windows-x86_64-none");
+    fs.writeFileSync(path.join(venv, "pyvenv.cfg"), `home = ${home}\nimplementation = CPython\nversion_info = 3.14.0\n`);
+    const dist = path.join(venv, "Lib", "site-packages", "blender_mcp-1.0.0.dist-info"); fs.mkdirSync(dist, { recursive: true });
+    fs.writeFileSync(path.join(dist, "entry_points.txt"), "[console_scripts]\nblender-mcp = blmcp:main\n");
+    // Python only inside Claude's package folder (what VYRON sees on a PC with the Store app)
+    const real = path.join(la, "Packages", "Claude_pzs8sxrjxfjjc", "LocalCache", "Roaming", "uv", "python", "cpython-3.14.0-windows-x86_64-none");
+    fs.mkdirSync(real, { recursive: true }); fs.writeFileSync(path.join(real, "python.exe"), "");
+    let s = blenderServer(env);
+    assert.equal(s.command, path.join(real, "python.exe"), "runs the real Python");
+    assert.equal(s.args[0], "-I"); assert.equal(s.args[1], "-c");
+    assert(s.args[2].includes("from blmcp import main as _main") && s.args[2].includes(JSON.stringify(path.join(venv, "Lib", "site-packages"))), s.args[2]);
+    assert.equal(s.env.VIRTUAL_ENV, venv);
+    // Normal install (Python where pyvenv.cfg says) → the venv's own exe, as before
+    fs.mkdirSync(home, { recursive: true }); fs.writeFileSync(path.join(home, "python.exe"), "");
+    s = blenderServer(env);
+    assert.equal(s.command, exe); assert.deepEqual(s.args, []);
+  });
+  await test("a broken Blender MCP program is reported as that (not 'Blender isn't open'), and Connect says to fix the extension", async () => {
+    const fake = path.join(TMP, "fake-blender-mcp.exe"); fs.writeFileSync(fake, "");
+    const old = process.env.VYRON_BLENDER_MCP; process.env.VYRON_BLENDER_MCP = fake;
+    const realMcp = be.mcp, realCheck = be.checkBlender;
+    be.mcp = { info: () => ({ status: "error", error: "MCP error -32000: Connection closed — did not find executable at 'C:\\Users\\x\\AppData\\Roaming\\uv\\python\\cpython-3.14.0\\python.exe': The system cannot find the path specified.", tools: [] }), connect: async () => {}, call: async () => ({}) };
+    try {
+      const b = await be.checkBlender();
+      assert(!b.open && b.broken && /can't start/.test(b.error) && /Extensions/.test(b.error), b.error);
+      const r = await be.connectBlender({ wait: 1 });
+      assert.equal(r.step, "extension", "fix the extension, don't restart Blender");
+    } finally { be.mcp = realMcp; be.checkBlender = realCheck; if (old === undefined) delete process.env.VYRON_BLENDER_MCP; else process.env.VYRON_BLENDER_MCP = old; be.blenderInfo = null; }
+  });
   await test("PC control makes the screen glow for 15 s after Claude's last action", async () => {
     const saved = be.d.settings.pcControl, savedPc = be.pc;
     let glows = []; const onGlow = (g) => glows.push(g.on); be.on("glow", onGlow);

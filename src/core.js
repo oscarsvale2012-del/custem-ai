@@ -706,6 +706,7 @@ class Backend extends EventEmitter {
     }
     const cur = await this.checkBlender().catch(() => null);
     if (cur?.open) return { ok: true, step: "done", message: "Blender is already connected." };
+    if (cur?.broken) return { ok: false, step: "extension", message: cur.error };
     const all = this.findBlenders();
     if (!all.some((b) => this.blenderOk(b.version))) {
       const old = all.map((b) => b.version).filter(Boolean).sort(cmpVer).pop();
@@ -773,7 +774,7 @@ class Backend extends EventEmitter {
       }
       // 3 + 4. extension, MCP server on, open Blender, connect
       let mcpb = null;
-      if (!this.blenderMcpServer()) {
+      if (!this.blenderMcpServer() || this.blenderInfo?.broken) {
         progress("extension", "Downloading the Blender extension for Claude desktop…");
         mcpb = await this.downloadBlenderMcp("extension").catch((e) => { this.log(e.message, "warn", "Blender"); return null; });
         if (mcpb && this.host.openPath) { progress("extension", "Opening the Blender extension in Claude desktop…"); await this.host.openPath(mcpb); }
@@ -860,7 +861,7 @@ class Backend extends EventEmitter {
     const steps = {
       addon: `The MCP add-on isn't installed in this Blender yet${files.addonZip ? `, and installing it automatically didn't work. VYRON already downloaded it here: ${files.addonZip}` : ""}. Open Blender with vyron_open_app (app "blender"). In Blender: Edit → Preferences → Get Extensions. If Blender asks to allow online access, allow it. ${files.addonZip ? `Use the ▾ menu at the top right → "Install from Disk…", paste the path above into the file name box and press Install from Disk.` : `Search "MCP" and install "MCP" by Blender Lab.`} When it's installed, close Blender (File → Quit) and call vyron_connect_blender.`,
       extension: `The Blender extension isn't installed in the Claude desktop app yet. ${files.mcpb ? `VYRON downloaded the official one (${files.mcpb}) and opened it in Claude desktop, so an install window should be showing. The user asked VYRON to install it: press "Install" in that window.` : `Open Claude desktop with vyron_open_app (app "claude"), go to Settings → Extensions, search "Blender" and press Install.`} Make sure it's switched on. If anything asks for a password, a sign-in or other terms, stop and ask the user (vyron_notify). Then call vyron_connect_blender.`,
-      restart: `Blender is open without its MCP server. Bring Blender to the front (vyron_open_app "blender"), then close it with File → Quit. If Blender asks to save changes, DON'T choose "Don't Save": stop and ask the user (vyron_notify) to save or close it themselves, and wait for them. When Blender is closed, call vyron_connect_blender.`,
+      restart: `Blender is open without its MCP server. Don't close Blender — start the server inside the open Blender instead. Bring Blender to the front (vyron_open_app "blender"). Edit → Preferences → System: tick "Allow Online Access". Then Add-ons: search "MCP", make sure it's ticked, tick "Auto Start" and press "Start" (it should say "Server is running"). Save Preferences (☰ menu, bottom left), close the Preferences window and call vyron_connect_blender. Only if that's impossible, ask the user (vyron_notify) to save their work and close Blender themselves — never choose "Don't Save".`,
       start: `Blender opened but its MCP server didn't start. Bring Blender to the front (vyron_open_app "blender"): Edit → Preferences → Add-ons → search "MCP" → tick it, tick "Auto Start", press "Start", then Save Preferences (☰ menu, bottom left). Then call vyron_connect_blender.`,
     };
     return `Connect Blender to VYRON for the user, by controlling their PC — the user asked VYRON to do everything for them. VYRON already checked the versions: Blender ${pick.version} (${pick.exe}) is supported by the MCP add-on (needs ${this.blenderNeeds()}). Don't use any other Blender.
@@ -1021,14 +1022,17 @@ How:
     const srv = blenderServer();
     if (!srv) { this.blenderInfo = { found: false, open: false, file: null, error: "Blender's MCP server isn't installed (Claude desktop → Settings → Extensions → Blender)." }; this.changed(); return this.blenderInfo; }
     try {
-      if (this.mcp.info(BLENDER_ID).status !== "connected") await this.mcp.connect({ id: BLENDER_ID, name: "Blender", transport: "stdio", command: srv.command, args: srv.args });
+      if (this.mcp.info(BLENDER_ID).status !== "connected") await this.mcp.connect({ id: BLENDER_ID, name: "Blender", transport: "stdio", command: srv.command, args: srv.args, env: srv.env });
       if (this.mcp.info(BLENDER_ID).status !== "connected") throw new Error(this.mcp.info(BLENDER_ID).error || "Couldn't start Blender's MCP server");
       const r = await this.mcp.call(BLENDER_ID, "get_blendfile_summary_path_info", {});
       if (r.isError) throw new Error(r.text);
       const file = (String(r.text).match(/[A-Za-z]:\\[^"\n]+?\.blend/) || [])[0] || null;
       this.blenderInfo = { found: true, open: true, file, error: null };
     } catch (e) {
-      this.blenderInfo = { found: true, open: false, file: null, error: /connect|refused|ECONN|not running|timed out|socket/i.test(e.message) ? "Blender isn't open, or its MCP add-on is off. Open Blender and turn the add-on on." : String(e.message).slice(0, 300) };
+      const msg = String(e.message);
+      this.blenderInfo = { found: true, open: false, file: null, broken: /did not find executable|ENOENT|not recognized|cannot find the (path|file)/i.test(msg),
+        error: /did not find executable|ENOENT|cannot find the (path|file)/i.test(msg) ? "The Blender MCP program from Claude desktop can't start (" + clip(msg.replace(/^.*did not find executable at /i, "missing "), 160) + "). Reinstall the Blender extension in Claude desktop (Settings → Extensions)."
+          : /connect|refused|ECONN|not running|timed out|socket/i.test(msg) ? "Blender isn't open, or its MCP add-on is off. Open Blender and turn the add-on on." : msg.slice(0, 300) };
     }
     this.changed();
     return this.blenderInfo;
