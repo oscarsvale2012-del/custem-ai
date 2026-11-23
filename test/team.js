@@ -66,7 +66,7 @@ function fakeSpawn(exe, args, opts) {
     assert(/flickering/.test(R.ROLES.debug.prompt) && /z-fighting/.test(R.ROLES.debug.prompt) && /unanchored/i.test(R.ROLES.debug.prompt) && /get_console_output/.test(R.ROLES.debug.prompt), "the Debugger hunts flickering and flying parts and errors");
     assert.equal(be.roleId("QA"), "debug"); assert.equal(be.roleId("debugger"), "debug");
     assert(R.ROLES.builder.servers.includes("blender") && !R.ROLES.coder.servers.includes("blender"));
-    assert(/gamepasses/i.test(R.ROLES.money.prompt) && /Blender/.test(R.ROLES.builder.prompt) && /control the team/.test(R.ROLES.cofounder.prompt));
+    assert(/gamepasses/i.test(R.ROLES.money.prompt) && /Blender/.test(R.ROLES.builder.prompt) && /commander/.test(R.ROLES.cofounder.prompt) && /AT THE SAME TIME/.test(R.ROLES.cofounder.prompt));
     assert(/Creator Store/.test(R.ROLES.sound.prompt) && /SoundService/.test(R.ROLES.sound.prompt), "sounds from Roblox's Creator Store");
     assert(/R15/.test(R.ROLES.animator.prompt) && /Rig Builder/.test(R.ROLES.animator.prompt) && /generate_animation/.test(R.ROLES.animator.prompt), "official Roblox rigs + Studio's animation tool");
     for (const r of R.ROLE_IDS) assert(/You make Roblox games/.test(R.ROLES[r].prompt), r + " is made for Roblox game development");
@@ -173,6 +173,42 @@ function fakeSpawn(exe, args, opts) {
     assert.equal(team().roles.ui.enabled, false, "UI Maker was taken out of the team");
     await dispatch(ctx, "setTeamRoles", [["builder", "coder", "ui", "money"]]);
     await idle();
+  });
+  await test("game setup answers (quality, main feature, look, Robux) go to the Co-Founder and every role", async () => {
+    assert.deepEqual(R.cleanPrefs({ modelQuality: "max", texture: "studs", money: "overload", feature: "brainrots", featureQuality: "super", junk: "x", modelQuality2: 1 }), { modelQuality: "max", feature: "brainrots", featureQuality: "super", texture: "studs", money: "overload" });
+    assert.deepEqual(R.cleanPrefs({ modelQuality: "ultra", money: 5 }), {}, "unknown answers are dropped");
+    const txt = R.prefsText({ modelQuality: "low", feature: "brainrots", featureQuality: "max", texture: "studs", money: "overload" });
+    assert(/Model quality \(Low\)/.test(txt) && /Quality of Italian brainrot/.test(txt) && /\(Max\)/.test(txt));
+    assert(/stud texture/.test(txt) && /bold contrasting trims/.test(txt) && /Neon/.test(txt) && /never copy/.test(txt), "the Studs look, in its own models");
+    assert(/3 R\$/.test(txt) && /0\.5%/.test(txt) && /80 R\$/.test(txt), "the full overload as asked");
+    assert(/show the odds/.test(txt) && /ArePaidRandomItemsRestricted/.test(txt), "always inside Roblox's rules for paid random items");
+    assert.equal(R.prefsText({}), "");
+    // the map question (after the Studs look): escape map with what chases you and the worlds
+    const esc = R.cleanPrefs({ texture: "studs", map: "escape", hazard: "waves", biomes: ["galaxy", "winter", "galaxy", "nope"] });
+    assert.deepEqual(esc, { texture: "studs", map: "escape", hazard: "waves", biomes: ["galaxy", "winter"] }, "doubles and unknown worlds dropped");
+    assert.deepEqual(R.cleanPrefs({ map: "escape", biomes: ["heaven", "all"] }).biomes, ["all"], "Everything on its own");
+    assert.deepEqual(R.cleanPrefs({ map: "flat", hazard: "waves", biomes: ["lava"] }), { map: "flat" }, "danger and worlds only for the escape map");
+    const et = R.prefsText(esc);
+    assert(/long escape map/.test(et) && /run back to their base/.test(et) && /big waves/.test(et) && /galaxy and space/.test(et) && /winter \(snow/.test(et), et);
+    const tid = await dispatch(ctx, "teamPlan", ["a brainrot tycoon", [], { modelQuality: "high", texture: "grass", money: "few", hacked: "yes" }]);
+    const t = be.d.teams.find((x) => x.id === tid);
+    assert.deepEqual(t.prefs, { modelQuality: "high", texture: "grass", money: "few" });
+    assert(runs.at(-1)?.input?.includes("Game settings the user chose") || be.claude.tasks.find((x) => x.id === t.roles.cofounder.taskId).messages[0].text.includes("Game settings the user chose"), "the Co-Founder gets them");
+    assert(R.workerBrief({ id: "x", plan: PLAN, prefs: t.prefs, roles: { builder: { enabled: true } } }, "builder").includes("grassy and natural"), "every role gets them");
+    assert.equal(be.publicState().gameSetup.money.options.length, 4);
+    await idle(); await dispatch(ctx, "teamDiscard", [tid]);
+  });
+  await test("the whole team works at the same time: the task limit is raised to fit it", async () => {
+    const saved = be.d.settings.claudeParallel;
+    try {
+      be.d.settings.claudeParallel = 3;
+      const fake = { roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { enabled: ["cofounder", "builder", "coder", "ui", "money", "debug"].includes(r) }])) };
+      be.teamSlots(fake);
+      assert.equal(be.d.settings.claudeParallel, 7, "6 roles + your own chat");
+      be.d.settings.claudeParallel = 12; be.teamSlots(fake);
+      assert.equal(be.d.settings.claudeParallel, 12, "never lowered");
+      assert(/AT THE SAME TIME|at the same time/.test(R.workerBrief({ id: "x", plan: PLAN, roles: fake.roles }, "coder")) && /after EACH job/.test(R.workerBrief({ id: "x", plan: PLAN, roles: fake.roles }, "coder")), "workers report after each job");
+    } finally { be.d.settings.claudeParallel = saved; }
   });
   await test("wait returns when the roles are done", async () => {
     const s = await tool("vyron_team_wait", { timeout_seconds: 10 });

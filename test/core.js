@@ -139,12 +139,48 @@ const reply = (input) => [
     const run = spawned.at(-1);
     assert(run.args.includes("-p") && run.args.includes("stream-json") && run.args.includes("--strict-mcp-config"));
     assert.equal(run.opts.cwd, path.join(TMP, "game"));
-    assert(/Active VYRON project: Test Game/.test(run.input) && /make a coin system$/.test(run.input));
+    assert(/VYRON project: Test Game/.test(run.input) && /make a coin system$/.test(run.input));
     const cfg = JSON.parse(fs.readFileSync(run.args[run.args.indexOf("--mcp-config") + 1], "utf8"));
     assert.equal(cfg.mcpServers.vyron.url, "http://127.0.0.1:47292/mcp");
     assert.equal(cfg.mcpServers.vyron.headers.Authorization, "Bearer " + control.cfg.token);
     assert(run.args.includes("acceptEdits") && run.args.includes("mcp__vyron") && !run.args.includes("--dangerously-skip-permissions"));
     assert(!run.args.includes("Bash"), "shell must not be allowed in safe mode");
+  });
+  await test("a game opened in Studio shows up; one click makes it a project that the chat task works on (in that Studio window)", async () => {
+    for (let i = 0; i < 250 && be.claude.busy; i++) await wait(20);
+    const realStudios = be.studios;
+    be.studios = [
+      { id: "st-lava", name: "Lava Escape (placeId 555)", placeId: "555", universeId: "", file: "", mode: "Edit" },
+      { id: "st-local", name: "MyObby.rbxl", placeId: "0", universeId: "0", file: "C:\\games\\MyObby.rbxl", mode: "Edit" },
+    ];
+    try {
+      const ns = be.publicState().newStudios;
+      assert.deepEqual(ns.map((s) => s.title), ["Lava Escape", "MyObby"], "games open in Studio that aren't projects yet, with clean names");
+      const taskId = await dispatch(ctx, "claudeNewTask", ["Build a tycoon"]);
+      const pid = await dispatch(ctx, "addStudioProject", ["st-local", taskId]);
+      const p = be.project(pid);
+      assert.equal(p.name, "MyObby"); assert.equal(p.placeId, "", "unpublished place id 0 isn't kept"); assert.equal(p.file, "C:\\games\\MyObby.rbxl");
+      assert.deepEqual(be.publicState().newStudios.map((s) => s.id), ["st-lava"], "it's a project now");
+      assert.equal(be.claude.tasks.find((x) => x.id === taskId).projectId, pid, "this chat task works on it");
+      assert.equal(await dispatch(ctx, "addStudioProject", ["st-local", null]), pid, "adding it again gives the same project");
+      // Studio restarted: new window id, same file → still found
+      be.studios = [{ id: "st-new-id", name: "MyObby.rbxl", placeId: "0", universeId: "0", file: "C:\\games\\MyObby.rbxl" }];
+      assert.equal(be.studioFor(be.project(pid))?.id, "st-new-id", "found again after Studio restarts");
+      // Claude is told exactly which Studio window to use
+      await dispatch(ctx, "claudeSend", ["add checkpoints", taskId]);
+      for (let i = 0; i < 250 && be.claude.busy; i++) await wait(20);
+      const run = spawned.at(-1);
+      assert(/VYRON project: MyObby/.test(run.input) && /studio_id "st-new-id"/.test(run.input), run.input.slice(0, 200));
+      // another task can work on another project; "no project" works too
+      await dispatch(ctx, "setTaskProject", [taskId, null]);
+      await dispatch(ctx, "claudeSend", ["just chat", taskId]);
+      for (let i = 0; i < 250 && be.claude.busy; i++) await wait(20);
+      assert(!/VYRON project/.test(spawned.at(-1).input) && spawned.at(-1).opts.cwd.endsWith("Games"), "no project → VYRON's Games folder");
+      await assert.rejects(dispatch(ctx, "setTaskProject", [taskId, "nope"]), /Project not found/);
+      await assert.rejects(dispatch(ctx, "addStudioProject", ["gone", null]), /isn't open any more/);
+      be.removeProject(pid);
+      await dispatch(ctx, "claudeRemoveTask", [taskId]); // leave the chat as it was for the next tests
+    } finally { be.studios = realStudios; }
   });
   await test("replies, tool steps and the session show in the chat", () => {
     const m = be.publicState().claude.tasks[0].messages.map((x) => x.role + ":" + x.text);

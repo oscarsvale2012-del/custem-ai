@@ -1,7 +1,7 @@
 {
   "name": "vyron",
   "productName": "VYRON",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "description": "VYRON - desktop companion for Claude: build Roblox games with Claude, game ideas and DevEx kroner",
   "main": "main.js",
   "author": "VYRON",

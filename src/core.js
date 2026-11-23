@@ -21,7 +21,11 @@ const STUDIO_ID = "studio";
 const REVIEW_KINDS = ["model", "build", "ui", "gamepass"];
 const REVIEW_NAME = { model: "3D model", build: "Build", ui: "UI", gamepass: "Gamepasses" };
 const BLENDER_ID = "blender";
+/** The game setup questions for the app (after you describe your game). */
+const GAME_SETUP = Object.fromEntries(Object.entries(R.PREFS).map(([k, d]) => [k, { q: d.q, multi: !!d.multi, options: Object.entries(d.options).map(([id, [name, desc]]) => ({ id, name, desc })) }]));
 const BLENDER_MCP_MIN = "5.1"; // used until the MCP add-on is installed and its manifest says otherwise
+/** A tidy game name from a Studio window: "Lava Obby (placeId 123)" / "MyGame.rbxl" → "Lava Obby" / "MyGame". */
+const studioName = (s) => String(s?.name || "").replace(/\s*[-–]\s*Roblox Studio\s*$/i, "").replace(/\s*[([](?:place\s*id|placeid|universe|file)[^)\]]*[)\]]\s*$/i, "").replace(/\.rbxlx?$/i, "").trim() || (s?.file ? path.basename(s.file).replace(/\.rbxlx?$/i, "") : "") || "My Roblox game";
 /** Compare version strings like "5.2.4" and "5.10" by number. */
 const cmpVer = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
 /** Keyboard shortcuts that open apps from anywhere in Windows (Electron accelerator format). */
@@ -101,7 +105,11 @@ class Backend extends EventEmitter {
       setTimeout(() => this.autoConnectBlender().catch(() => {}).then(() => this.blenderInfo || this.checkBlender()).catch(() => {}), 3000);
       this._blenderTimer = setInterval(() => { this.checkBlender().catch(() => {}); this.scanWindows().catch(() => {}); }, 20000);
       this.scanWindows().catch(() => {});
-      this._studioTimer = setInterval(() => this.detectStudios(true).catch(() => {}), 15000);
+      // Every 15 s: see which games are open in Studio (and reconnect to Studio once a minute if it was opened later).
+      this._studioTimer = setInterval(() => {
+        if (this.mcp.info(STUDIO_ID).status === "connected") this.detectStudios(true).catch(() => {});
+        else if (now() - (this._studioTry || 0) > 60000) { this._studioTry = now(); this.connectStudio().catch(() => {}); }
+      }, 15000);
     }
     this._revTimer = setInterval(() => this.refreshRevenue(false).catch(() => {}), 10 * 60 * 1000);
     this._rateTimer = setInterval(() => this.refreshRates().catch(() => {}), 6 * 3600 * 1000);
@@ -138,6 +146,7 @@ class Backend extends EventEmitter {
       activeProjectId: active?.id || null,
       studio: { status: si.status, error: si.error, tools: si.tools.length },
       studios: this.studios,
+      newStudios: this.newStudios().map((s) => ({ ...s, title: studioName(s) })),
       windows: this.windows || { studio: [], blender: [] },
       setup: this.setupStatus(),
       reviews: this.d.reviews.slice(-60).reverse().map(({ file, ...r }) => ({ ...r, hasImage: !!file })),
@@ -149,6 +158,7 @@ class Backend extends EventEmitter {
       claude: this.claude.public(),
       teams: this.teamsPublic(),
       roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { name: R.ROLES[r].name, short: R.ROLES[r].short }])),
+      gameSetup: GAME_SETUP,
       blender: { found: !!blenderServer(), on: this.d.settings.blender !== false, ...(this.blenderInfo || {}), checked: !!this.blenderInfo, connecting: !!this._openingBlender },
       pc: { mode: this.d.settings.pcControl || "off", asks: this.pcAsks.map(({ resolve, reject, timer, ...a }) => a), allowedUntil: this.pcUntil > now() ? this.pcUntil : 0, activeAt: this.pcLast, glow: this.glowOn(), doIt: this._doIt || null, doItTask: this._doItTask || null },
       hotkeys: { on: this.d.settings.hotkeysOn !== false, keys: { ...HOTKEY_DEFAULTS, ...(this.d.settings.hotkeys || {}) }, defaults: HOTKEY_DEFAULTS, names: HOTKEY_NAMES, errors: this.hotkeyErrors || {}, live: !!this.hotkeysLive },
@@ -207,26 +217,45 @@ class Backend extends EventEmitter {
   }
 
   /* ================= Claude ================= */
-  /** Claude works in the active project's folder, or VYRON's own Games folder. */
-  workDir() {
-    const p = this.activeProject();
+  /** Claude works in the project's folder (the active project by default), or VYRON's own Games folder. */
+  workDir(p = this.activeProject()) {
     if (p?.rojoDir && fs.existsSync(p.rojoDir)) return p.rojoDir;
     const d = path.join(this.dataDir, "Games");
     fs.mkdirSync(d, { recursive: true });
     return d;
   }
+  /** The project a chat task works on: the one picked for it in the chat, otherwise the active project. */
+  taskProject(taskId) {
+    const t = taskId && this.claude.tasks.find((x) => x.id === taskId);
+    if (t && t.projectId !== undefined) return t.projectId ? this.project(t.projectId) : null;
+    return this.activeProject();
+  }
+  /** What Claude is told about the project — including exactly which Studio window (studio_id) to work in. */
+  projectContext(p) {
+    if (!p) return "";
+    const st = this.studioFor(p);
+    return `[VYRON project: ${p.game?.name || p.name}${p.placeId && p.placeId !== "0" ? `, place ${p.placeId}` : ""}${st ? `, open in Roblox Studio — use studio_id "${st.id}" (${st.name.replace(/[[\]]/g, "")}) for every Studio tool, not another Studio window` : ", not open in Roblox Studio right now — if you need Studio, ask the user to open this game in Studio first"}]\n`;
+  }
   /** Send to a task (default: the newest). Returns the task id. */
   claudeSend(text, taskId) {
-    const p = this.activeProject();
-    const ctx = p ? `[Active VYRON project: ${p.game?.name || p.name}${p.placeId ? `, place ${p.placeId}` : ""}${this.studioFor(p) ? ", open in Studio" : ""}]\n` : "";
-    return this.claude.send(ctx + text, this.workDir(), taskId || null);
+    const id = taskId || this.claude.tasks[0]?.id;
+    const p = this.taskProject(id);
+    return this.claude.send(this.projectContext(p) + text, this.workDir(p), taskId || null);
+  }
+  /** Chat project picker: which project this task works on (null = no project, VYRON's Games folder). */
+  setTaskProject(taskId, projectId) {
+    const t = this.claude.task(taskId);
+    if (projectId && !this.project(projectId)) throw new Error("Project not found");
+    t.projectId = projectId || null;
+    this.claude.save(); this.claude.changed();
+    return t.projectId;
   }
   claudeStop(taskId) { this.claude.stop(taskId || null); }
   claudeNewChat(taskId) { this.claude.newChat(taskId || null); }
-  claudeNewTask(title) { return this.claude.newTask(title); }
+  claudeNewTask(title) { return this.claude.newTask(title, { projectId: this.d.settings.activeProjectId || null }); }
   claudeRemoveTask(taskId) { this.claude.removeTask(taskId); }
   /** Start a new parallel task with a message. */
-  claudeStartTask(text, title) { return this.claudeSend(text, this.claude.newTask(title || "New task")); }
+  claudeStartTask(text, title) { return this.claudeSend(text, this.claudeNewTask(title || "New task")); }
   claudeLogin() { this.claude.login(); }
   claudeCheck() { return this.claude.checkAuth(); }
 
@@ -404,18 +433,19 @@ class Backend extends EventEmitter {
   teamsPublic() {
     const pid = this.d.settings.activeProjectId;
     return this.d.teams.filter((t) => !pid || t.projectId === pid || !t.projectId).slice(-10).reverse().map((t) => ({
-      id: t.id, status: t.status, error: t.error || null, idea: t.idea, plan: t.plan, createdAt: t.createdAt, cofounderTaskId: t.roles.cofounder?.taskId || null,
+      id: t.id, status: t.status, error: t.error || null, idea: t.idea, prefs: t.prefs || {}, plan: t.plan, createdAt: t.createdAt, cofounderTaskId: t.roles.cofounder?.taskId || null,
       roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { enabled: !!t.roles[r]?.enabled, taskId: t.roles[r]?.taskId || null, state: this.roleState(t, r) }])),
     }));
   }
   /** Ideas tab: the Co-Founder makes a plan (nothing is built until you press Accept). */
-  teamPlan(text, ideaIds) {
+  teamPlan(text, ideaIds, prefs) {
     text = String(text || "").trim();
     const ideas = (ideaIds || []).map((id) => this.idea(id)).filter(Boolean);
     if (!text && !ideas.length) throw new Error("Tell the Co-Founder your idea, or pick some ideas");
-    const idea = [text, ideas.length ? "Ideas to use:\n" + ideas.map((i) => `- ${i.title} (${i.category}): ${i.pitch} Features: ${i.features}`).join("\n") : ""].filter(Boolean).join("\n\n");
+    prefs = R.cleanPrefs(prefs); // quality, main feature, look and monetization from the game setup questions
+    const idea = [text, ideas.length ? "Ideas to use:\n" + ideas.map((i) => `- ${i.title} (${i.category}): ${i.pitch} Features: ${i.features}`).join("\n") : "", R.prefsText(prefs)].filter(Boolean).join("\n\n");
     const roster = this.teamRoster();
-    const team = { id: uid("team"), projectId: this.d.settings.activeProjectId, status: "planning", idea: clip(idea, 3000), plan: null, createdAt: now(), roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { enabled: r === "cofounder" || roster.includes(r), taskId: null }])) };
+    const team = { id: uid("team"), projectId: this.d.settings.activeProjectId, status: "planning", idea: clip(idea, 6000), prefs, plan: null, createdAt: now(), roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { enabled: r === "cofounder" || roster.includes(r), taskId: null }])) };
     const taskId = this.claude.newTask("Co-Founder: " + clip(text || ideas.map((i) => i.title).join(" + "), 44), { role: "cofounder", teamId: team.id });
     team.roles.cofounder.taskId = taskId;
     this.d.teams.push(team);
@@ -449,10 +479,20 @@ class Backend extends EventEmitter {
     const team = this.team(id);
     if (team.status !== "proposed") throw new Error("There's no plan to accept yet");
     team.status = "building"; team.acceptedAt = now(); this.save();
+    this.teamSlots(team);
     for (const r of R.WORKERS) if (team.roles[r].enabled) this.teamStartRole(team, r);
     if (team.roles.cofounder.enabled) this.claude.followUp(team.roles.cofounder.taskId, R.directorBrief(team), this.workDir(), "you");
     this.log(`Team started building ${team.plan.title}`, "ok", "Team");
     this.save();
+  }
+  /** The whole team works at the same time: make room for every switched-on role (+1 for your own chat). */
+  teamSlots(team) {
+    const need = Math.min(20, R.ROLE_IDS.filter((r) => team.roles[r]?.enabled).length + 1);
+    if ((this.d.settings.claudeParallel || 3) < need) {
+      this.d.settings.claudeParallel = need;
+      this.log(`Claude tasks at the same time raised to ${need} so the whole team works at once (Settings → Claude)`, "info", "Team");
+      this.save(); this.claude.pump();
+    }
   }
   teamStartRole(team, r) {
     if (r === "builder" && blenderServer()) this.ensureBlender();
@@ -467,6 +507,7 @@ class Backend extends EventEmitter {
     ro.enabled = !!on;
     if (!on && ro.taskId && this.claude.tasks.some((x) => x.id === ro.taskId)) this.claude.stop(ro.taskId);
     if (on && team.status === "building") {
+      this.teamSlots(team);
       if (r !== "cofounder" && !ro.taskId) this.teamStartRole(team, r);
       else if (ro.taskId) { const t = this.claude.tasks.find((x) => x.id === ro.taskId); if (t && !t.busy && !t.queued) this.claude.followUp(ro.taskId, "[From the Co-Founder] You're switched on again — check vyron_team_status and continue your jobs.", this.workDir(), "you"); }
     }
@@ -1172,14 +1213,31 @@ Work in the open Blender file: build it step by step with clean, named objects a
       if (r.isError) throw new Error(r.text);
       this.studios = parseStudios(r.text);
       this.studioError = this.studios.length ? null : "No Studio window found. Open your place in Roblox Studio.";
-      for (const p of this.d.projects) { const st = this.studioFor(p); if (st) p.studioId = st.id; }
+      for (const p of this.d.projects) { const st = this.studioFor(p); if (st) { p.studioId = st.id; if (st.file && !p.file) p.file = st.file; } }
+      this._seenStudios = this._seenStudios || new Set();
+      for (const s of this.newStudios()) if (!this._seenStudios.has(s.id)) { this._seenStudios.add(s.id); this.log(`Roblox Studio has "${studioName(s)}" open — add it as a project in the Claude tab or Projects`, "info", "Studio"); }
     } catch (e) { this.studioError = e.message; if (!quiet) throw e; }
     this.changed();
     return this.studios;
   }
   studioFor(p) {
     if (!p) return null;
-    return this.studios.find((s) => (p.studioId && s.id === p.studioId) || (p.universeId && s.universeId && s.universeId === p.universeId) || (p.placeId && s.placeId && s.placeId === p.placeId && p.placeId !== "0")) || null;
+    return this.studios.find((s) => (p.studioId && s.id === p.studioId) || (p.universeId && s.universeId && s.universeId === p.universeId && p.universeId !== "0") || (p.placeId && s.placeId && s.placeId === p.placeId && p.placeId !== "0") || (p.file && s.file && s.file.toLowerCase() === p.file.toLowerCase())) || null;
+  }
+  /** Games open in Roblox Studio that aren't a VYRON project yet (shown with an "Add" button). */
+  newStudios() {
+    const taken = new Set(this.d.projects.map((p) => this.studioFor(p)?.id).filter(Boolean));
+    return this.studios.filter((s) => s.id && !taken.has(s.id));
+  }
+  /** One click: make the game that's open in Studio a project (and use it in a chat task). */
+  async addStudioProject(studioId, taskId) {
+    const st = this.studios.find((s) => s.id === studioId);
+    if (!st) throw new Error("That Studio window isn't open any more.");
+    const have = this.d.projects.find((p) => this.studioFor(p)?.id === st.id);
+    const id = have ? have.id : await this.addProject({ studioId: st.id, name: studioName(st) });
+    if (taskId) this.setTaskProject(taskId, id);
+    this.log(`Project "${this.project(id).name}" added from Roblox Studio`, "ok", "Projects");
+    return id;
   }
 
   /* ================= projects ================= */
@@ -1188,10 +1246,11 @@ Work in the open Blender file: build it step by step with clean, named objects a
   projectPublic(p) { return { ...p, studioConnected: !!this.studioFor(p), studio: this.studioFor(p) }; }
   async addProject({ name, rojoDir, placeId, universeId, studioId }) {
     const studio = studioId ? this.studios.find((s) => s.id === studioId) : null;
+    const noZero = (v) => { v = String(v || "").trim(); return v === "0" ? "" : v; }; // an unpublished place has id 0
     const p = {
-      id: uid("proj"), name: String(name || studio?.name || "My Roblox game").slice(0, 60), rojoDir: String(rojoDir || "").trim(),
-      placeId: String(placeId || studio?.placeId || "").trim(), universeId: String(universeId || studio?.universeId || "").trim(),
-      studioId: studio?.id || null, game: null, gameError: null, createdAt: now(),
+      id: uid("proj"), name: String(name || (studio ? studioName(studio) : "") || "My Roblox game").slice(0, 60), rojoDir: String(rojoDir || "").trim(),
+      placeId: noZero(placeId || studio?.placeId), universeId: noZero(universeId || studio?.universeId),
+      studioId: studio?.id || null, file: String(studio?.file || ""), game: null, gameError: null, createdAt: now(),
     };
     this.d.projects.push(p);
     if (!this.d.settings.activeProjectId) this.d.settings.activeProjectId = p.id;

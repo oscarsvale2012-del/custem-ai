@@ -414,7 +414,7 @@ function projectCard(p) {
 
 /* ---------- Claude ---------- */
 function msgView(m, compact) {
-  if (m.role === "user") return `<div class="msg user"><div class="who">You · ${time(m.at)}</div><div class="md">${md(m.text.replace(/^\[Active VYRON project:[^\]]*\]\n/, ""))}</div></div>`;
+  if (m.role === "user") return `<div class="msg user"><div class="who">You · ${time(m.at)}</div><div class="md">${md(m.text.replace(/^\[(?:Active )?VYRON project:[^\]]*\]\n/, ""))}</div></div>`;
   if (m.role === "assistant") return `<div class="msg assistant"><div class="who">Claude · ${time(m.at)}</div><div class="md">${md(compact && m.text.length > 400 ? m.text.slice(0, 400) + "…" : m.text)}</div></div>`;
   if (m.role === "tool") return `<div class="tool-step ${m.tool === "error" ? "bad" : ""}">${ic(m.tool === "error" ? "x" : /roblox_studio/.test(m.tool) ? "roblox" : /vyron/.test(m.tool) ? "dashboard" : "bolt")}<span class="ell">${esc(m.text)}</span></div>`;
   if (m.role === "result") return compact ? "" : `<div class="tool-step done">${ic("check")}<span>${esc(m.text)}</span></div>`;
@@ -431,7 +431,7 @@ function reveal(key, len) {
   return start && el < dur ? { cls: " reveal", style: `--rd:${dur}ms;animation-delay:-${el}ms` } : { cls: "", style: "" };
 }
 function chatMsg(t, m) {
-  if (m.role === "user") return `<div class="cmsg user"><div class="md">${md(m.text.replace(/^\[Active VYRON project:[^\]]*\]\n/, "").replace(/^\[From [^\]]{1,60}\] /, ""))}</div>${m.queuedFrom ? `<div class="faint cmsg-from">${esc(m.queuedFrom === "you" ? "Sent while it worked" : "From " + m.queuedFrom)}</div>` : ""}</div>`;
+  if (m.role === "user") return `<div class="cmsg user"><div class="md">${md(m.text.replace(/^\[(?:Active )?VYRON project:[^\]]*\]\n/, "").replace(/^\[From [^\]]{1,60}\] /, ""))}</div>${m.queuedFrom ? `<div class="faint cmsg-from">${esc(m.queuedFrom === "you" ? "Sent while it worked" : "From " + m.queuedFrom)}</div>` : ""}</div>`;
   if (m.role === "assistant") { const r = reveal(`${t.id}:${m.at}`, m.text.length); return `<div class="cmsg ai${r.cls}" style="${r.style}"><div class="md">${md(m.text)}</div></div>`; }
   if (m.role === "result") return `<div class="cresult">${ic("check")}<span>${esc(m.text)}</span></div>`;
   return `<div class="msg error"><div class="who">Problem</div>${esc(m.text)}</div>`;
@@ -477,10 +477,33 @@ function curTask() {
 }
 const taskState = (t) => (t.busy ? ["working", "Working"] : t.queued ? ["connecting", "Waiting"] : ["idle", t.count ? "Done" : "New"]);
 
+/** Which project a chat task works on (its own pick, otherwise the active project). */
+function taskProject(t) {
+  if (t && t.projectId !== undefined) return t.projectId ? S.projects.find((x) => x.id === t.projectId) || null : null;
+  return activeProject();
+}
+/** Project picker in the chat header: your projects, plus games open in Studio that you can add with one click. */
+function projectPicker(t) {
+  const p = taskProject(t), N = S.newStudios || [];
+  return `<label class="proj-pick ${p?.studioConnected ? "live" : ""}" title="Which game this task works on">${p ? gameIcon(p, "xs") : `<span class="proj-none">${ic("folder")}</span>`}
+    <select class="proj-select" data-change="taskProject" data-id="${t.id}" ${t.busy || t.queued ? "disabled" : ""}>
+      ${S.projects.map((x) => `<option value="${x.id}" ${p?.id === x.id ? "selected" : ""}>${esc(x.game?.name || x.name)}${x.studioConnected ? "  ● open in Studio" : ""}</option>`).join("")}
+      ${N.length ? `<optgroup label="Open in Roblox Studio — add as a project">${N.map((s) => `<option value="add:${esc(s.id)}">＋ ${esc(s.title)}</option>`).join("")}</optgroup>` : ""}
+      <option value="" ${p ? "" : "selected"}>No project (VYRON's Games folder)</option>
+    </select>${ic("chev", "proj-chev")}</label>`;
+}
+/** A game is open in Studio but isn't a project yet: offer to add it right where you chat. */
+function newStudioBar(t) {
+  const s = (S.newStudios || [])[0];
+  if (!s || ui.hideStudioBar === s.id) return "";
+  return `<div class="studio-bar">${ic("roblox")}<span class="grow ell"><b>${esc(s.title)}</b> is open in Roblox Studio${S.newStudios.length > 1 ? ` <span class="faint">(+${S.newStudios.length - 1} more)</span>` : ""}</span>
+    <button class="btn sm primary" data-act="addStudioProject" data-id="${esc(s.id)}" data-task="${t.id}">${ic("plus")}Add as project &amp; work on it</button><button class="btn sm ghost icon" data-act="hideStudioBar" data-id="${esc(s.id)}" title="Not now">${ic("x")}</button></div>`;
+}
+
 VIEWS.claude = () => {
   const C = S.claude;
-  const p = activeProject();
   const t = curTask();
+  const p = taskProject(t);
   const active = t.busy || t.queued;
   const list = C.tasks.map((x) => { const [dot, label] = taskState(x); return `<div class="pick task-pick ${x.id === t.id ? "on" : ""} ${x.role ? "r-" + x.role + " has-role" : ""}" data-act="pickTask" data-id="${x.id}">
       ${x.role ? `<span class="agent-ic sm">${ic(ROLE_ICON[x.role])}</span>` : `<span class="dot ${dot}" title="${label}"></span>`}<div class="grow" style="min-width:0"><div class="ell" style="font-weight:500">${x.role ? `<span class="role-tag r-${x.role}">${esc(S.roles[x.role]?.name || x.role)}</span>` : ""}${esc(x.role ? x.title.replace(/^[^:]{2,22}: /, "") : x.title)}</div>
@@ -492,10 +515,10 @@ VIEWS.claude = () => {
         <div style="padding:8px">${teamColumn()}<div class="label" style="margin:12px 6px 6px">Tasks</div>${list}</div>
         <div class="faint" style="font-size:11.5px;padding:4px 14px 14px">Every task is its own Claude working at the same time (up to ${C.limit}, change it in Settings). More tasks use your Claude usage faster.</div></div>`}
       <div class="panel chat">
-        <div class="panel-h"><button class="btn sm ghost icon" data-act="toggleTasks" title="${ui.tasksHidden ? "Show tasks and team" : "Hide tasks and team"}">${ic("panel")}</button><div class="ava" style="width:32px;height:32px;border-radius:10px">${ic("claude")}</div><div style="min-width:0"><h3 class="ell">${esc(t.title)}</h3><div class="faint" style="font-size:12px">${S.settings.claudeAccess === "full" ? "Full access" : "Studio + VYRON + project files"} · works in ${esc(p ? p.game?.name || p.name : "VYRON's Games folder")}</div></div><div class="grow"></div>
+        <div class="panel-h"><button class="btn sm ghost icon" data-act="toggleTasks" title="${ui.tasksHidden ? "Show tasks and team" : "Hide tasks and team"}">${ic("panel")}</button><div class="ava" style="width:32px;height:32px;border-radius:10px">${ic("claude")}</div><div style="min-width:0"><h3 class="ell">${esc(t.title)}</h3><div class="row" style="gap:8px;margin-top:2px">${projectPicker(t)}<span class="faint" style="font-size:11.5px">${S.settings.claudeAccess === "full" ? "Full access" : "Studio + VYRON + project files"}</span></div></div><div class="grow"></div>
           ${t.modelName ? `<span class="chip model">${ic("sparkle")}${esc(t.modelName)}</span>` : modelChip()}<span class="chip ${S.studio.status === "connected" && S.studios.length ? "ok" : ""}"><span class="dot ${S.studio.status === "connected" && S.studios.length ? "connected" : "unknown"}"></span>Studio</span>
           ${active ? `<button class="btn sm danger" data-act="claudeStop" data-id="${t.id}">${ic("stop")}${t.queued ? "Cancel" : "Stop"}</button>` : `<button class="btn sm ghost" data-act="claudeNewChat" data-id="${t.id}" title="Clear this task's chat">Clear</button><button class="btn sm ghost danger icon" data-act="removeTask" data-id="${t.id}" title="Delete task">${ic("trash")}</button>`}</div>
-        <div class="thread" id="thread"><div class="thread-in">
+        ${newStudioBar(t)}<div class="thread" id="thread"><div class="thread-in">
           ${t.messages.length ? threadHtml(t) : `<div class="empty" style="margin:auto;max-width:520px"><b>You control Claude from here</b>Ask for anything in your game — Claude builds it in Roblox Studio, and can use VYRON too. Want several things at once? Press New for another task — each one is a separate Claude working at the same time.</div>`}
           ${t.busy ? workingLine(t) : t.queued ? `<div class="working"><span class="spinner"></span><span class="faint">Waiting — ${C.running} of ${C.limit} tasks are running. Starts automatically.</span></div>` : ""}
         </div></div>
@@ -526,16 +549,27 @@ function agentStatus(r) {
   if (!C.found || (C.auth && !C.auth.loggedIn)) return ["offline", "Offline", !C.found ? "Claude Code isn't installed" : "Claude isn't signed in"];
   const team = (S.teams || [])[0];
   const ro = team?.roles?.[r];
+  // Any Claude task doing this role's work counts — the team's task, or one started elsewhere (e.g. "Make a 3D model" runs the Builder in Blender).
+  const mine = C.tasks.filter((x) => x.role === r);
+  const t = mine.find((x) => x.busy) || (ro?.taskId && C.tasks.find((x) => x.id === ro.taskId && (x.busy || x.queued))) || mine.find((x) => x.queued) || (ro?.taskId && C.tasks.find((x) => x.id === ro.taskId));
+  if (t?.busy || (r === "cofounder" && team && (team.status === "planning" || team.status === "revising"))) return ["working", "Working", esc(roleDoing(t) || (r === "cofounder" ? "Planning " + (team?.plan?.title || "the game") : "Working"))];
+  if (t?.queued) return ["waiting", "Waiting", `Waiting for a free Claude slot (${C.running}/${C.limit} running)`];
   if (team && ro && !ro.enabled) return ["offline", "Offline", "Switched off"];
-  const t = ro?.taskId && C.tasks.find((x) => x.id === ro.taskId);
-  if (t?.busy || t?.queued || (r === "cofounder" && team && (team.status === "planning" || team.status === "revising"))) return ["working", "Working", t?.queued && !t?.busy ? "Waiting for a free slot" : esc(t?.last || "Working on " + (team?.plan?.title || "the plan"))];
   if (ro?.state === "problem" || (r === "cofounder" && team?.status === "failed")) return ["broken", "Broken", esc(t?.last || team?.error || "Its last step failed")];
-  return ["idle", "Idle", team?.plan ? (ro?.taskId ? "Done — waiting for the next job" : "Ready") : "No team yet — ask the Co-Founder in Game Ideas"];
+  return ["idle", "Idle", team?.plan ? (ro?.taskId ? "Done — waiting for the next job" : team.status === "building" ? "Waiting for orders from the Co-Founder" : "Ready") : "No team yet — ask the Co-Founder in Game Ideas"];
+}
+/** What a role's Claude is doing right now: its current task-list step, its current tool, or its last words. */
+function roleDoing(t) {
+  if (!t) return "";
+  const step = (t.todos || []).find((x) => x.status === "in_progress");
+  const plain = { vyron_team_status: "Checking on the team", vyron_team_message: "Giving orders", vyron_team_wait: "Waiting for the team to finish", vyron_submit_review: "Sending you something to check", vyron_review_wait: "Waiting for your OK" };
+  const tool = Object.keys(plain).find((k) => (t.now || "").includes(k));
+  return step?.activeForm || (tool ? plain[tool] : t.now) || t.last || "";
 }
 function teamColumn() {
   const team = (S.teams || [])[0];
   return `<div class="team-list"><div class="row" style="padding:2px 6px 8px"><b style="font:600 13px var(--f-head)">Team</b><span class="faint ell grow" style="font-size:11.5px;margin-left:8px">${team?.plan ? esc(team.plan.title) : ""}</span><button class="btn sm ghost icon team-add" data-act="teamPick" title="Add or remove roles">${ic("plus")}</button></div>
-    ${teamMembers(team).map((r) => { const [k, label, why] = agentStatus(r); const tid = team?.roles?.[r]?.taskId;
+    ${teamMembers(team).map((r) => { const [k, label, why] = agentStatus(r); const tid = (S.claude.tasks.find((x) => x.role === r && x.busy) || S.claude.tasks.find((x) => x.role === r && x.queued))?.id || team?.roles?.[r]?.taskId;
       return `<div class="agent r-${r} st-${k}" ${tid ? `data-act="pickTask" data-id="${tid}"` : 'data-go="ideas"'} title="${why}">
         <span class="agent-ic">${ic(ROLE_ICON[r])}</span><div class="grow" style="min-width:0"><div class="agent-name ell">${esc(S.roles[r].name)}</div><div class="faint ell" style="font-size:11px">${why}</div></div>
         <span class="agent-st"><span class="dot"></span>${label}</span></div>`; }).join("")}
@@ -582,8 +616,37 @@ const ROLE_ORDER = ["cofounder", "builder", "coder", "ui", "money", "sound", "an
 /** Who's in the team: always the Co-Founder first, then the roles you added with + (and any role a team is using right now). */
 function teamMembers(team) {
   const added = S.settings.teamRoles || [];
-  return ROLE_ORDER.filter((r) => S.roles[r] && (r === "cofounder" || added.includes(r) || (team?.roles?.[r]?.enabled && ["building", "proposed"].includes(team.status)) || (team && (team.plan?.work?.[r] || []).length && team.roles?.[r]?.enabled)));
+  return ROLE_ORDER.filter((r) => S.roles[r] && (r === "cofounder" || added.includes(r) || S.claude.tasks.some((x) => x.role === r && (x.busy || x.queued)) || (team?.roles?.[r]?.enabled && ["building", "proposed"].includes(team.status)) || (team && (team.plan?.work?.[r] || []).length && team.roles?.[r]?.enabled)));
 }
+/* ---------- Game setup questions (after you describe your game) ---------- */
+/** The steps: the map question only comes after picking the Studs look; its danger and worlds only for the escape map. */
+function gsSteps() {
+  const s = [["modelQuality"], ["feature", "featureQuality"], ["texture"]];
+  if (ui.gs?.prefs.texture === "studs") s.push(["map", "hazard", "biomes"]);
+  s.push(["money"]);
+  return s;
+}
+const gsKeys = (step) => (gsSteps()[step] || []).filter((k) => (k !== "hazard" && k !== "biomes") || ui.gs.prefs.map === "escape");
+const gsHas = (k, id) => { const v = ui.gs.prefs[k]; return Array.isArray(v) ? v.includes(id) : v === id; };
+function gameSetupModal() {
+  const G = S.gameSetup, g = ui.gs, steps = gsSteps(), keys = gsKeys(g.step), last = g.step === steps.length - 1;
+  const opt = (k, o) => `<button class="gs-opt ${gsHas(k, o.id) ? "on" : ""} ${k === "money" && o.id === "overload" ? "hot" : ""}" data-act="gsPick" data-key="${k}" data-id="${o.id}">${k === "texture" ? `<span class="gs-swatch t-${o.id}"></span>` : k === "modelQuality" || k === "featureQuality" ? `<span class="gs-level l-${o.id}"><i></i><i></i><i></i><i></i><i></i></span>` : ""}<b>${esc(o.name)}</b><span>${esc(o.desc)}</span></button>`;
+  const body = `<div class="gs-bar">${steps.map((_, i) => `<i class="${i < g.step ? "done" : i === g.step ? "on" : ""}"></i>`).join("")}</div>
+    ${g.step === 0 ? `<div class="faint" style="font-size:12.5px;margin:-2px 0 10px">A few quick choices so the team builds the game the way you want it. Skip anything you don't mind.</div>` : ""}
+    ${keys.map((k) => `<div class="gs-q">${esc(G[k].q)}${G[k].multi ? ` <span class="faint" style="font:500 12px var(--f-ui)">— pick as many as you like</span>` : ""}</div><div class="gs-opts ${k === "feature" ? "chips" : /Quality$/.test(k) ? "levels" : ""}">${G[k].options.map((o) => opt(k, o)).join("")}</div>`).join("")}
+    ${keys.includes("money") && ["lots", "overload"].includes(g.prefs.money) ? `<div class="gs-note">${ic("bell")}<span>Paid crates will show their odds before buying, and are hidden for players in countries where Roblox doesn't allow paid random items. Those are Roblox's own rules, so the game won't get taken down for them.</span></div>` : ""}`;
+  const ready = keys.every((k) => (Array.isArray(g.prefs[k]) ? g.prefs[k].length : g.prefs[k]));
+  modal(`Set up your game <span class="faint" style="font-weight:500">· ${g.step + 1} of ${steps.length}</span>`, body,
+    `${g.step ? `<button class="btn ghost" data-act="gsBack">Back</button>` : ""}<div class="grow"></div><button class="btn ghost" data-act="gsSkip">Skip</button><button class="btn primary" data-act="gsNext" ${ready ? "" : "disabled"}>${last ? ic("crown") + "Plan it" : "Next"}</button>`, true);
+}
+/** The chosen game settings as small tags on the plan. */
+function prefTags(p) {
+  const G = S.gameSetup; if (!G || !p) return "";
+  const name = (k) => G[k]?.options.find((o) => o.id === p[k])?.name;
+  const tags = [p.modelQuality && "Models: " + name("modelQuality"), p.feature && p.feature !== "auto" && name("feature") + (p.featureQuality ? ": " + name("featureQuality") : ""), p.feature === "auto" && p.featureQuality && "Main feature: " + name("featureQuality"), p.texture && "Look: " + name("texture"), p.map && "Map: " + name("map"), p.hazard && "Chased by: " + name("hazard"), p.biomes?.length && "Worlds: " + p.biomes.map((b) => G.biomes?.options.find((o) => o.id === b)?.name).filter(Boolean).join(", "), p.money && "Robux: " + name("money")].filter(Boolean);
+  return tags.length ? `<div class="row wrap" style="gap:6px;margin-top:8px">${tags.map((t) => `<span class="tag gs-tag">${esc(t)}</span>`).join("")}</div>` : "";
+}
+
 /** "+" in the Team list: pick which roles are in the team. */
 function teamPickModal() {
   const added = new Set(S.settings.teamRoles || []);
@@ -607,7 +670,7 @@ function teamCard(t) {
   if (t.status === "failed" || !P) return `<div class="panel pad team-card">${head}<div class="faint" style="margin-top:10px;color:var(--bad)">${esc(t.error || "No plan yet.")}</div>${change}</div>`;
   const jobs = (r) => (P.work[r] || []).map((w) => `<li><b>${esc(w.title)}</b><span class="faint"> — ${esc(w.details)}</span></li>`).join("") || '<li class="faint">No jobs</li>';
   return `<div class="panel pad team-card">${head}
-    <div class="muted" style="font-size:13px;margin-top:10px">${esc(P.summary)}</div>
+    <div class="muted" style="font-size:13px;margin-top:10px">${esc(P.summary)}</div>${prefTags(t.prefs)}
     ${P.features.length ? `<div class="row wrap" style="gap:6px;margin-top:10px">${P.features.map((f) => `<span class="tag">${esc(f)}</span>`).join("")}</div>` : ""}
     <div class="team-grid">${ROLE_ORDER.filter((r) => r === "cofounder" || t.roles[r]?.enabled || t.roles[r]?.taskId || (P.work[r] || []).length).map((r) => `<div class="team-col">${roleSwitch(t, r)}${r === "cofounder" ? '<div class="faint" style="font-size:12px;margin-top:6px">Directs everyone, checks their work and does the final play test.</div>' : `<ul class="jobs">${jobs(r)}</ul>`}</div>`).join("")}</div>
     ${t.status === "proposed" || t.status === "failed" ? change : `<div class="faint" style="font-size:12px;margin-top:10px">Turn a role off to stop it; turn it on again to let it continue. Each role is its own Claude, and more roles at once use your Claude usage faster.</div>`}</div>`;
@@ -1079,9 +1142,42 @@ const ACT = {
   async randomTheme() { const t = THEMES[(Math.random() * THEMES.length) | 0]; await ACT.setTheme({ dataset: { id: t.id } }); toast("Theme: " + t.name); },
   previewSound: (el) => playSound(soundFor(el.dataset.id), S.settings.volume ?? 0.7),
   async testPopup() { if (!desktop) return toast("Pop-ups show in the desktop app"); if ((S.settings.notifyStyle || "vyron") !== "vyron") return toast("Choose “VYRON style” first"); await B.host("testPopup"); },
-  async teamPlan() { const t = val("cfIdea"); await call("teamPlan", t, S.ideas.picked); $("#cfIdea").value = ""; toast("The Co-Founder is planning — this takes a minute or two"); },
+  // "Plan it" → a few quick questions (quality, main feature, look, monetization) → the Co-Founder plans with them
+  teamPlan() {
+    const text = val("cfIdea").trim();
+    if (!text && !S.ideas.picked.length) return toast("Tell the Co-Founder your idea first (or pick some ideas)", "error");
+    let saved = {}; try { saved = JSON.parse(lsGet("gamePrefs") || "{}"); } catch { /* none */ }
+    ui.gs = { text, ideas: [...S.ideas.picked], step: 0, prefs: { feature: "auto", ...saved } };
+    gameSetupModal();
+  },
+  gsPick: (el) => {
+    const P = ui.gs.prefs, k = el.dataset.key, id = el.dataset.id;
+    if (S.gameSetup[k]?.multi) { // pick several (worlds); "Everything" on its own
+      const cur = new Set(P[k] || []);
+      if (id === "all") P[k] = cur.has("all") ? [] : ["all"];
+      else { cur.delete("all"); cur.has(id) ? cur.delete(id) : cur.add(id); P[k] = [...cur]; }
+    } else P[k] = id;
+    if (k === "texture" && id !== "studs") { delete P.map; delete P.hazard; delete P.biomes; } // the map question is for the Studs look
+    gameSetupModal();
+  },
+  gsBack: () => { ui.gs.step = Math.max(0, ui.gs.step - 1); gameSetupModal(); },
+  gsSkip: () => { for (const k of gsSteps()[ui.gs.step]) if (k !== "feature") delete ui.gs.prefs[k]; ACT.gsNext(); },
+  async gsNext() {
+    if (ui.gs.step < gsSteps().length - 1) { ui.gs.step++; return gameSetupModal(); }
+    const g = ui.gs; closeModal();
+    lsSet("gamePrefs", JSON.stringify(g.prefs));
+    await call("teamPlan", g.text, g.ideas, g.prefs);
+    if ($("#cfIdea")) $("#cfIdea").value = "";
+    toast("The Co-Founder is planning — this takes a minute or two");
+  },
   async teamRevise(el) { const f = val("cfChange-" + el.dataset.id); if (!f.trim()) return toast("Write what to change", "error"); await call("teamRevise", el.dataset.id, f); },
   async teamAccept(el) { await call("teamAccept", el.dataset.id); toast("Accepted — the team is starting"); },
+  async addStudioProject(el) {
+    el.disabled = true; el.innerHTML = '<span class="spinner"></span>Adding…';
+    await call("addStudioProject", el.dataset.id, el.dataset.task || null);
+    toast("Added as a project — Claude works on it in Studio now");
+  },
+  hideStudioBar: (el) => { ui.hideStudioBar = el.dataset.id; render(); },
   teamPick: () => teamPickModal(),
   teamPickAll: () => { for (const c of document.querySelectorAll("[data-role-pick]")) { c.checked = true; c.closest(".role-pick").classList.add("on"); } },
   async teamPickSave() {
@@ -1169,6 +1265,14 @@ document.addEventListener("click", (e) => {
   if (a && ACT[a.dataset.act]) { e.stopPropagation(); Promise.resolve(ACT[a.dataset.act](a, e)).catch(() => {}); }
 });
 document.addEventListener("change", async (e) => {
+  if (e.target.dataset?.change === "taskProject") { // chat: which project this task works on
+    const v = e.target.value, taskId = e.target.dataset.id;
+    try {
+      if (v.startsWith("add:")) { await call("addStudioProject", v.slice(4), taskId); toast("Added as a project — Claude works on it in Studio now"); }
+      else { await call("setTaskProject", taskId, v || null); toast(v ? "This task now works on " + (S.projects.find((x) => x.id === v)?.name || "that project") : "This task works in VYRON's Games folder"); }
+    } catch { /* toast shown */ }
+    return;
+  }
   if (e.target.dataset?.rolePick) { e.target.closest(".role-pick")?.classList.toggle("on", e.target.checked); uiSound("pick"); return; }
   const el = e.target.id === "vol" ? e.target : e.target.closest("[data-change]");
   if (el?.dataset.change === "sound") { const m = { ...(S.settings.soundMap || {}), [el.dataset.key]: el.value }; S.settings.soundMap = m; playSound(el.value, S.settings.volume ?? 0.7); await call("saveSettings", { soundMap: m }).catch(() => {}); return; }

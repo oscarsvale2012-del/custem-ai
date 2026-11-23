@@ -8,7 +8,7 @@ const ROBLOX = `You make Roblox games, working live in the user's open Roblox St
 const ROLES = {
   cofounder: {
     name: "Co-Founder", short: "Plans the whole game and directs the team", servers: ["vyron", "roblox_studio"],
-    prompt: `${ROBLOX}You are the Co-Founder of this Roblox game studio. You own the vision: a fun Roblox game with a strong core loop, quick first minute, progression and reasons to come back (what works on Roblox today). You control the team the user added (each is its own Claude working at the same time in the same Studio place). You don't build big parts yourself when a role can do it. You give every role clear, detailed instructions (exact names, sizes, colours, numbers, how parts connect), check their progress, answer their questions, fix conflicts between them, and finish with a full play test and a short report to the user. If the user added no roles, you build the whole game yourself. ${TEAM_TOOLS}`,
+    prompt: `${ROBLOX}You are the Co-Founder of this Roblox game studio. You own the vision: a fun Roblox game with a strong core loop, quick first minute, progression and reasons to come back (what works on Roblox today). You are the commander of the team the user added: each role is its own Claude, and they all work AT THE SAME TIME in the same Studio place, each on a different job. Keep every role busy in parallel — never let one wait for another when it could do something useful — and split the work so two roles never change the same object or script at once (give each its own folders and names). You don't build big parts yourself when a role can do it. You give every role clear, detailed instructions (exact names, sizes, colours, numbers, how parts connect), check their progress, answer their questions, fix conflicts between them, and finish with a full play test and a short report to the user. If the user added no roles, you build the whole game yourself. ${TEAM_TOOLS}`,
   },
   builder: {
     name: "Builder & Modeler", short: "Maps, buildings and 3D models (Blender + Studio)", servers: ["vyron", "roblox_studio", "blender"],
@@ -24,7 +24,7 @@ const ROLES = {
   },
   money: {
     name: "Money Maker", short: "Gamepasses, developer products and the shop", servers: ["vyron", "roblox_studio"],
-    prompt: `${ROBLOX}You are the Money Maker. You design how the game earns Robux fairly: gamepasses (e.g. 2x coins, VIP, extra slots), developer products (currency packs, boosts), and Premium payouts in mind, with prices that fit the game and the Roblox market. You put them in one ModuleScript (ReplicatedStorage.Monetization) with names, prices and placeholder ids, write the MarketplaceService purchase code (ProcessReceipt for developer products that is safe to run twice, UserOwnsGamePassAsync and PromptGamePassPurchaseFinished for gamepasses) and connect it to the shop UI with the UI Maker. Creating the real gamepasses on Roblox needs the user: finish with a clear list "create these in the Creator Dashboard, then paste their ids here". Never trick players (no pay-to-win traps, no random paid items without odds, clear prices) — follow Roblox's monetization rules.${REVIEW("gamepass", "list every gamepass and developer product with its price and what it gives")} ${TEAM_TOOLS}`,
+    prompt: `${ROBLOX}You are the Money Maker. You design how the game earns Robux fairly: gamepasses (e.g. 2x coins, VIP, extra slots), developer products (currency packs, boosts), and Premium payouts in mind, with prices that fit the game and the Roblox market. You put them in one ModuleScript (ReplicatedStorage.Monetization) with names, prices and placeholder ids, write the MarketplaceService purchase code (ProcessReceipt for developer products that is safe to run twice, UserOwnsGamePassAsync and PromptGamePassPurchaseFinished for gamepasses) and connect it to the shop UI with the UI Maker. Creating the real gamepasses on Roblox needs the user: finish with a clear list "create these in the Creator Dashboard, then paste their ids here". Follow the monetization style the user picked in the game settings (none picked → keep it fair). Whatever the style, follow Roblox's rules: show the odds of every paid random item (crates, eggs) before buying, hide paid random items for players where PolicyService says they're restricted, clear prices, purchases only after the player clicks, no fake countdowns or misleading buttons.${REVIEW("gamepass", "list every gamepass and developer product with its price and what it gives")} ${TEAM_TOOLS}`,
   },
   sound: {
     name: "Sound Designer", short: "Music, sound effects and ambience", servers: ["vyron", "roblox_studio"],
@@ -48,6 +48,105 @@ Check again whenever the others finish something big. Only debug and fix — don
   },
 };
 const ROLE_IDS = Object.keys(ROLES);
+
+/* ---------- Game setup: the questions after you describe your game (quality, main feature, look, monetization) ---------- */
+const LEVELS = {
+  low: ["Low", "Simple, chunky shapes — runs on every phone", "simple parts and basic shapes with few details (fast on old phones)"],
+  medium: ["Medium", "Clean shapes with some detail", "clean shapes with some detail; MeshParts under ~2k triangles each"],
+  high: ["High", "Detailed models, trims and props", "detailed models with trims and props; MeshParts up to ~8k triangles"],
+  super: ["Super detailed", "Lots of small details and decorations", "lots of small details, bevels and decorations; hero models up to ~20k triangles, SurfaceAppearance/PBR where it helps"],
+  max: ["Max", "As much detail as Roblox allows", "the most detail possible: hero models up to Roblox's per-MeshPart triangle limit (split into several MeshParts if needed), PBR SurfaceAppearance, RenderFidelity Automatic and StreamingEnabled so phones still run it"],
+};
+const PREFS = {
+  modelQuality: { q: "How detailed should the models be?", options: LEVELS },
+  feature: {
+    q: "What's the main thing in your game?",
+    options: {
+      auto: ["Let the Co-Founder decide", "From your idea", "whatever the game idea is about"],
+      pets: ["Pets & animals", "Hatch, collect, evolve", "pets/animals"],
+      items: ["Items & collectibles", "Tools, gear, loot", "items and collectibles"],
+      weapons: ["Guns & swords", "Weapons and combat", "weapons (guns, swords and other combat gear)"],
+      brainrots: ["Italian brainrots", "Funny brainrot characters", "Italian brainrot characters (original ones, made up for this game)"],
+      vehicles: ["Vehicles", "Cars, boats, planes", "vehicles"],
+    },
+  },
+  featureQuality: { q: "And how detailed should that main thing be?", options: LEVELS },
+  texture: {
+    q: "Which look should the game have?",
+    options: {
+      studs: ["Studs", "Blocky stud style, bold trims, glowing accents — any colour", "the classic blocky Roblox stud style (make your own models in this style — never copy another game's models): build models from chunky blocks and parts with the stud texture on their surfaces (studs on top faces or a studs Texture) in whatever colours fit each model — not one single colour; give bodies bold contrasting trims and frames along the edges (e.g. bright yellow or white edges on a darker body), add glowing Neon accents like stripes, runes or simple symbols, chunky stylized effects (blocky cartoon flames, crystals, sparkles) and bright saturated colours; ground is a studded grass baseplate; everything reads clearly from far away and stays cheap to render"],
+      grass: ["Grassy & nature", "Grass, earth and natural colours", "grassy and natural: grass and ground materials, terrain grass where it fits, natural greens and earth tones"],
+      smooth: ["Smooth & clean", "Normal bright colours, no textures", "smooth and clean: SmoothPlastic with normal bright colours and no textures"],
+      realistic: ["Realistic", "Real materials (wood, metal, stone)", "realistic: Roblox materials like Wood, Metal, Concrete and Slate, MaterialVariants/PBR"],
+      cartoon: ["Cartoon", "Bright, soft and playful", "cartoon: bright saturated colours and soft rounded shapes"],
+    },
+  },
+  // asked after the look when it's Studs
+  map: {
+    q: "What kind of map?",
+    options: {
+      escape: ["Long escape map", "Run out, grab it, escape back", "a long escape map: one long straight track running out from the safe base, split into zones one after another; the further out, the rarer and more valuable the things to grab. Players run out, grab or steal one (it's carried above their head and slows them a little), and run back to their base before the danger catches them; deeper zones are faster and more dangerous, and speed upgrades let you reach them. Make the danger, zones and rewards original for this game"],
+      flat: ["Normal flat map", "A flat studded map with areas", "a normal flat map: a big flat studded baseplate with the spawn, player plots/bases and the game's areas laid out around it"],
+      auto: ["Let the Co-Founder decide", "Whatever fits the idea", "whatever map fits the game idea best"],
+    },
+  },
+  hazard: {
+    q: "What chases you on the escape map?",
+    options: {
+      waves: ["Waves", "Big waves sweep down the map", "big waves that sweep down the track on a timer (with a warning first); players hide in safe gaps along the sides or get washed back and lose what they carry"],
+      brainrots: ["Brainrots", "They chase you when you grab one", "brainrot creatures that wake up and chase the player who grabbed something"],
+      animals: ["Animals", "Wild animals chase you", "wild animals that chase players through their zone"],
+      mixed: ["A mix", "Waves and chasers together", "a mix: waves on a timer plus creatures that chase you in some zones"],
+    },
+  },
+  biomes: {
+    q: "Which worlds should the zones be?", multi: true,
+    options: {
+      all: ["Everything", "A bit of every world", "a different world in every zone, mixing all the kinds below"],
+      real: ["Real life", "Beach, forest, desert, city", "real-life places (beach, forest, jungle, desert, city)"],
+      winter: ["Winter", "Snow, ice and frozen lakes", "winter (snow, ice, frozen lakes, snowy pines)"],
+      lava: ["Lava & volcano", "Hot rocks and lava rivers", "lava and volcano zones"],
+      galaxy: ["Galaxy", "Space, planets and stars", "galaxy and space (planets, stars, nebula skies)"],
+      heaven: ["Heavenly", "Clouds, gold and light", "heavenly (clouds, golden gates, soft light)"],
+      candy: ["Candy", "Sweets and bright colours", "candy land"],
+    },
+  },
+  money: {
+    q: "How much should the game sell?",
+    options: {
+      few: ["A few fair passes", "2–3 passes, nothing pay-to-win", "a few fair gamepasses (2–3, e.g. VIP and 2x coins), nothing pay-to-win"],
+      normal: ["Normal", "4–6 passes + some packs", "a normal amount: 4–6 gamepasses plus a few developer products (currency packs, boosts) at fair prices"],
+      lots: ["Lots", "Many passes, tiers, boosts and crates", "a lot: 8–12 gamepasses including tiered ones (2x speed, 3x speed…), timed boosts, currency packs and paid crates/eggs"],
+      overload: ["Full overload — max Robux", "Cheap tiers, ultra crates, pay-to-win", "full gamepass overload for maximum Robux: many cheap tiered passes (e.g. 2x speed 3 R$, 3x speed 6 R$, 5x speed 12 R$…), timed boosts, VIP, auto-farm, starter packs and 'best value' bundles, and ultra crates/eggs for Robux (around 80 R$ each) with rare drops — e.g. a 0.5% secret pet or item about 10x (1000%) stronger than the best normal one. Strong paid advantages (pay-to-win) are wanted for this game"],
+    },
+  },
+};
+/** Only known answers are kept. */
+function cleanPrefs(p) {
+  const out = {};
+  for (const [k, def] of Object.entries(PREFS)) {
+    if (def.multi) { const list = [...new Set(Array.isArray(p?.[k]) ? p[k].filter((x) => typeof x === "string" && def.options[x]) : [])]; if (list.length) out[k] = list.includes("all") ? ["all"] : list; }
+    else if (p && typeof p[k] === "string" && def.options[p[k]]) out[k] = p[k];
+  }
+  if (out.map !== "escape") { delete out.hazard; delete out.biomes; } // only for the escape map
+  return out;
+}
+/** The answers as instructions for the Co-Founder and every role. */
+function prefsText(p) {
+  p = cleanPrefs(p);
+  if (!Object.keys(p).length) return "";
+  const what = p.feature && p.feature !== "auto" ? PREFS.feature.options[p.feature][2] : "the game's main feature";
+  const lines = [];
+  if (p.modelQuality) lines.push(`- Model quality (${LEVELS[p.modelQuality][0]}): ${LEVELS[p.modelQuality][2]}.`);
+  if (p.feature) lines.push(`- Main feature: ${PREFS.feature.options[p.feature][2]}.`);
+  if (p.featureQuality) lines.push(`- Quality of ${what} (${LEVELS[p.featureQuality][0]}): ${LEVELS[p.featureQuality][2]}.`);
+  if (p.texture) lines.push(`- Look: ${PREFS.texture.options[p.texture][2]}.`);
+  if (p.map) lines.push(`- Map: ${PREFS.map.options[p.map][2]}.`);
+  if (p.hazard) lines.push(`- What chases the players: ${PREFS.hazard.options[p.hazard][2]}.`);
+  if (p.biomes) lines.push(`- Zones / biomes: ${p.biomes.map((b) => PREFS.biomes.options[b][2]).join("; ")}.`);
+  if (p.money) lines.push(`- Monetization: ${PREFS.money.options[p.money][2]}. Always within Roblox's rules: show the odds of every paid random item (crates, eggs) in the shop before buying, check PolicyService:GetPolicyInfoForPlayerAsync(player).ArePaidRandomItemsRestricted and hide paid random items for players where they're not allowed (offer a non-random paid option instead), show clear prices, only prompt a purchase after the player clicks, and no fake countdowns or misleading buttons.`);
+  return `Game settings the user chose (follow them in everything you make):\n${lines.join("\n")}`;
+}
 const WORKERS = ROLE_IDS.filter((r) => r !== "cofounder");
 
 /** First message to the Co-Founder: make a plan for the roles the user added, don't build yet. */
@@ -90,13 +189,13 @@ function workerBrief(team, role) {
   const p = team.plan, list = p.work[role] || [];
   const others = WORKERS.filter((r) => r !== role && team.roles[r]?.enabled).map((r) => ROLES[r].name);
   return `[From the Co-Founder] We're building "${p.title}". ${p.summary}
-Main features: ${p.features.join("; ") || "see summary"}.
+Main features: ${p.features.join("; ") || "see summary"}.${team.prefs && prefsText(team.prefs) ? "\n" + prefsText(team.prefs) : ""}
 Team id: ${team.id}. Working at the same time: ${others.join(", ") || "only you"}.
 
 Your jobs as ${ROLES[role].name}:
 ${list.map((w, i) => `${i + 1}. ${w.title} — ${w.details}`).join("\n") || "Wait for instructions from the Co-Founder (check with vyron_team_status)."}
 
-Do your jobs in order, test what you made, then send the Co-Founder a short report with vyron_team_message (role "cofounder", team_id "${team.id}"). If you need something from another role, message them.`;
+The Co-Founder is your commander: follow its orders (they can arrive while you work). The other roles work at the same time as you, so only touch your own part. Do your jobs in order and test what you made; after EACH job send the Co-Founder a one-line report with vyron_team_message (role "cofounder", team_id "${team.id}") so it can give you the next one. If you need something from another role, message them.`;
 }
 
 function directorBrief(team) {
@@ -104,7 +203,7 @@ function directorBrief(team) {
   const own = (team.plan.work.cofounder || []).map((w, i) => `${i + 1}. ${w.title} — ${w.details}`).join("\n");
   if (!on.length) return `The user accepted your plan for "${team.plan.title}" (team id ${team.id}). There are no other roles, so build it yourself now, step by step:\n${own || "Do everything in your plan."}\nTest each part in play mode. When it's done, do a full play test and give the user a short final report (what was made, what the user must do, e.g. publish, create gamepasses, upload audio or animations).`;
   return `The user accepted your plan for "${team.plan.title}". The team has started (team id ${team.id}): ${on.map((r) => ROLES[r].name).join(", ")} each got their jobs from your plan.${own ? `\nYour own jobs:\n${own}` : ""}
-Now direct them: check progress with vyron_team_status, send extra details or fixes with vyron_team_message, and use vyron_team_wait to wait for them. Make sure everything fits together (names, RemoteEvents, UI ↔ scripts ↔ shop, which sounds and animations play when). When they are done${on.includes("debug") ? ", have the Debugger check the whole place (flickering, flying parts, errors) and fix what it finds," : ""} do a full play test, fix or delegate problems, and give the user a short final report (what was made, what the user must do, e.g. create gamepasses, import models, upload audio or publish animations).`;
+They are all working at the same time right now. Command them like a team lead: check progress with vyron_team_status, send orders, extra details or fixes with vyron_team_message, and use vyron_team_wait to wait for them. As soon as a role reports a job done, check it and give it its next job straight away (or a useful extra job) so nobody sits idle. Keep them out of each other's way: one owner per object, folder and script; when two roles need the same thing (a RemoteEvent, a sound or animation name), decide the name and tell both. Make sure everything fits together (names, RemoteEvents, UI ↔ scripts ↔ shop, which sounds and animations play when). When they are done${on.includes("debug") ? ", have the Debugger check the whole place (flickering, flying parts, errors) and fix what it finds," : ""} do a full play test, fix or delegate problems, and give the user a short final report (what was made, what the user must do, e.g. create gamepasses, import models, upload audio or publish animations).`;
 }
 
-module.exports = { ROLES, ROLE_IDS, WORKERS, planPrompt, parsePlan, workerBrief, directorBrief };
+module.exports = { ROLES, ROLE_IDS, WORKERS, PREFS, cleanPrefs, prefsText, planPrompt, parsePlan, workerBrief, directorBrief };

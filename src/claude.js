@@ -183,7 +183,7 @@ class ClaudeRunner extends EventEmitter {
       usage: this.usage, model: this.model, modelName: modelName(this.model), found: !!this.exe, exe: this.exe, auth: this.auth, busy: this.busy,
       running: this.running(), queued: this.tasks.filter((t) => t.queued).length, limit: this.limit(),
       tasks: this.tasks.map((t) => ({
-        id: t.id, title: t.title, role: t.role || null, teamId: t.teamId || null, inbox: (t.inbox || []).length, busy: t.busy, queued: !!t.queued, at: t.at, model: t.model, modelName: modelName(t.model),
+        id: t.id, title: t.title, role: t.role || null, teamId: t.teamId || null, projectId: t.projectId === undefined ? undefined : t.projectId, inbox: (t.inbox || []).length, busy: t.busy, queued: !!t.queued, at: t.at, model: t.model, modelName: modelName(t.model),
         count: t.messages.filter((m) => m.role === "user").length,
         last: clip([...t.messages].reverse().find((m) => m.role === "assistant" || m.role === "error")?.text || "", 90),
         messages: t.messages.slice(-120),
