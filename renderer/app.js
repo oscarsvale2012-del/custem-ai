@@ -430,9 +430,19 @@ function reveal(key, len) {
   const start = ui.rev[key], el = Date.now() - start, dur = Math.round(Math.min(1500, 280 + len * 1.3));
   return start && el < dur ? { cls: " reveal", style: `--rd:${dur}ms;animation-delay:-${el}ms` } : { cls: "", style: "" };
 }
+/** A role's name tag (coloured, with its icon) — shows who wrote or is doing what. */
+function roleTag(r, extra = "") {
+  if (!r || !S.roles?.[r]) return "";
+  return `<span class="name-tag r-${r}">${ic(ROLE_ICON[r] || "sparkle")}${esc(S.roles[r].name)}${extra}</span>`;
+}
+/** "cofounder", "Co-Founder" or "Coder" → the role id (for messages one role sends another). */
+const roleFromName = (s) => { const k = String(s || "").toLowerCase().replace(/[^a-z]/g, ""); return Object.keys(S.roles || {}).find((r) => r === k || S.roles[r].name.toLowerCase().replace(/[^a-z]/g, "") === k) || null; };
 function chatMsg(t, m) {
-  if (m.role === "user") return `<div class="cmsg user"><div class="md">${md(m.text.replace(/^\[(?:Active )?VYRON project:[^\]]*\]\n/, "").replace(/^\[From [^\]]{1,60}\] /, ""))}</div>${m.queuedFrom ? `<div class="faint cmsg-from">${esc(m.queuedFrom === "you" ? "Sent while it worked" : "From " + m.queuedFrom)}</div>` : ""}</div>`;
-  if (m.role === "assistant") { const r = reveal(`${t.id}:${m.at}`, m.text.length); return `<div class="cmsg ai${r.cls}" style="${r.style}"><div class="md">${md(m.text)}</div></div>`; }
+  if (m.role === "user") {
+    const from = m.queuedFrom && m.queuedFrom !== "you" ? roleFromName(m.queuedFrom) || roleFromName((m.text.match(/^\[From ([^\]]{1,60})\]/) || [])[1]) : roleFromName((m.text.match(/^\[From ([^\]]{1,60})\]/) || [])[1]);
+    return `<div class="cmsg user ${from ? "from-role" : ""}">${from ? `<div class="cmsg-tag">${roleTag(from)}</div>` : ""}<div class="md">${md(m.text.replace(/^\[(?:Active )?VYRON project:[^\]]*\]\n/, "").replace(/^\[From [^\]]{1,60}\] /, ""))}</div>${m.queuedFrom === "you" ? `<div class="faint cmsg-from">Sent while it worked</div>` : ""}</div>`;
+  }
+  if (m.role === "assistant") { const r = reveal(`${t.id}:${m.at}`, m.text.length); return `<div class="cmsg ai${r.cls}" style="${r.style}">${t.role ? `<div class="cmsg-tag">${roleTag(t.role)}</div>` : ""}<div class="md">${md(m.text)}</div></div>`; }
   if (m.role === "result") return `<div class="cresult">${ic("check")}<span>${esc(m.text)}</span></div>`;
   return `<div class="msg error"><div class="who">Problem</div>${esc(m.text)}</div>`;
 }
@@ -454,7 +464,23 @@ function threadHtml(t) {
 function workingLine(t) {
   const cur = (t.todos || []).find((x) => x.status === "in_progress");
   const start = t.startedAt || Date.now();
-  return `<div class="working"><span class="cl-spin" aria-hidden="true"></span><span class="shimmer ell">${esc(cur?.activeForm || t.now || "Thinking")}…</span><span class="faint w-time" data-start="${start}">${elapsed(start)}</span></div>`;
+  const doing = cur?.activeForm || roleDoingNow(t);
+  // a role with nothing else going on is writing its answer: "Coder is typing…"
+  if (t.role && !doing) return `<div class="working">${roleTag(t.role)}<span class="typing-text">is typing</span><span class="typing"><i></i><i></i><i></i></span><span class="faint w-time" data-start="${start}">${elapsed(start)}</span></div>`;
+  return `<div class="working">${t.role ? roleTag(t.role) : `<span class="cl-spin" aria-hidden="true"></span>`}<span class="shimmer ell">${esc(doing || "Thinking")}…</span><span class="faint w-time" data-start="${start}">${elapsed(start)}</span></div>`;
+}
+/** What it's doing this moment (its current tool, in plain words) — empty while it's writing. */
+function roleDoingNow(t) {
+  if (!t.now) return "";
+  const plain = { vyron_team_status: "Checking on the team", vyron_team_message: "Giving orders", vyron_team_wait: "Waiting for the team", vyron_submit_review: "Sending you something to check", vyron_review_wait: "Waiting for your OK" };
+  const k = Object.keys(plain).find((x) => t.now.includes(x));
+  return k ? plain[k] : t.now;
+}
+/** Above the chat: every role that's working right now, with its name tag and what it's doing (click to open its task). */
+function crewBar(cur) {
+  const busy = S.claude.tasks.filter((x) => x.role && (x.busy || x.queued));
+  if (!busy.length) return "";
+  return `<div class="crew">${busy.map((x) => { const what = x.queued && !x.busy ? "waiting for a free slot" : roleDoing(x) || ""; return `<button class="crew-chip r-${x.role} ${x.id === cur.id ? "on" : ""}" data-act="pickTask" data-id="${x.id}" title="${esc(S.roles[x.role]?.name || "")}: ${esc(what || "typing…")}">${roleTag(x.role)}<span class="ell crew-what">${what ? esc(what) : `typing <span class="typing"><i></i><i></i><i></i></span>`}</span></button>`; }).join("")}</div>`;
 }
 const elapsed = (start) => { const s = Math.max(0, Math.round((Date.now() - Number(start)) / 1000)); return "· " + (s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s"); };
 /** Claude's own task list (from its TodoWrite tool), like in Claude Code. */
@@ -518,7 +544,7 @@ VIEWS.claude = () => {
         <div class="panel-h"><button class="btn sm ghost icon" data-act="toggleTasks" title="${ui.tasksHidden ? "Show tasks and team" : "Hide tasks and team"}">${ic("panel")}</button><div class="ava" style="width:32px;height:32px;border-radius:10px">${ic("claude")}</div><div style="min-width:0"><h3 class="ell">${esc(t.title)}</h3><div class="row" style="gap:8px;margin-top:2px">${projectPicker(t)}<span class="faint" style="font-size:11.5px">${S.settings.claudeAccess === "full" ? "Full access" : "Studio + VYRON + project files"}</span></div></div><div class="grow"></div>
           ${t.modelName ? `<span class="chip model">${ic("sparkle")}${esc(t.modelName)}</span>` : modelChip()}<span class="chip ${S.studio.status === "connected" && S.studios.length ? "ok" : ""}"><span class="dot ${S.studio.status === "connected" && S.studios.length ? "connected" : "unknown"}"></span>Studio</span>
           ${active ? `<button class="btn sm danger" data-act="claudeStop" data-id="${t.id}">${ic("stop")}${t.queued ? "Cancel" : "Stop"}</button>` : `<button class="btn sm ghost" data-act="claudeNewChat" data-id="${t.id}" title="Clear this task's chat">Clear</button><button class="btn sm ghost danger icon" data-act="removeTask" data-id="${t.id}" title="Delete task">${ic("trash")}</button>`}</div>
-        ${newStudioBar(t)}<div class="thread" id="thread"><div class="thread-in">
+        ${newStudioBar(t)}${crewBar(t)}<div class="thread" id="thread"><div class="thread-in">
           ${t.messages.length ? threadHtml(t) : `<div class="empty" style="margin:auto;max-width:520px"><b>You control Claude from here</b>Ask for anything in your game — Claude builds it in Roblox Studio, and can use VYRON too. Want several things at once? Press New for another task — each one is a separate Claude working at the same time.</div>`}
           ${t.busy ? workingLine(t) : t.queued ? `<div class="working"><span class="spinner"></span><span class="faint">Waiting — ${C.running} of ${C.limit} tasks are running. Starts automatically.</span></div>` : ""}
         </div></div>
@@ -633,7 +659,9 @@ const gsHas = (k, id) => { const v = ui.gs.prefs[k]; return Array.isArray(v) ? v
 function gameSetupModal() {
   const G = S.gameSetup, g = ui.gs, steps = gsSteps(), keys = gsKeys(g.step), last = g.step === steps.length - 1;
   const opt = (k, o) => `<button class="gs-opt ${gsHas(k, o.id) ? "on" : ""} ${k === "money" && o.id === "overload" ? "hot" : ""}" data-act="gsPick" data-key="${k}" data-id="${o.id}">${k === "texture" ? `<span class="gs-swatch t-${o.id}"></span>` : k === "modelQuality" || k === "featureQuality" ? `<span class="gs-level l-${o.id}"><i></i><i></i><i></i><i></i><i></i></span>` : ""}<b>${esc(o.name)}</b><span>${esc(o.desc)}</span></button>`;
-  const ready = keys.every((k) => (Array.isArray(g.prefs[k]) ? g.prefs[k].length : g.prefs[k]));
+  const ready = gsReady(keys);
+  // "Custom": don't like the choices? type your own answer in the box
+  const custom = (k) => { const txt = g.prefs.custom?.[k] || ""; return `<div class="gs-opt gs-custom ${gsHas(k, "custom") ? "on" : ""}" data-custom-tile="${k}"><b>${ic("edit")}Custom</b><input class="input gs-custom-in" data-gs-custom="${k}" maxlength="300" placeholder="Type your own…" value="${esc(txt)}"></div>`; };
   const idea = g.text || (g.ideas.length ? `${g.ideas.length} picked idea${g.ideas.length > 1 ? "s" : ""}` : "");
   // A full-screen quiz: one step at a time, big tiles, progress on top, your idea as a reminder.
   const animate = ui.gsShown !== g.step; ui.gsShown = g.step;
@@ -642,15 +670,37 @@ function gameSetupModal() {
     <div class="quiz-body">
       ${idea ? `<div class="quiz-idea">${ic("sparkle")}<span class="ell">“${esc(idea)}”</span></div>` : ""}
       ${g.step === 0 ? `<div class="quiz-hint">A few quick questions so the team builds it the way you want. Skip anything you don't mind.</div>` : ""}
-      ${keys.map((k, qi) => `<div class="quiz-q ${qi ? "sub" : ""}">${esc(G[k].q)}${G[k].multi ? ` <span class="faint">— pick as many as you like</span>` : ""}</div><div class="gs-opts ${k === "feature" ? "chips" : /Quality$/.test(k) ? "levels" : ""}">${G[k].options.map((o, oi) => opt(k, o).replace('<button class="gs-opt', `<button style="--i:${oi}" class="gs-opt`)).join("")}</div>`).join("")}
+      ${keys.map((k, qi) => `<div class="quiz-q ${qi ? "sub" : ""}">${esc(G[k].q)}${G[k].multi ? ` <span class="faint">— pick as many as you like</span>` : ""}</div><div class="gs-opts ${k === "feature" ? "chips" : /Quality$/.test(k) ? "levels" : ""}">${G[k].options.map((o, oi) => opt(k, o).replace('<button class="gs-opt', `<button style="--i:${oi}" class="gs-opt`)).join("")}${custom(k)}</div>`).join("")}
       ${keys.includes("money") && ["lots", "overload"].includes(g.prefs.money) ? `<div class="gs-note">${ic("bell")}<span>Paid crates will show their odds before buying, and are hidden for players in countries where Roblox doesn't allow paid random items. Those are Roblox's own rules, so the game won't get taken down for them.</span></div>` : ""}
     </div>
     <div class="quiz-foot">${g.step ? `<button class="btn ghost" data-act="gsBack">← Back</button>` : `<span class="faint" style="font-size:12px">Tip: press <kbd>1</kbd>–<kbd>${Math.min(9, G[keys[0]].options.length)}</kbd> to pick, <kbd>Enter</kbd> for next</span>`}<div class="grow"></div><button class="btn ghost" data-act="gsSkip">Skip</button><button class="btn primary quiz-next" data-act="gsNext" ${ready ? "" : "disabled"}>${last ? ic("crown") + "Plan it" : "Next →"}</button></div>
   </div>`;
 }
+/** A question is answered when something is picked — a custom answer counts once it has text. */
+function gsReady(keys) {
+  const g = ui.gs, has = (k, v) => (v === "custom" ? !!(g.prefs.custom?.[k] || "").trim() : !!v);
+  return keys.every((k) => { const v = g.prefs[k]; return Array.isArray(v) ? v.length && v.every((x) => has(k, x)) : has(k, v); });
+}
+/** Typing in a "Custom" box picks it (no redraw, so the cursor stays put). */
+document.addEventListener("input", (e) => {
+  const k = e.target.dataset?.gsCustom;
+  if (!k || !ui.gs) return;
+  const P = ui.gs.prefs, txt = e.target.value;
+  P.custom = { ...(P.custom || {}), [k]: txt };
+  const multi = S.gameSetup[k]?.multi, on = !!txt.trim();
+  if (multi) { const cur = new Set((P[k] || []).filter((x) => x !== "custom")); if (on) cur.add("custom"); P[k] = [...cur]; }
+  else if (on) P[k] = "custom";
+  else if (P[k] === "custom") delete P[k];
+  const tile = e.target.closest(".gs-custom"); tile.classList.toggle("on", on);
+  if (!multi && on) for (const b of document.querySelectorAll(`#modalRoot .gs-opt[data-key="${k}"]`)) b.classList.remove("on");
+  const next = $("#modalRoot .quiz-next"); if (next) next.disabled = !gsReady(gsKeys(ui.gs.step));
+});
+document.addEventListener("click", (e) => { const t = e.target.closest?.("[data-custom-tile]"); if (t && e.target.tagName !== "INPUT") t.querySelector("input")?.focus(); });
 /** Quiz keys: 1–9 picks an answer of the first question on the screen, Enter = Next, Esc = close. */
 document.addEventListener("keydown", (e) => {
-  if (!$("#modalRoot .quiz") || e.target.closest?.("input,textarea,select")) return;
+  if (!$("#modalRoot .quiz")) return;
+  if (e.target.dataset?.gsCustom !== undefined) { if (e.key === "Enter") { e.preventDefault(); const b = $("#modalRoot .quiz-next"); if (b && !b.disabled) ACT.gsNext(); } return; }
+  if (e.target.closest?.("input,textarea,select")) return;
   const keys = gsKeys(ui.gs.step);
   if (/^[1-9]$/.test(e.key)) { const o = S.gameSetup[keys[0]]?.options[Number(e.key) - 1]; if (o) { e.preventDefault(); ACT.gsPick({ dataset: { key: keys[0], id: o.id } }); } }
   else if (e.key === "Enter") { const b = $("#modalRoot .quiz-next"); if (b && !b.disabled) { e.preventDefault(); ACT.gsNext(); } }
@@ -658,8 +708,9 @@ document.addEventListener("keydown", (e) => {
 /** The chosen game settings as small tags on the plan. */
 function prefTags(p) {
   const G = S.gameSetup; if (!G || !p) return "";
-  const name = (k) => G[k]?.options.find((o) => o.id === p[k])?.name;
-  const tags = [p.modelQuality && "Models: " + name("modelQuality"), p.feature && p.feature !== "auto" && name("feature") + (p.featureQuality ? ": " + name("featureQuality") : ""), p.feature === "auto" && p.featureQuality && "Main feature: " + name("featureQuality"), p.texture && "Look: " + name("texture"), p.map && "Map: " + name("map"), p.hazard && "Chased by: " + name("hazard"), p.biomes?.length && "Worlds: " + p.biomes.map((b) => G.biomes?.options.find((o) => o.id === b)?.name).filter(Boolean).join(", "), p.money && "Robux: " + name("money")].filter(Boolean);
+  const own = (k) => `“${String(p.custom?.[k] || "").slice(0, 40)}${String(p.custom?.[k] || "").length > 40 ? "…" : ""}”`;
+  const name = (k) => (p[k] === "custom" ? own(k) : G[k]?.options.find((o) => o.id === p[k])?.name);
+  const tags = [p.modelQuality && "Models: " + name("modelQuality"), p.feature && p.feature !== "auto" && name("feature") + (p.featureQuality ? ": " + name("featureQuality") : ""), p.feature === "auto" && p.featureQuality && "Main feature: " + name("featureQuality"), p.texture && "Look: " + name("texture"), p.map && "Map: " + name("map"), p.hazard && "Chased by: " + name("hazard"), p.biomes?.length && "Worlds: " + p.biomes.map((b) => (b === "custom" ? own("biomes") : G.biomes?.options.find((o) => o.id === b)?.name)).filter(Boolean).join(", "), p.money && "Robux: " + name("money")].filter(Boolean);
   return tags.length ? `<div class="row wrap" style="gap:6px;margin-top:8px">${tags.map((t) => `<span class="tag gs-tag">${esc(t)}</span>`).join("")}</div>` : "";
 }
 

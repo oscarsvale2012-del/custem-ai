@@ -186,6 +186,12 @@ function fakeSpawn(exe, args, opts) {
     assert(/3 R\$/.test(txt) && /0\.5%/.test(txt) && /80 R\$/.test(txt), "the full overload as asked");
     assert(/show the odds/.test(txt) && /ArePaidRandomItemsRestricted/.test(txt), "always inside Roblox's rules for paid random items");
     assert.equal(R.prefsText({}), "");
+    // "Custom": the user types their own answer
+    const cu = R.cleanPrefs({ modelQuality: "custom", texture: "custom", money: "custom", map: "escape", biomes: ["galaxy", "custom"], custom: { modelQuality: "  low-poly but with   cute faces ", texture: "", money: "only one 99 R$ VIP pass", biomes: "a giant kitchen", hazard: "ignored" } });
+    assert.deepEqual(cu, { modelQuality: "custom", map: "escape", biomes: ["galaxy", "custom"], money: "custom", custom: { modelQuality: "low-poly but with cute faces", money: "only one 99 R$ VIP pass", biomes: "a giant kitchen" } }, "custom answers kept (tidied), an empty custom box is dropped");
+    const ct = R.prefsText(cu);
+    assert(/Model quality \(custom\) the user's own words: "low-poly but with cute faces"/.test(ct) && /a giant kitchen/.test(ct) && /only one 99 R\$ VIP pass/.test(ct) && /ArePaidRandomItemsRestricted/.test(ct), ct);
+    assert.equal(R.cleanPrefs({ money: "custom", custom: { money: "x".repeat(500) } }).custom.money.length, 300, "at most 300 characters");
     // the map question (after the Studs look): escape map with what chases you and the worlds
     const esc = R.cleanPrefs({ texture: "studs", map: "escape", hazard: "waves", biomes: ["galaxy", "winter", "galaxy", "nope"] });
     assert.deepEqual(esc, { texture: "studs", map: "escape", hazard: "waves", biomes: ["galaxy", "winter"] }, "doubles and unknown worlds dropped");

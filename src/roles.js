@@ -126,31 +126,39 @@ const PREFS = {
     },
   },
 };
-/** Only known answers are kept. */
+/** Only known answers are kept — plus "custom" answers the user typed themselves (in `custom`, up to 300 characters each). */
 function cleanPrefs(p) {
-  const out = {};
+  const out = {}, custom = {};
+  const typed = (k) => { const t = typeof p?.custom?.[k] === "string" ? p.custom[k].replace(/\s+/g, " ").trim().slice(0, 300) : ""; if (t) custom[k] = t; return !!t; };
   for (const [k, def] of Object.entries(PREFS)) {
-    if (def.multi) { const list = [...new Set(Array.isArray(p?.[k]) ? p[k].filter((x) => typeof x === "string" && def.options[x]) : [])]; if (list.length) out[k] = list.includes("all") ? ["all"] : list; }
-    else if (p && typeof p[k] === "string" && def.options[p[k]]) out[k] = p[k];
+    if (def.multi) {
+      const list = [...new Set(Array.isArray(p?.[k]) ? p[k].filter((x) => typeof x === "string" && (def.options[x] || (x === "custom" && typed(k)))) : [])];
+      if (list.length) out[k] = list.includes("all") && !list.includes("custom") ? ["all"] : list.includes("all") ? ["all", "custom"] : list;
+    } else if (p && typeof p[k] === "string" && (def.options[p[k]] || (p[k] === "custom" && typed(k)))) out[k] = p[k];
   }
-  if (out.map !== "escape") { delete out.hazard; delete out.biomes; } // only for the escape map
+  if (out.map !== "escape" && out.map !== "custom") { delete out.hazard; delete out.biomes; } // only for the escape map (or your own map)
+  const used = Object.fromEntries(Object.entries(custom).filter(([k]) => out[k] === "custom" || (Array.isArray(out[k]) && out[k].includes("custom"))));
+  if (Object.keys(used).length) out.custom = used;
   return out;
 }
 /** The answers as instructions for the Co-Founder and every role. */
 function prefsText(p) {
   p = cleanPrefs(p);
   if (!Object.keys(p).length) return "";
-  const what = p.feature && p.feature !== "auto" ? PREFS.feature.options[p.feature][2] : "the game's main feature";
+  const own = (k) => `the user's own words: "${p.custom[k]}"`;
+  const say = (k, id) => (id === "custom" ? own(k) : PREFS[k].options[id][2]);
+  const level = (k) => (p[k] === "custom" ? `(custom) ${own(k)}` : `(${LEVELS[p[k]][0]}): ${LEVELS[p[k]][2]}`);
+  const what = p.feature && p.feature !== "auto" ? (p.feature === "custom" ? p.custom.feature : PREFS.feature.options[p.feature][2]) : "the game's main feature";
   const lines = [];
-  if (p.modelQuality) lines.push(`- Model quality (${LEVELS[p.modelQuality][0]}): ${LEVELS[p.modelQuality][2]}.`);
-  if (p.feature) lines.push(`- Main feature: ${PREFS.feature.options[p.feature][2]}.`);
-  if (p.featureQuality) lines.push(`- Quality of ${what} (${LEVELS[p.featureQuality][0]}): ${LEVELS[p.featureQuality][2]}.`);
-  if (p.texture) lines.push(`- Look: ${PREFS.texture.options[p.texture][2]}.`);
-  if (p.map) lines.push(`- Map: ${PREFS.map.options[p.map][2]}.`);
-  if (p.hazard) lines.push(`- What chases the players: ${PREFS.hazard.options[p.hazard][2]}.`);
-  if (p.biomes) lines.push(`- Zones / biomes: ${p.biomes.map((b) => PREFS.biomes.options[b][2]).join("; ")}.`);
-  if (p.money) lines.push(`- Monetization: ${PREFS.money.options[p.money][2]}. Always within Roblox's rules: show the odds of every paid random item (crates, eggs) in the shop before buying, check PolicyService:GetPolicyInfoForPlayerAsync(player).ArePaidRandomItemsRestricted and hide paid random items for players where they're not allowed (offer a non-random paid option instead), show clear prices, only prompt a purchase after the player clicks, and no fake countdowns or misleading buttons.`);
-  return `Game settings the user chose (follow them in everything you make):\n${lines.join("\n")}`;
+  if (p.modelQuality) lines.push(`- Model quality ${level("modelQuality")}.`);
+  if (p.feature) lines.push(`- Main feature: ${say("feature", p.feature)}.`);
+  if (p.featureQuality) lines.push(`- Quality of ${what} ${level("featureQuality")}.`);
+  if (p.texture) lines.push(`- Look: ${say("texture", p.texture)}.`);
+  if (p.map) lines.push(`- Map: ${say("map", p.map)}.`);
+  if (p.hazard) lines.push(`- What chases the players: ${say("hazard", p.hazard)}.`);
+  if (p.biomes) lines.push(`- Zones / biomes: ${p.biomes.map((b) => say("biomes", b)).join("; ")}.`);
+  if (p.money) lines.push(`- Monetization: ${say("money", p.money)}. Always within Roblox's rules: show the odds of every paid random item (crates, eggs) in the shop before buying, check PolicyService:GetPolicyInfoForPlayerAsync(player).ArePaidRandomItemsRestricted and hide paid random items for players where they're not allowed (offer a non-random paid option instead), show clear prices, only prompt a purchase after the player clicks, and no fake countdowns or misleading buttons.`);
+  return `Game settings the user chose (follow them in everything you make; where it says "the user's own words", do what they wrote):\n${lines.join("\n")}`;
 }
 const WORKERS = ROLE_IDS.filter((r) => r !== "cofounder");
 
