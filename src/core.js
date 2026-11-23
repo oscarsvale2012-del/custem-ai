@@ -739,8 +739,9 @@ class Backend extends EventEmitter {
   blenderNeeds(env) { const { min, max } = this.blenderMcpRange(env); return max ? `${min} or newer, below ${max}` : `${min} or newer`; }
 
   /**
-   * "Do it for me": VYRON connects Blender all by itself.
-   *  1. Checks the Blender versions — with no Blender the MCP add-on supports, nothing starts.
+   * "Do it for me": VYRON connects Blender all by itself, even from nothing.
+   *  1. Checks the Blender versions — with no Blender the MCP add-on supports, it downloads the newest Blender
+   *     from download.blender.org (checksum-verified) and unpacks it (no installer, no admin rights needed).
    *  2. Downloads the official MCP add-on (projects.blender.org/lab/blender_mcp) and installs + enables it in that Blender.
    *  3. Turns on the MCP server for good, opens Blender and connects it.
    *  4. Missing Claude desktop Blender extension: downloads it and opens its installer in Claude desktop.
@@ -753,16 +754,20 @@ class Backend extends EventEmitter {
     const cur = await this.checkBlender().catch(() => null);
     if (cur?.open) return { ok: true, started: false, step: "done", message: "Blender is already connected." };
     const all = this.blenderChoices();
-    const pick = this.pickBlender();
-    if (!pick) {
-      const have = all.map((b) => b.version).filter(Boolean).sort(cmpVer).pop();
-      return { ok: false, started: false, step: "install", versions: all.map((b) => b.version), message: have ? `You have Blender ${all.map((b) => b.version || "?").join(", ")}, but the MCP add-on only works with Blender ${this.blenderNeeds()}, so it can't be connected. Install the free newest Blender from blender.org, then try again.` : `No Blender on this PC. Install the free Blender (${this.blenderNeeds()}) from blender.org, then try again.` };
-    }
-    this._doIt = { step: "check", text: `Blender ${pick.version} works with the MCP add-on`, at: now() };
+    let pick = this.pickBlender();
+    this._doIt = { step: "check", text: pick ? `Blender ${pick.version} works with the MCP add-on` : "Getting Blender…", at: now() };
     this.glow("doit", true);
-    const progress = (step, text) => { this._doIt = { step, text, at: now() }; this.log(text, "info", "Blender"); this.changed(); };
+    const progress = (step, text, quiet) => { this._doIt = { step, text, at: now() }; if (!quiet) this.log(text, "info", "Blender"); this.changed(); };
     let handedOff = false;
     try {
+      // 1. no Blender that works with the MCP add-on → get the newest one
+      if (!pick) {
+        const old = all.map((b) => b.version).filter(Boolean).sort(cmpVer).pop();
+        progress("blender", old ? `Blender ${old} can't run the MCP add-on (needs ${this.blenderNeeds()}) — getting the newest Blender…` : "No Blender yet — getting the newest Blender from blender.org…");
+        const got = await this.installBlender(progress);
+        pick = this.pickBlender();
+        if (!pick) throw new Error(`Blender ${got.version} was unpacked, but VYRON can't find it.`);
+      }
       // 2. the MCP add-on in Blender
       let addonZip = null;
       if (!this.blenderAddon(pick.version, undefined, pick.exe)) {
@@ -802,6 +807,71 @@ class Backend extends EventEmitter {
       this.glow("doit", false);
       if (!handedOff) this.changed();
     }
+  }
+
+  /** The newest Blender for Windows on download.blender.org that the MCP add-on supports, with its SHA-256. */
+  async blenderLatestDownload() {
+    const base = "https://download.blender.org/release/";
+    const arch = process.arch === "arm64" ? "arm64" : "x64";
+    const text = async (url) => {
+      const r = await this.fetch(url, { signal: AbortSignal.timeout(20000) }).catch(() => null);
+      if (!r?.ok) throw new Error("Couldn't reach download.blender.org.");
+      return r.text();
+    };
+    const dirs = [...(await text(base)).matchAll(/href="(Blender(\d+\.\d+))\/"/g)].map((m) => ({ dir: m[1], v: m[2] }))
+      .filter((d) => this.blenderOk(d.v)).sort((a, b) => cmpVer(b.v, a.v));
+    for (const d of dirs.slice(0, 3)) {
+      const zips = [...(await text(base + d.dir + "/")).matchAll(new RegExp(`href="(blender-(\\d+\\.\\d+\\.\\d+)-windows-${arch}\\.zip)"`, "g"))]
+        .map((m) => ({ file: m[1], version: m[2] })).sort((a, b) => cmpVer(b.version, a.version));
+      if (!zips.length) continue;
+      const z = zips[0];
+      const sums = await text(`${base}${d.dir}/blender-${z.version}.sha256`);
+      const sha = (sums.split(/\r?\n/).map((l) => l.trim().split(/\s+/)).find((p) => p[1] === z.file) || [])[0];
+      if (!/^[0-9a-f]{64}$/i.test(sha || "")) throw new Error(`No checksum for ${z.file} on download.blender.org.`);
+      return { version: z.version, file: z.file, url: base + d.dir + "/" + z.file, sha256: sha.toLowerCase() };
+    }
+    throw new Error("Couldn't find a Blender for Windows on download.blender.org.");
+  }
+  /**
+   * Download the newest Blender (.zip, checksum-checked) and unpack it to %LOCALAPPDATA%\Programs — like a portable
+   * Blender: no installer, no admin rights. VYRON then finds it like any other Blender and uses it from now on.
+   */
+  async installBlender(progress = () => {}, env = process.env) {
+    const rel = await this.blenderLatestDownload();
+    const programs = path.join(env.LOCALAPPDATA || path.join(this.dataDir, "apps"), "Programs");
+    const folder = path.join(programs, rel.file.replace(/\.zip$/, ""));
+    const exe = path.join(folder, "blender.exe");
+    if (!fs.existsSync(exe)) {
+      const dl = path.join(this.dataDir, "downloads");
+      fs.mkdirSync(dl, { recursive: true }); fs.mkdirSync(programs, { recursive: true });
+      const zip = path.join(dl, rel.file);
+      progress("blender", `Downloading Blender ${rel.version} from blender.org…`);
+      const res = await this.fetch(rel.url, { signal: AbortSignal.timeout(60 * 60 * 1000) }).catch(() => null);
+      if (!res?.ok) throw new Error(`Couldn't download Blender ${rel.version} from blender.org.`);
+      const total = Number(res.headers?.get?.("content-length")) || 0;
+      const hash = require("crypto").createHash("sha256");
+      const out = fs.createWriteStream(zip);
+      let got = 0, shown = -1;
+      try {
+        const body = res.body && res.body[Symbol.asyncIterator] ? res.body : [Buffer.from(await res.arrayBuffer())];
+        for await (const chunk of body) {
+          const b = Buffer.from(chunk);
+          hash.update(b); got += b.length;
+          if (!out.write(b)) await new Promise((r) => out.once("drain", r));
+          const pct = total ? Math.floor((got / total) * 100) : -1;
+          if (pct >= 0 && (pct >= shown + 5 || (pct === 100 && shown !== 100))) { shown = pct; progress("blender", `Downloading Blender ${rel.version}… ${pct}% of ${Math.round(total / 1048576)} MB`, true); }
+        }
+      } finally { await new Promise((r) => out.end(r)); }
+      if (hash.digest("hex") !== rel.sha256) { fs.rmSync(zip, { force: true }); throw new Error("The Blender download didn't match blender.org's checksum, so VYRON didn't use it. Try again."); }
+      progress("blender", `Unpacking Blender ${rel.version}…`);
+      await new Promise((resolve, reject) => (this.execFileImpl || require("child_process").execFile)("tar.exe", ["-xf", zip, "-C", programs], { windowsHide: true, timeout: 15 * 60 * 1000 }, (err) => (err ? reject(new Error("Couldn't unpack Blender: " + err.message)) : resolve())));
+      fs.rmSync(zip, { force: true });
+      if (!fs.existsSync(exe)) throw new Error(`Blender ${rel.version} was unpacked, but blender.exe isn't where it should be.`);
+      this.log(`Blender ${rel.version} downloaded from blender.org and set up in ${folder}`, "ok", "Blender");
+    }
+    this._apps = null; this._mcpRange = null;
+    this.d.settings.blenderExe = exe; this.save();
+    return { version: rel.version, exe };
   }
 
   /** Where VYRON gets Blender's official MCP pieces: the Blender Lab repository's newest release. */

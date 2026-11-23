@@ -501,16 +501,13 @@ function fakeSpawn(exe, args, opts) {
     const onGlow = (g) => glows.push(g.on); be.on("glow", onGlow);
     const savedPc = be.d.settings.pcControl, savedExe = be.d.settings.blenderExe; delete be.d.settings.blenderExe;
     try {
-      const tasks0 = be.claude.tasks.length;
-      const no = await dispatch(ctx, "blenderDoItForMe", []);
-      assert(!no.ok && !no.started && no.step === "install", "only Blender 4.5 → won't work");
-      assert(/4\.5/.test(no.message) && /5\.1 or newer/.test(no.message), no.message);
-      assert.equal(be.claude.tasks.length, tasks0, "no Claude task when the version is wrong");
-      assert.equal(fetched.length, 0, "nothing downloaded"); assert.deepEqual(glows, [], "no glow");
-      // Blender 5.2 without the add-on and without Claude's Blender extension
-      mkB("5.2");
+      // Only Blender 4.5 (can't run the MCP add-on) → VYRON gets a new Blender first, then carries on
+      let gotBlender = 0;
+      be.installBlender = async (progress) => { gotBlender++; progress("blender", "Downloading Blender 5.2.4… 50% of 390 MB", true); mkB("5.2"); be._apps = null; return { version: "5.2", exe: "x" }; };
       be.d.settings.pcControl = "off";
       const r = await dispatch(ctx, "blenderDoItForMe", []);
+      assert.equal(gotBlender, 1, "downloaded Blender because 4.5 is too old");
+      delete be.installBlender;
       const zip = path.join(TMP, "downloads", "mcp-1.0.3.zip"), mcpb = path.join(TMP, "downloads", "blender-1.0.3.mcpb");
       assert(fs.existsSync(zip) && fs.readFileSync(zip).equals(ZIP), "downloaded the add-on from projects.blender.org");
       assert(!fetched.some((u) => /evil/.test(u)), "only official projects.blender.org/lab files");
@@ -543,6 +540,42 @@ function fakeSpawn(exe, args, opts) {
       delete be.execFileImpl; delete be.spawnImpl; delete be.blenderMcpServer; be.d.settings.pcControl = savedPc;
       if (savedExe) be.d.settings.blenderExe = savedExe; be._apps = null;
     }
+  });
+  await test("Get Blender: newest Windows zip from download.blender.org, checksum-checked, unpacked to Programs (no installer)", async () => {
+    const pc = path.join(TMP, "pcK"), la = path.join(pc, "la"), env = { LOCALAPPDATA: la };
+    const ZIP = Buffer.from("PK-fake-blender-zip"), sha = require("crypto").createHash("sha256").update(ZIP).digest("hex");
+    const B = "https://download.blender.org/release/";
+    let shaFile = `${"0".repeat(64)}  blender-5.3.0-macos-arm64.dmg\n${sha}  blender-5.3.0-windows-x64.zip\n${"1".repeat(64)}  blender-5.3.0-windows-arm64.zip\n`;
+    const pages = {
+      [B]: '<a href="Blender4.5/">Blender4.5/</a><a href="Blender5.2/">Blender5.2/</a><a href="Blender5.3/">Blender5.3/</a><a href="Blender5.10/">Blender5.10/</a>',
+      [B + "Blender5.10/"]: '<a href="blender-5.10.0-linux-x64.tar.xz">only linux</a>',
+      [B + "Blender5.3/"]: '<a href="blender-5.3.0-windows-x64.msi">msi</a><a href="blender-5.3.0-windows-x64.zip">zip</a><a href="blender-5.3.0.sha256">sha</a>',
+    };
+    const realFetch = be.fetch, saved = be.d.settings.blenderExe;
+    let untar = null, steps = [];
+    be.fetch = async (url) => {
+      if (pages[url]) return { ok: true, text: async () => pages[url] };
+      if (url === B + "Blender5.3/blender-5.3.0.sha256") return { ok: true, text: async () => shaFile };
+      if (url === B + "Blender5.3/blender-5.3.0-windows-x64.zip") return { ok: true, headers: { get: () => String(ZIP.length) }, body: (async function* () { yield ZIP.subarray(0, 5); yield ZIP.subarray(5); })() };
+      return { ok: false, status: 404 };
+    };
+    be.execFileImpl = (exe, args, opts, cb) => { untar = { exe, args }; const d = path.join(args[3], "blender-5.3.0-windows-x64"); fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, "blender.exe"), ""); cb(null, ""); };
+    try {
+      const rel = await be.blenderLatestDownload();
+      assert.equal(rel.version, "5.3.0", "newest folder with a Windows zip (5.10 has none)"); assert.equal(rel.sha256, sha);
+      const r = await be.installBlender((s, t) => steps.push(t), env);
+      const exe = path.join(la, "Programs", "blender-5.3.0-windows-x64", "blender.exe");
+      assert.equal(r.exe, exe); assert.equal(be.d.settings.blenderExe, exe, "VYRON uses the new Blender");
+      assert.equal(untar.exe, "tar.exe"); assert.deepEqual(untar.args.slice(0, 2), ["-xf", path.join(TMP, "downloads", "blender-5.3.0-windows-x64.zip")]);
+      assert(!fs.existsSync(path.join(TMP, "downloads", "blender-5.3.0-windows-x64.zip")), "the 400 MB zip is removed after unpacking");
+      assert(steps.some((t) => /100%/.test(t)) && steps.some((t) => /Unpacking/.test(t)), steps.join(" | "));
+      // already there → no second download
+      untar = null; await be.installBlender(() => {}, env); assert.equal(untar, null);
+      // a download that doesn't match blender.org's checksum is thrown away
+      shaFile = `${"f".repeat(64)}  blender-5.3.0-windows-x64.zip\n`;
+      await assert.rejects(be.installBlender(() => {}, { LOCALAPPDATA: path.join(pc, "other") }), /checksum/);
+      assert(!fs.existsSync(path.join(TMP, "downloads", "blender-5.3.0-windows-x64.zip")));
+    } finally { be.fetch = realFetch; delete be.execFileImpl; if (saved) be.d.settings.blenderExe = saved; else delete be.d.settings.blenderExe; be._apps = null; }
   });
   await test("Blender MCP from the Store Claude app: runs its real Python when the normal AppData path isn't visible", () => {
     const { blenderServer } = require("../src/claude");

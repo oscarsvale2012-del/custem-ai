@@ -101,8 +101,10 @@ function blenderDoItRow() {
   const list = S.setup?.apps?.blenders || [], needs = S.setup?.apps?.blenderNeeds || "5.1 or newer";
   const ok = list.some((b) => b.supported), D = S.pc?.doIt, task = S.pc?.doItTask;
   if (D || task) return `<div class="bl-doit working"><span class="ob-ic"><span class="spinner"></span></span><div class="grow" style="min-width:0"><b>${D ? "VYRON is connecting Blender…" : "Claude is doing the last steps…"}</b><div class="faint" style="font-size:12px">${esc(D ? D.text : "Answer Claude's questions in VYRON. Your screen glows purple while it works.")}</div></div>${task ? `<button class="btn sm" data-act="openTask" data-id="${esc(task)}">Watch</button>` : ""}<button class="btn sm danger" data-act="pcRevoke">Stop</button></div>`;
-  const why = ok ? "VYRON downloads Blender's MCP add-on, installs it, turns it on and connects Blender. If something needs clicks, Claude does them on your screen (it asks first). Your screen glows purple while it works." : list.length ? `Not possible: you have Blender ${list.map((b) => esc(b.version || "?")).join(", ")}, and the MCP add-on needs Blender ${esc(needs)}. Install the newest Blender first.` : `Not possible yet: no Blender on this PC. Install Blender (${esc(needs)}) first.`;
-  return `<div class="bl-doit ${ok ? "" : "off"}"><span class="ob-ic">${ic("sparkle")}</span><div class="grow" style="min-width:0"><b>Do everything for me</b><div class="faint" style="font-size:12px">${why}</div></div><button class="btn sm ${ok ? "primary" : ""}" data-act="blDoIt" ${ok ? "" : "disabled"}>Do it for me</button></div>`;
+  const rest = "installs Blender's MCP add-on, turns it on and connects Blender. If something needs clicks, Claude does them on your screen (it asks first). Your screen glows purple while it works.";
+  const why = ok ? "VYRON downloads and " + rest
+    : (list.length ? `Your Blender ${list.map((b) => esc(b.version || "?")).join(", ")} can't run the MCP add-on (it needs ${esc(needs)}), so VYRON` : "No Blender yet? VYRON") + " downloads the newest Blender from blender.org (free, about 400 MB, no installer), then " + rest;
+  return `<div class="bl-doit"><span class="ob-ic">${ic("sparkle")}</span><div class="grow" style="min-width:0"><b>Do everything for me</b><div class="faint" style="font-size:12px">${why}</div></div><button class="btn sm primary" data-act="blDoIt">Do it for me</button></div>`;
 }
 function blenderConnectModal() {
   const list = S.setup?.apps?.blenders || [], needs = S.setup?.apps?.blenderNeeds || "5.1 or newer", pick = blenderPickExe();
@@ -160,17 +162,24 @@ function setupItem(it) {
   const st = it.ok ? `<span class="ob-ok">${ic("check")}Connected</span>` : it.skipped ? `<span class="ob-no">Skipped</span>` : it.optional ? `<span class="ob-no">Optional</span>` : `<span class="ob-no">Not connected</span>`;
   let act = "";
   const help = it.id === "blender" ? `<button class="btn sm ghost" data-act="obBlenderHelp">${ui.obBlenderHelp ? "Hide guide" : "How?"}</button>` : "";
-  if (!it.ok && it.installed === false) act = `<button class="btn sm primary" data-act="openUrl" data-id="${esc(it.download)}">${ic("download")}Download ${esc(it.downloadName)}</button>`;
+  // "Open" for apps that are set up (Studio also while it waits for a place to be opened), with its keyboard shortcut.
+  const app = { studio: "studio", desktop: "claude", blender: "blender" }[it.id];
+  const key = app && S.hotkeys?.on && S.hotkeys.keys?.[app];
+  const open = app && it.installed !== false && (it.ok || it.id === "studio") ? `<button class="btn sm ${it.ok ? "" : "ghost"}" data-act="openApp" data-id="${app}" title="Open ${esc(it.name)}${key ? " (" + esc(key) + ")" : ""}">${ic("play")}Open${key ? `<kbd class="ob-key">${esc(key)}</kbd>` : ""}</button>` : "";
+  const working = !!(S.pc?.doIt || S.pc?.doItTask);
+  const doIt = working ? `<button class="btn sm" disabled style="max-width:210px" title="${esc(S.pc.doIt?.text || "")}"><span class="spinner"></span><span class="ell">${esc(S.pc.doIt?.text || "Claude is finishing…")}</span></button>` : `<button class="btn sm primary" data-act="blDoIt" title="VYRON gets Blender and its MCP add-on if needed, and connects everything">${ic("sparkle")}Do it for me</button>`;
+  if (!it.ok && it.id === "blender" && it.installed === false) act = working ? doIt : `${doIt}<button class="btn sm ghost" data-act="openUrl" data-id="${esc(it.download)}">${ic("download")}Download myself</button>`;
+  else if (!it.ok && it.installed === false) act = `<button class="btn sm primary" data-act="openUrl" data-id="${esc(it.download)}">${ic("download")}Download ${esc(it.downloadName)}</button>`;
   else if (!it.ok) {
     if (it.id === "claude") act = S.claude.found ? `<button class="btn sm primary" data-act="claudeLogin">Sign in to Claude</button>` : `<button class="btn sm" data-act="openUrl" data-id="https://claude.ai/download">Get Claude</button>`;
     if (it.id === "desktop") act = `<button class="btn sm primary" data-act="controlDesktop" data-val="on">Connect</button>`;
     if (it.id === "code") act = `<div class="row" style="gap:6px"><button class="btn sm primary" data-act="obPrompt">Copy setup prompt</button>${it.skipped ? "" : `<button class="btn sm ghost" data-act="obSkipItem" data-id="code">Skip</button>`}</div>`;
     if (it.id === "studio") act = `<button class="btn sm" data-act="obRecheck">${ic("refresh")}Check again</button>`;
-    if (it.id === "blender") act = `<button class="btn sm primary" data-act="connectBlender">${ic("cube")}Connect</button><button class="btn sm" data-act="blDoIt" ${(S.setup?.apps?.blenders || []).some((b) => b.supported) ? "" : "disabled"} title="Claude controls your PC and does the steps for you">Do it for me</button>`;
+    if (it.id === "blender") act = `${doIt}<button class="btn sm" data-act="connectBlender">${ic("cube")}Connect</button>`;
     if (it.id === "roblox") act = `<button class="btn sm primary" data-act="linkRoblox">Sign in with Roblox</button>`;
     if (it.id === "discord") act = `<div class="row" style="gap:6px"><input class="input" id="obDiscord" placeholder="https://discord.com/api/webhooks/…" style="height:32px;width:240px"><button class="btn sm primary" data-act="obDiscord">Connect</button>${it.skipped ? "" : `<button class="btn sm ghost" data-act="obSkipDiscord">Skip</button>`}</div>`;
   }
-  return `<div class="ob-item ${it.ok ? "ok" : ""} ${it.skipped && !it.ok ? "skipped" : ""}"><span class="ob-ic">${ic(SETUP_ICON[it.id])}</span><div class="grow" style="min-width:0"><div class="row" style="gap:8px"><b>${esc(it.name)}</b>${st}</div>${it.ok ? "" : `<div class="faint" style="font-size:12px">${it.installed === false ? (it.tooOld ? `Blender ${esc(it.tooOld)} is too old for the MCP add-on — get Blender 5.1 or newer (it's free), then come back.` : `${esc(it.downloadName)} isn't installed on this PC yet — download it from the official site (free), then come back.`) : esc(it.how)}</div>`}</div><div class="row" style="gap:6px">${act}${it.ok ? "" : help}</div></div>${it.id === "blender" && !it.ok && ui.obBlenderHelp ? blenderGuide(ui.blenderStep) : ""}`;
+  return `<div class="ob-item ${it.ok ? "ok" : ""} ${it.skipped && !it.ok ? "skipped" : ""}"><span class="ob-ic">${ic(SETUP_ICON[it.id])}</span><div class="grow" style="min-width:0"><div class="row" style="gap:8px"><b>${esc(it.name)}</b>${st}</div>${it.ok ? "" : `<div class="faint" style="font-size:12px">${it.installed === false ? (it.tooOld ? `Blender ${esc(it.tooOld)} is too old for the MCP add-on — get Blender 5.1 or newer (it's free), then come back.` : `${esc(it.downloadName)} isn't installed on this PC yet — download it from the official site (free), then come back.`) : esc(it.how)}</div>`}</div><div class="row" style="gap:6px">${open}${act}${it.ok ? "" : help}</div></div>${it.id === "blender" && !it.ok && ui.obBlenderHelp ? blenderGuide(ui.blenderStep) : ""}`;
 }
 
 function updateSetupList() {
