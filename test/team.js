@@ -61,10 +61,23 @@ function fakeSpawn(exe, args, opts) {
   const taskOf = (r) => be.claude.tasks.find((x) => x.id === team().roles[r].taskId);
 
   console.log("Roles");
-  await test("five roles with their own jobs and tools", () => {
-    assert.deepEqual(R.ROLE_IDS, ["cofounder", "builder", "coder", "ui", "money"]);
+  await test("seven Roblox roles with their own jobs and tools (Sound Designer and Animator too)", () => {
+    assert.deepEqual(R.ROLE_IDS, ["cofounder", "builder", "coder", "ui", "money", "sound", "animator"]);
     assert(R.ROLES.builder.servers.includes("blender") && !R.ROLES.coder.servers.includes("blender"));
     assert(/gamepasses/i.test(R.ROLES.money.prompt) && /Blender/.test(R.ROLES.builder.prompt) && /control the team/.test(R.ROLES.cofounder.prompt));
+    assert(/Creator Store/.test(R.ROLES.sound.prompt) && /SoundService/.test(R.ROLES.sound.prompt), "sounds from Roblox's Creator Store");
+    assert(/R15/.test(R.ROLES.animator.prompt) && /Rig Builder/.test(R.ROLES.animator.prompt) && /generate_animation/.test(R.ROLES.animator.prompt), "official Roblox rigs + Studio's animation tool");
+    for (const r of R.ROLE_IDS) assert(/You make Roblox games/.test(R.ROLES[r].prompt), r + " is made for Roblox game development");
+  });
+  await test("the team starts with only the Co-Founder; + adds the roles you pick (in the team's order)", async () => {
+    assert.deepEqual(be.teamRoster(), [], "nothing added yet");
+    assert(/nobody yet/.test(R.planPrompt("x", [])) && /"cofounder"/.test(R.planPrompt("x", [])), "alone → the Co-Founder plans its own jobs");
+    assert.deepEqual(await dispatch(ctx, "setTeamRoles", [["animator", "sound designer", "music"]]), ["sound", "animator"], "names work, doubles are dropped, the team's order is kept");
+    await assert.rejects(dispatch(ctx, "setTeamRoles", [["dragon"]]), /Unknown role/);
+    assert.deepEqual(await dispatch(ctx, "setTeamRoles", [["cofounder"]]), [], "the Co-Founder is always there, so it isn't in the list");
+    const p = R.planPrompt("x", ["builder", "sound"]);
+    assert(/Sound Designer \("sound"\)/.test(p) && /"sound": \[/.test(p) && !/"coder": \[/.test(p), "the plan only has jobs for the roles in the team");
+    await dispatch(ctx, "setTeamRoles", [["builder", "coder", "ui", "money"]]);
   });
   await test("the plan is read from the Co-Founder's answer (and junk is ignored)", () => {
     assert.equal(R.parsePlan("x ```json\n" + JSON.stringify(PLAN) + "\n``` y").work.builder.length, 2);
@@ -146,6 +159,18 @@ function fakeSpawn(exe, args, opts) {
     await idle();
     assert(taskOf("ui").messages.some((m) => m.text === "Stopped.") && team().roles.ui.state === "off");
     slow = 0;
+  });
+  await test("+ while the team builds: the new role starts and the Co-Founder is told to give it jobs", async () => {
+    await idle();
+    const before = runs.length;
+    await dispatch(ctx, "setTeamRoles", [["builder", "coder", "money", "animator"]]);
+    await idle();
+    assert(team().roles.animator.enabled && taskOf("animator"), "Animator started");
+    assert(runs.slice(before).some((x) => /Your jobs as Animator/.test(x.input)), "Animator got its brief");
+    assert(runs.slice(before).some((x) => /I added Animator to the team/.test(x.input)), "the Co-Founder was told");
+    assert.equal(team().roles.ui.enabled, false, "UI Maker was taken out of the team");
+    await dispatch(ctx, "setTeamRoles", [["builder", "coder", "ui", "money"]]);
+    await idle();
   });
   await test("wait returns when the roles are done", async () => {
     const s = await tool("vyron_team_wait", { timeout_seconds: 10 });

@@ -67,6 +67,10 @@ ICON.crown = '<path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 11H5z"/><path d="M5 19h14"/
 ICON.cube = '<path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/>';
 ICON.code = '<path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14"/>';
 ICON.layout = '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 9h18M9 9v11"/>';
+ICON.chev = '<path d="m9 6 6 6-6 6"/>';
+ICON.music = '<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>';
+ICON.run = '<circle cx="14.5" cy="4.5" r="2"/><path d="M7 21l3.5-5.5 3 2.5v3M6 11.5l3-3h4.5l2.5 3.5 3 1M10.5 15.5 12 9"/>';
+ICON.panel = '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16"/>';
 ICON.coin = '<circle cx="12" cy="12" r="8.5"/><path d="M14.8 9.2c-.5-.9-1.6-1.4-2.8-1.4-1.6 0-2.8.8-2.8 2s1.2 1.7 2.8 2 2.8.8 2.8 2-1.2 2-2.8 2c-1.3 0-2.4-.6-2.9-1.5M12 6.3v1.5M12 16.2v1.5"/>';
 const ic = (n, cls = "") => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[n] || ""}</svg>`;
 ICON.claude = '<path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4M5.3 5.3l2.8 2.8M15.9 15.9l2.8 2.8M5.3 18.7l2.8-2.8M15.9 8.1l2.8-2.8"/>';
@@ -84,7 +88,10 @@ const SUB = {
 let S = null;
 let desktop = false;
 let IDEAS = [];
-const ui = { route: lsGet("route") || "dashboard", ideaCat: "All", ideaQ: "", ideaTab: "library", drawer: null };
+const ui = { route: lsGet("route") || "dashboard", ideaCat: "All", ideaQ: "", ideaTab: "library", drawer: null, tasksHidden: lsGet("tasksHidden") === "1" };
+/** Hide the left sidebar (all the tabs) for a bigger chat — button top left or Ctrl+B. */
+function setNavHidden(on) { document.body.classList.toggle("nav-hidden", !!on); lsSet("navHidden", on ? "1" : ""); }
+setNavHidden(lsGet("navHidden") === "1");
 if (!PAGES.some((p) => p[0] === ui.route)) ui.route = "dashboard";
 function lsGet(k) { try { return localStorage.getItem("vy." + k); } catch { return null; } }
 function lsSet(k, v) { try { localStorage.setItem("vy." + k, v); } catch { /* ignore */ } }
@@ -366,6 +373,51 @@ function msgView(m, compact) {
   return `<div class="msg error"><div class="who">Problem</div>${esc(m.text)}</div>`;
 }
 
+/* ---------- Claude chat, Claude-style: plain answers, grouped tool steps, a live "working" line and Claude's task list ---------- */
+ui.rev = {}; ui.revReady = {}; ui.openTools = {}; ui.todoOpen = {};
+const toolIcon = (tool) => (tool === "error" ? "x" : /roblox_studio/.test(tool) ? "roblox" : /blender/.test(tool) ? "cube" : /vyron/.test(tool) ? "dashboard" : "bolt");
+/** New answers fade in top to bottom (quick). Old ones (already there when the task was opened) just show. */
+function reveal(key, len) {
+  if (!(key in ui.rev)) ui.rev[key] = Date.now();
+  const start = ui.rev[key], el = Date.now() - start, dur = Math.round(Math.min(1500, 280 + len * 1.3));
+  return start && el < dur ? { cls: " reveal", style: `--rd:${dur}ms;animation-delay:-${el}ms` } : { cls: "", style: "" };
+}
+function chatMsg(t, m) {
+  if (m.role === "user") return `<div class="cmsg user"><div class="md">${md(m.text.replace(/^\[Active VYRON project:[^\]]*\]\n/, "").replace(/^\[From [^\]]{1,60}\] /, ""))}</div>${m.queuedFrom ? `<div class="faint cmsg-from">${esc(m.queuedFrom === "you" ? "Sent while it worked" : "From " + m.queuedFrom)}</div>` : ""}</div>`;
+  if (m.role === "assistant") { const r = reveal(`${t.id}:${m.at}`, m.text.length); return `<div class="cmsg ai${r.cls}" style="${r.style}"><div class="md">${md(m.text)}</div></div>`; }
+  if (m.role === "result") return `<div class="cresult">${ic("check")}<span>${esc(m.text)}</span></div>`;
+  return `<div class="msg error"><div class="who">Problem</div>${esc(m.text)}</div>`;
+}
+/** Tool steps in a row become one line you can open: "6 steps · Ran Luau in Studio". */
+function toolGroup(t, tools, live) {
+  const key = t.id + ":" + tools[0].at, open = ui.openTools[key], last = tools[tools.length - 1], bad = tools.filter((x) => x.tool === "error").length;
+  return `<div class="tools ${open ? "open" : ""} ${live ? "live" : ""}"><button class="tools-h" data-act="toolsToggle" data-id="${esc(key)}">${ic("chev")}<span class="ell">${tools.length === 1 ? esc(last.text) : `${tools.length} steps <span class="faint">· ${esc(last.text)}</span>`}</span>${bad ? `<span class="lv-error" style="flex:none">· ${bad} failed</span>` : ""}</button>
+    ${open ? `<div class="tools-b">${tools.map((x) => `<div class="tool-step ${x.tool === "error" ? "bad" : ""}">${ic(toolIcon(x.tool))}<span class="ell">${esc(x.text)}</span></div>`).join("")}</div>` : ""}</div>`;
+}
+function threadHtml(t) {
+  if (!ui.revReady[t.id]) { for (const m of t.messages) ui.rev[`${t.id}:${m.at}`] = 0; ui.revReady[t.id] = 1; }
+  const out = []; let tools = [];
+  const flush = (live) => { if (tools.length) out.push(toolGroup(t, tools, live)); tools = []; };
+  for (const m of t.messages) { if (m.role === "tool") { tools.push(m); continue; } flush(false); out.push(chatMsg(t, m)); }
+  flush(t.busy);
+  return out.join("");
+}
+/** The line at the bottom while Claude works: Claude's spinner, what it's doing right now, and the time. */
+function workingLine(t) {
+  const cur = (t.todos || []).find((x) => x.status === "in_progress");
+  return `<div class="working"><span class="cl-spin" aria-hidden="true"></span><span class="shimmer ell">${esc(cur?.activeForm || t.now || "Thinking")}…</span><span class="faint w-time" data-start="${t.startedAt || Date.now()}"></span></div>`;
+}
+/** Claude's own task list (from its TodoWrite tool), like in Claude Code. */
+function todoCard(t) {
+  const T = t.todos;
+  if (!T?.length) return "";
+  const done = T.filter((x) => x.status === "completed").length, all = done === T.length;
+  const open = ui.todoOpen[t.id] ?? !(all && !t.busy);
+  return `<div class="todo-card ${open ? "open" : ""}"><button class="todo-h" data-act="todoToggle" data-id="${t.id}">${ic("tasks")}<b>Tasks</b><span class="faint">${done}/${T.length}${all ? " · done" : ""}</span><div class="grow"></div>${ic("chev")}</button>
+    ${open ? `<div class="todo-b">${T.map((x) => `<div class="todo ${x.status}"><span class="todo-ic"></span><span>${esc(x.status === "in_progress" ? x.activeForm : x.content)}</span></div>`).join("")}</div>` : ""}</div>`;
+}
+setInterval(() => { for (const el of document.querySelectorAll(".w-time")) { const s = Math.max(0, Math.round((Date.now() - Number(el.dataset.start)) / 1000)); el.textContent = "· " + (s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s"); } }, 1000);
+
 /** The task being looked at in the Claude tab. */
 function curTask() {
   const T = S.claude.tasks;
@@ -385,18 +437,19 @@ VIEWS.claude = () => {
       <div class="faint ell" style="font-size:11.5px">${label}${x.inbox ? ` · ${x.inbox} message${x.inbox > 1 ? "s" : ""} waiting` : ""}${x.modelName ? " · " + esc(x.modelName) : ""}${x.last ? " · " + esc(x.last) : ""}</div></div></div>`; }).join("");
   return `<div class="chat-wrap" style="height:calc(100vh - 102px)">
     ${claudeSetupCard()}
-    <div class="claude-grid" style="flex:1;min-height:0">
-      <div class="panel ws-agents"><div class="panel-h"><h3>Tasks</h3><span class="faint" style="font-size:12px">${C.running}/${C.limit} running${C.queued ? ` · ${C.queued} waiting` : ""}</span><div class="grow"></div><button class="btn sm" data-act="newTask" title="Start another Claude that works at the same time">${ic("plus")}New</button></div>
+    <div class="claude-grid ${ui.tasksHidden ? "solo" : ""}" style="flex:1;min-height:0">
+      ${ui.tasksHidden ? "" : `<div class="panel ws-agents"><div class="panel-h"><h3>Tasks</h3><span class="faint" style="font-size:12px">${C.running}/${C.limit} running${C.queued ? ` · ${C.queued} waiting` : ""}</span><div class="grow"></div><button class="btn sm" data-act="newTask" title="Start another Claude that works at the same time">${ic("plus")}New</button></div>
         <div style="padding:8px">${teamColumn()}<div class="label" style="margin:12px 6px 6px">Tasks</div>${list}</div>
-        <div class="faint" style="font-size:11.5px;padding:4px 14px 14px">Every task is its own Claude working at the same time (up to ${C.limit}, change it in Settings). More tasks use your Claude usage faster.</div></div>
+        <div class="faint" style="font-size:11.5px;padding:4px 14px 14px">Every task is its own Claude working at the same time (up to ${C.limit}, change it in Settings). More tasks use your Claude usage faster.</div></div>`}
       <div class="panel chat">
-        <div class="panel-h"><div class="ava" style="width:32px;height:32px;border-radius:10px">${ic("claude")}</div><div style="min-width:0"><h3 class="ell">${esc(t.title)}</h3><div class="faint" style="font-size:12px">${S.settings.claudeAccess === "full" ? "Full access" : "Studio + VYRON + project files"} · works in ${esc(p ? p.game?.name || p.name : "VYRON's Games folder")}</div></div><div class="grow"></div>
+        <div class="panel-h"><button class="btn sm ghost icon" data-act="toggleTasks" title="${ui.tasksHidden ? "Show tasks and team" : "Hide tasks and team"}">${ic("panel")}</button><div class="ava" style="width:32px;height:32px;border-radius:10px">${ic("claude")}</div><div style="min-width:0"><h3 class="ell">${esc(t.title)}</h3><div class="faint" style="font-size:12px">${S.settings.claudeAccess === "full" ? "Full access" : "Studio + VYRON + project files"} · works in ${esc(p ? p.game?.name || p.name : "VYRON's Games folder")}</div></div><div class="grow"></div>
           ${t.modelName ? `<span class="chip model">${ic("sparkle")}${esc(t.modelName)}</span>` : modelChip()}<span class="chip ${S.studio.status === "connected" && S.studios.length ? "ok" : ""}"><span class="dot ${S.studio.status === "connected" && S.studios.length ? "connected" : "unknown"}"></span>Studio</span>
           ${active ? `<button class="btn sm danger" data-act="claudeStop" data-id="${t.id}">${ic("stop")}${t.queued ? "Cancel" : "Stop"}</button>` : `<button class="btn sm ghost" data-act="claudeNewChat" data-id="${t.id}" title="Clear this task's chat">Clear</button><button class="btn sm ghost danger icon" data-act="removeTask" data-id="${t.id}" title="Delete task">${ic("trash")}</button>`}</div>
-        <div class="thread" id="thread">
-          ${t.messages.length ? t.messages.map((m) => msgView(m)).join("") : `<div class="empty" style="margin:auto;max-width:520px"><b>You control Claude from here</b>Ask for anything in your game — Claude builds it in Roblox Studio, and can use VYRON too. Want several things at once? Press New for another task — each one is a separate Claude working at the same time.</div>`}
-          ${t.busy ? `<div class="msg assistant"><div class="who">Claude</div><span class="typing"><i></i><i></i><i></i></span></div>` : t.queued ? `<div class="tool-step"><span class="spinner"></span><span>Waiting — ${C.running} of ${C.limit} tasks are running. Starts automatically.</span></div>` : ""}
-        </div>
+        <div class="thread" id="thread"><div class="thread-in">
+          ${t.messages.length ? threadHtml(t) : `<div class="empty" style="margin:auto;max-width:520px"><b>You control Claude from here</b>Ask for anything in your game — Claude builds it in Roblox Studio, and can use VYRON too. Want several things at once? Press New for another task — each one is a separate Claude working at the same time.</div>`}
+          ${t.busy ? workingLine(t) : t.queued ? `<div class="working"><span class="spinner"></span><span class="faint">Waiting — ${C.running} of ${C.limit} tasks are running. Starts automatically.</span></div>` : ""}
+        </div></div>
+        ${todoCard(t)}
         <div class="composer">
           <textarea id="claudeInput" placeholder="${active ? "This task is working — use “As new task” to start another one at the same time" : "Message Claude…  (Enter to send, Shift+Enter for a new line)"}"></textarea>
           <div class="row"><button class="btn sm ghost" data-go="ideas">${ic("ideas")}Ideas</button><div class="grow"></div>
@@ -431,11 +484,12 @@ function agentStatus(r) {
 }
 function teamColumn() {
   const team = (S.teams || [])[0];
-  return `<div class="team-list"><div class="row" style="padding:2px 6px 8px"><b style="font:600 13px var(--f-head)">Team</b><span class="faint ell grow" style="font-size:11.5px;margin-left:8px">${team?.plan ? esc(team.plan.title) : ""}</span></div>
-    ${ROLE_ORDER.map((r) => { const [k, label, why] = agentStatus(r); const tid = team?.roles?.[r]?.taskId;
+  return `<div class="team-list"><div class="row" style="padding:2px 6px 8px"><b style="font:600 13px var(--f-head)">Team</b><span class="faint ell grow" style="font-size:11.5px;margin-left:8px">${team?.plan ? esc(team.plan.title) : ""}</span><button class="btn sm ghost icon team-add" data-act="teamPick" title="Add or remove roles">${ic("plus")}</button></div>
+    ${teamMembers(team).map((r) => { const [k, label, why] = agentStatus(r); const tid = team?.roles?.[r]?.taskId;
       return `<div class="agent r-${r} st-${k}" ${tid ? `data-act="pickTask" data-id="${tid}"` : 'data-go="ideas"'} title="${why}">
         <span class="agent-ic">${ic(ROLE_ICON[r])}</span><div class="grow" style="min-width:0"><div class="agent-name ell">${esc(S.roles[r].name)}</div><div class="faint ell" style="font-size:11px">${why}</div></div>
-        <span class="agent-st"><span class="dot"></span>${label}</span></div>`; }).join("")}</div>`;
+        <span class="agent-st"><span class="dot"></span>${label}</span></div>`; }).join("")}
+    ${teamMembers(team).length === 1 ? `<button class="agent-add" data-act="teamPick">${ic("plus")}<span>Add roles <span class="faint">— Builder, Coder, UI, Money, Sound, Animator</span></span></button>` : ""}</div>`;
 }
 
 /* ---------- Blender & Builds: reviews ---------- */
@@ -473,8 +527,21 @@ VIEWS.blender = () => {
 };
 
 /* ---------- Studio team (Co-Founder) ---------- */
-const ROLE_ICON = { cofounder: "crown", builder: "cube", coder: "code", ui: "layout", money: "coin" };
-const ROLE_ORDER = ["cofounder", "builder", "coder", "ui", "money"];
+const ROLE_ICON = { cofounder: "crown", builder: "cube", coder: "code", ui: "layout", money: "coin", sound: "music", animator: "run" };
+const ROLE_ORDER = ["cofounder", "builder", "coder", "ui", "money", "sound", "animator"];
+/** Who's in the team: always the Co-Founder first, then the roles you added with + (and any role a team is using right now). */
+function teamMembers(team) {
+  const added = S.settings.teamRoles || [];
+  return ROLE_ORDER.filter((r) => S.roles[r] && (r === "cofounder" || added.includes(r) || (team?.roles?.[r]?.enabled && ["building", "proposed"].includes(team.status)) || (team && (team.plan?.work?.[r] || []).length && team.roles?.[r]?.enabled)));
+}
+/** "+" in the Team list: pick which roles are in the team. */
+function teamPickModal() {
+  const added = new Set(S.settings.teamRoles || []);
+  const body = `<div class="stack" style="gap:8px"><div class="muted" style="font-size:13px">The Co-Founder is always there. Add the roles you want — each is its own Claude, so fewer roles use less of your Claude usage.</div>
+    <div class="role-pick on locked"><span class="role-ic r-cofounder">${ic("crown")}</span><div class="grow"><b>Co-Founder</b><div class="faint" style="font-size:12px">${esc(S.roles.cofounder.short)} · always in the team</div></div>${ic("check")}</div>
+    ${ROLE_ORDER.filter((r) => r !== "cofounder" && S.roles[r]).map((r) => `<label class="role-pick ${added.has(r) ? "on" : ""}"><input type="checkbox" data-role-pick="${r}" ${added.has(r) ? "checked" : ""}><span class="role-ic r-${r}">${ic(ROLE_ICON[r])}</span><div class="grow"><b>${esc(S.roles[r].name)}</b><div class="faint" style="font-size:12px">${esc(S.roles[r].short)}</div></div><span class="check-box"></span></label>`).join("")}</div>`;
+  modal("Your team", body, `<button class="btn ghost" data-act="teamPickAll">Add all</button><div class="grow"></div><button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="teamPickSave">${ic("check")}Save team</button>`);
+}
 const STATE_DOT = { working: "working", waiting: "connecting", done: "connected", problem: "error", off: "unknown", "not started": "unknown", ready: "unknown" };
 function roleSwitch(team, r) {
   const ro = team.roles[r];
@@ -492,13 +559,13 @@ function teamCard(t) {
   return `<div class="panel pad team-card">${head}
     <div class="muted" style="font-size:13px;margin-top:10px">${esc(P.summary)}</div>
     ${P.features.length ? `<div class="row wrap" style="gap:6px;margin-top:10px">${P.features.map((f) => `<span class="tag">${esc(f)}</span>`).join("")}</div>` : ""}
-    <div class="team-grid">${ROLE_ORDER.map((r) => `<div class="team-col">${roleSwitch(t, r)}${r === "cofounder" ? '<div class="faint" style="font-size:12px;margin-top:6px">Directs everyone, checks their work and does the final play test.</div>' : `<ul class="jobs">${jobs(r)}</ul>`}</div>`).join("")}</div>
+    <div class="team-grid">${ROLE_ORDER.filter((r) => r === "cofounder" || t.roles[r]?.enabled || t.roles[r]?.taskId || (P.work[r] || []).length).map((r) => `<div class="team-col">${roleSwitch(t, r)}${r === "cofounder" ? '<div class="faint" style="font-size:12px;margin-top:6px">Directs everyone, checks their work and does the final play test.</div>' : `<ul class="jobs">${jobs(r)}</ul>`}</div>`).join("")}</div>
     ${t.status === "proposed" || t.status === "failed" ? change : `<div class="faint" style="font-size:12px;margin-top:10px">Turn a role off to stop it; turn it on again to let it continue. Each role is its own Claude, and more roles at once use your Claude usage faster.</div>`}</div>`;
 }
 function teamPanel() {
   const teams = S.teams || [];
   const n = S.ideas.picked.length;
-  return `<div class="panel pad stack cofounder-box"><div class="row" style="gap:12px"><span class="role-ic r-cofounder big">${ic("crown")}</span><div class="grow"><div class="h3">Ask the Co-Founder</div><div class="faint" style="font-size:12.5px">Say your idea — the Co-Founder plans the whole game and splits it into jobs for the Builder &amp; Modeler, Coder, UI Maker and Money Maker. Nothing is built until you press Accept.</div></div></div>
+  return `<div class="panel pad stack cofounder-box"><div class="row" style="gap:12px"><span class="role-ic r-cofounder big">${ic("crown")}</span><div class="grow"><div class="h3">Ask the Co-Founder</div><div class="faint" style="font-size:12.5px">Say your idea — the Co-Founder plans the whole Roblox game and splits it into jobs for ${(S.settings.teamRoles || []).length ? "your team: " + esc((S.settings.teamRoles || []).map((r) => S.roles[r]?.name).filter(Boolean).join(", ")) : "itself (add roles with + to get a team)"}. Nothing is built until you press Accept.</div></div><button class="btn sm" data-act="teamPick">${ic("plus")}Team</button></div>
     <div class="row" style="gap:8px"><input class="input grow" id="cfIdea" placeholder="e.g. a brainrot pet simulator with trading and a lava obby"><button class="btn primary" data-act="teamPlan">${ic("crown")}Plan it${n ? ` (+${n} picked)` : ""}</button></div></div>
     ${teams.map(teamCard).join("")}<div class="sp" style="height:14px"></div>`;
 }
@@ -879,6 +946,10 @@ const ACT = {
   async claudeNewChat(el) { if (confirm("Clear this task? Claude forgets its conversation (your game stays as it is).")) await call("claudeNewChat", el.dataset.id); },
   async newTask() { ui.taskId = await call("claudeNewTask", "New task"); render(); setTimeout(() => $("#claudeInput")?.focus(), 60); },
   pickTask: (el) => { ui.taskId = el.dataset.id; render(); },
+  toolsToggle: (el) => { ui.openTools[el.dataset.id] = !ui.openTools[el.dataset.id]; render(); },
+  todoToggle: (el) => { const t = S.claude.tasks.find((x) => x.id === el.dataset.id); const all = t?.todos?.every((x) => x.status === "completed"); ui.todoOpen[el.dataset.id] = !(ui.todoOpen[el.dataset.id] ?? !(all && !t?.busy)); render(); },
+  toggleTasks: () => { ui.tasksHidden = !ui.tasksHidden; lsSet("tasksHidden", ui.tasksHidden ? "1" : ""); render(); },
+  toggleNav: () => setNavHidden(!document.body.classList.contains("nav-hidden")),
   async removeTask(el) { if (confirm("Delete this task and its chat?")) await call("claudeRemoveTask", el.dataset.id); },
   async claudeLogin() { await call("claudeLogin"); toast("Sign in in the window that opened — VYRON checks automatically"); },
   async claudeCheck() { const a = await call("claudeCheck"); toast(a?.loggedIn ? "Claude is ready" : S.claude.found ? "Not signed in to Claude yet" : "Claude Code not found", a?.loggedIn ? "" : "error"); },
@@ -962,6 +1033,14 @@ const ACT = {
   async teamPlan() { const t = val("cfIdea"); await call("teamPlan", t, S.ideas.picked); $("#cfIdea").value = ""; toast("The Co-Founder is planning — this takes a minute or two"); },
   async teamRevise(el) { const f = val("cfChange-" + el.dataset.id); if (!f.trim()) return toast("Write what to change", "error"); await call("teamRevise", el.dataset.id, f); },
   async teamAccept(el) { await call("teamAccept", el.dataset.id); toast("Accepted — the team is starting"); },
+  teamPick: () => teamPickModal(),
+  teamPickAll: () => { for (const c of document.querySelectorAll("[data-role-pick]")) { c.checked = true; c.closest(".role-pick").classList.add("on"); } },
+  async teamPickSave() {
+    const ids = [...document.querySelectorAll("[data-role-pick]")].filter((c) => c.checked).map((c) => c.dataset.rolePick);
+    const r = await call("setTeamRoles", ids);
+    S.settings.teamRoles = r; closeModal(); render();
+    toast(r.length ? "Team: Co-Founder + " + r.map((x) => S.roles[x].name).join(", ") : "Team: just the Co-Founder");
+  },
   async teamRole(el) { await call("teamSetRole", el.dataset.id, el.dataset.role, el.dataset.on === "true"); },
   async teamDiscard(el) { if (confirm("Remove this plan? Its team's running tasks are stopped.")) await call("teamDiscard", el.dataset.id); },
   openTask: (el) => { ui.taskId = el.dataset.id; go("claude"); },
@@ -1041,6 +1120,7 @@ document.addEventListener("click", (e) => {
   if (a && ACT[a.dataset.act]) { e.stopPropagation(); Promise.resolve(ACT[a.dataset.act](a, e)).catch(() => {}); }
 });
 document.addEventListener("change", async (e) => {
+  if (e.target.dataset?.rolePick) { e.target.closest(".role-pick")?.classList.toggle("on", e.target.checked); uiSound("pick"); return; }
   const el = e.target.id === "vol" ? e.target : e.target.closest("[data-change]");
   if (el?.dataset.change === "sound") { const m = { ...(S.settings.soundMap || {}), [el.dataset.key]: el.value }; S.settings.soundMap = m; playSound(el.value, S.settings.volume ?? 0.7); await call("saveSettings", { soundMap: m }).catch(() => {}); return; }
   if (el?.id === "vol") { await call("saveSettings", { volume: Number(el.value) }).catch(() => {}); playSound(soundFor("done"), Number(el.value)); return; }
@@ -1052,6 +1132,7 @@ document.addEventListener("input", (e) => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && $("#modalRoot").innerHTML) closeModal();
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "b" && !document.body.classList.contains("locked")) { e.preventDefault(); ACT.toggleNav(); }
   if (e.target.id === "claudeInput" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ACT.claudeSend(); }
   if (e.target.id === "quickAsk" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ACT.quickAsk(); }
   if (e.key === "Enter" && e.target.closest?.("#lockRoot") && e.target.tagName === "INPUT") { e.preventDefault(); $("#lockRoot [data-primary]")?.click(); }

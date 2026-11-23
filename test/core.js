@@ -269,6 +269,25 @@ const reply = (input) => [
     assert.equal(r.tasks[0].sessionId, "s-old");
     assert.equal(r.public().tasks[0].modelName, "Opus 5.5");
   });
+  await test("Claude's task list (TodoWrite) and what it's doing now come from the stream — no extra messages", () => {
+    const dir = path.join(TMP, "todo"); fs.mkdirSync(dir, { recursive: true });
+    const { ClaudeRunner } = require("../src/claude");
+    const r = new ClaudeRunner({ dataDir: dir, exe: null, control: () => null, settings: () => ({}) });
+    const t = r.tasks[0]; t.busy = true; t.startedAt = 1000;
+    const line = (content) => r.onLine(t, JSON.stringify({ type: "assistant", message: { content } }), () => {});
+    line([{ type: "tool_use", name: "TodoWrite", input: { todos: [{ content: "Build the map", status: "completed", activeForm: "Building the map" }, { content: "Add the shop", status: "in_progress", activeForm: "Adding the shop" }, { content: "Test it", status: "weird" }] } }]);
+    let p = r.public().tasks[0];
+    assert.deepEqual(p.todos.map((x) => x.status), ["completed", "in_progress", "pending"]);
+    assert.equal(p.todos[1].activeForm, "Adding the shop");
+    assert.equal(t.messages.length, 0, "the task list isn't shown as a tool step");
+    line([{ type: "tool_use", name: "mcp__roblox_studio__execute_luau", input: { code: "print(1)" } }]);
+    p = r.public().tasks[0];
+    assert(p.now && t.messages.at(-1).role === "tool" && p.startedAt === 1000, "what it's doing now");
+    line([{ type: "text", text: "Done!" }]);
+    assert.equal(r.public().tasks[0].now, null, "an answer clears the working line");
+    t.busy = false; assert.equal(r.public().tasks[0].now, null);
+    assert(r.args(t).includes("TodoWrite"), "TodoWrite is allowed");
+  });
   await test("new chat forgets the session", async () => {
     await dispatch(ctx, "claudeNewChat", []);
     assert.equal(be.claude.tasks[0].sessionId, null);

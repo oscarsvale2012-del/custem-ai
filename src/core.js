@@ -362,8 +362,38 @@ class Backend extends EventEmitter {
   }
 
   /* ================= studio team (Co-Founder + 4 roles) ================= */
-  team(id) { const t = id ? this.d.teams.find((x) => x.id === id) : [...this.d.teams].reverse().find((x) => x.status === "building"); if (!t) throw new Error(id ? "Team not found" : "No team is building right now"); return t; }
-  roleId(r) { const k = String(r || "").toLowerCase().replace(/[^a-z]/g, ""); const id = R.ROLE_IDS.find((x) => x === k || R.ROLES[x].name.toLowerCase().replace(/[^a-z]/g, "").startsWith(k) || (k === "modeler" && x === "builder") || (k === "uimaker" && x === "ui") || (k === "moneymaker" && x === "money")); if (!id) throw new Error("Unknown role " + r + ". Roles: " + R.ROLE_IDS.join(", ")); return id; }
+  team(id) {
+    const t = id ? this.d.teams.find((x) => x.id === id) : [...this.d.teams].reverse().find((x) => x.status === "building");
+    if (!t) throw new Error(id ? "Team not found" : "No team is building right now");
+    for (const r of R.ROLE_IDS) t.roles[r] = t.roles[r] || { enabled: false, taskId: null }; // teams from before a role existed
+    return t;
+  }
+  roleId(r) {
+    const k = String(r || "").toLowerCase().replace(/[^a-z]/g, "");
+    const alias = { modeler: "builder", uimaker: "ui", moneymaker: "money", sounds: "sound", music: "sound", audio: "sound", sfx: "sound", animation: "animator", animations: "animator", animate: "animator" };
+    const id = k && R.ROLE_IDS.find((x) => x === k || alias[k] === x || R.ROLES[x].name.toLowerCase().replace(/[^a-z]/g, "").startsWith(k)); if (!id) throw new Error("Unknown role " + r + ". Roles: " + R.ROLE_IDS.join(", ")); return id; }
+  /** The roles the user added to the team (the Co-Founder is always there and isn't in this list). */
+  teamRoster() { return (Array.isArray(this.d.settings.teamRoles) ? this.d.settings.teamRoles : []).filter((r) => R.WORKERS.includes(r)); }
+  /**
+   * "+" in the Team list: which roles are in the team. A team that is building right now gets the change too:
+   * added roles start (the Co-Founder is told to give them jobs), removed roles stop.
+   */
+  setTeamRoles(ids) {
+    const want = [...new Set((Array.isArray(ids) ? ids : []).map((x) => this.roleId(x)))].filter((r) => R.WORKERS.includes(r));
+    const before = this.teamRoster();
+    this.d.settings.teamRoles = R.WORKERS.filter((r) => want.includes(r)); // keep the team's order
+    const pid = this.d.settings.activeProjectId;
+    const team = [...this.d.teams].reverse().find((t) => t.status === "building" && (!pid || t.projectId === pid || !t.projectId));
+    if (team) {
+      const added = want.filter((r) => !before.includes(r) && !team.roles[r]?.enabled), removed = before.filter((r) => !want.includes(r));
+      for (const r of removed) if (team.roles[r]?.enabled) this.teamSetRole(team.id, r, false);
+      for (const r of added) this.teamSetRole(team.id, r, true);
+      if (added.length && team.roles.cofounder?.taskId) this.claude.followUp(team.roles.cofounder.taskId, `[From the user] I added ${added.map((r) => R.ROLES[r].name).join(", ")} to the team. Give ${added.length > 1 ? "them" : "it"} detailed jobs for this game with vyron_team_message.`, this.workDir(), "you");
+    }
+    this.log(`Team: Co-Founder${this.d.settings.teamRoles.length ? ", " + this.d.settings.teamRoles.map((r) => R.ROLES[r].name).join(", ") : " only"}`, "info", "Team");
+    this.save();
+    return this.d.settings.teamRoles;
+  }
   roleState(team, r) {
     const ro = team.roles[r];
     if (!ro?.enabled) return "off";
@@ -384,13 +414,14 @@ class Backend extends EventEmitter {
     const ideas = (ideaIds || []).map((id) => this.idea(id)).filter(Boolean);
     if (!text && !ideas.length) throw new Error("Tell the Co-Founder your idea, or pick some ideas");
     const idea = [text, ideas.length ? "Ideas to use:\n" + ideas.map((i) => `- ${i.title} (${i.category}): ${i.pitch} Features: ${i.features}`).join("\n") : ""].filter(Boolean).join("\n\n");
-    const team = { id: uid("team"), projectId: this.d.settings.activeProjectId, status: "planning", idea: clip(idea, 3000), plan: null, createdAt: now(), roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { enabled: true, taskId: null }])) };
+    const roster = this.teamRoster();
+    const team = { id: uid("team"), projectId: this.d.settings.activeProjectId, status: "planning", idea: clip(idea, 3000), plan: null, createdAt: now(), roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { enabled: r === "cofounder" || roster.includes(r), taskId: null }])) };
     const taskId = this.claude.newTask("Co-Founder: " + clip(text || ideas.map((i) => i.title).join(" + "), 44), { role: "cofounder", teamId: team.id });
     team.roles.cofounder.taskId = taskId;
     this.d.teams.push(team);
     this.d.teams = this.d.teams.slice(-30);
     this.save();
-    this.claudeSend(R.planPrompt(idea), taskId);
+    this.claudeSend(R.planPrompt(idea, roster), taskId);
     this.log("Co-Founder is planning a game", "info", "Team");
     return team.id;
   }

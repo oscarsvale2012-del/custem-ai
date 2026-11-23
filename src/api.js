@@ -5,7 +5,7 @@ const METHODS = [
   "publicState", "saveSettings",
   "claudeSend", "claudeStop", "claudeNewChat", "claudeNewTask", "claudeRemoveTask", "claudeStartTask", "claudeLogin", "claudeCheck", "pcAnswer", "pcRevoke",
   "reviewDecide", "setAuto", "reviewImage", "clearReviews",
-  "teamPlan", "teamRevise", "teamAccept", "teamSetRole", "teamDiscard",
+  "teamPlan", "teamRevise", "teamAccept", "teamSetRole", "teamDiscard", "setTeamRoles",
   "listIdeas", "setPicked", "addCustomIdea", "removeCustomIdea", "ideaPrompt", "buildIdeas",
   "checkBlender", "openBlender", "enableBlenderMcp", "connectBlender", "blenderDoItForMe", "openApp", "skipSetup", "makeModel", "finishSetup", "skipDiscord", "setDiscord", "clearDiscord", "testDiscord",
   "connectStudio", "detectStudios", "addProject", "updateProject", "removeProject", "setActiveProject", "refreshGame",

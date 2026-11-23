@@ -18,6 +18,7 @@ const SYSTEM = [
   "Tools: the `vyron` server controls VYRON (projects, picked game ideas, revenue in kroner, messages to the user). The `roblox_studio` server controls the Roblox Studio window the user has open.",
   "When asked to build a game, build it for real in Roblox Studio (scripts, parts, UI), test it with play mode when useful, and save the place.",
   "Write original games: never copy other games' names, characters or art. Keep replies short and simple; the user prefers brief answers.",
+  "For work with 3 or more steps, keep a short TodoWrite list (3-7 items, short imperative phrases) and update it as you go — VYRON shows it to the user. Skip it for quick answers.",
 ].join(" ");
 const { ROLES } = require("./roles");
 const BLENDER_NOTE = " Blender is connected (blender tools): use it for 3D models; Blender must be open with its MCP add-on on. Keep models low-poly and Roblox-friendly, and save exports as .fbx in the project's models folder.";
@@ -186,6 +187,7 @@ class ClaudeRunner extends EventEmitter {
         count: t.messages.filter((m) => m.role === "user").length,
         last: clip([...t.messages].reverse().find((m) => m.role === "assistant" || m.role === "error")?.text || "", 90),
         messages: t.messages.slice(-120),
+        todos: t.todos || null, now: t.busy ? t.now || null : null, startedAt: t.busy ? t.startedAt || null : null,
       })),
     };
   }
@@ -238,7 +240,7 @@ class ClaudeRunner extends EventEmitter {
     const sys = SYSTEM + (role ? " " + role.prompt + (t.teamId ? ` Your team id is ${t.teamId}.` : "") : "") + (mcp.names.includes("blender") ? BLENDER_NOTE : "") + (s.pc && s.pc !== "off" ? PC_NOTE : "") + (others.length ? ` Other Claude tasks are working at the same time in the same game (${others.slice(0, 8).join("; ")}). Only change what your task needs, and don't undo their work.` : "");
     const a = ["-p", "--output-format", "stream-json", "--verbose", "--mcp-config", mcp.file, "--strict-mcp-config", "--append-system-prompt", sys];
     if (s.access === "full") a.push("--dangerously-skip-permissions");
-    else a.push("--permission-mode", "acceptEdits", "--allowedTools", ...mcp.names.map((n) => "mcp__" + n), "Read", "Edit", "Write", "Glob", "Grep", "WebSearch", "WebFetch");
+    else a.push("--permission-mode", "acceptEdits", "--allowedTools", ...mcp.names.map((n) => "mcp__" + n), "Read", "Edit", "Write", "Glob", "Grep", "WebSearch", "WebFetch", "TodoWrite");
     if (s.model) a.push("--model", s.model);
     if (t.sessionId) a.push("--resume", t.sessionId);
     return a;
@@ -296,6 +298,7 @@ class ClaudeRunner extends EventEmitter {
     t.busy = true;
     t.cwd = cwd;
     t.outcome = null; t.why = null;
+    t.startedAt = now(); t.now = null;
     const sp = this.o.spawnImpl || spawn;
     let p;
     try { p = sp(this.exe, this.args(t), { cwd, windowsHide: true, env: { ...process.env } }); }
@@ -341,8 +344,11 @@ class ClaudeRunner extends EventEmitter {
     if (j.type === "assistant") {
       if (j.message?.model && j.message.model !== "<synthetic>") this.setModel(t, j.message.model);
       for (const c of j.message?.content || []) {
-        if (c.type === "text" && c.text.trim() && !/^Not logged in/i.test(c.text.trim())) this.push(t, { role: "assistant", text: c.text });
-        else if (c.type === "tool_use") this.push(t, { role: "tool", tool: c.name, text: toolLabel(c.name, c.input) });
+        if (c.type === "text" && c.text.trim() && !/^Not logged in/i.test(c.text.trim())) { t.now = null; this.push(t, { role: "assistant", text: c.text }); }
+        else if (c.type === "tool_use" && c.name === "TodoWrite") {
+          // Claude's own task list: shown in VYRON like in Claude Code (read from the stream — no extra tokens).
+          if (Array.isArray(c.input?.todos)) { t.todos = c.input.todos.slice(0, 20).map((x) => ({ content: clip(String(x.content || ""), 120), status: ["pending", "in_progress", "completed"].includes(x.status) ? x.status : "pending", activeForm: clip(String(x.activeForm || x.content || ""), 120) })); this.changed(); }
+        } else if (c.type === "tool_use") { t.now = toolLabel(c.name, c.input); this.push(t, { role: "tool", tool: c.name, text: t.now }); }
       }
     } else if (j.type === "user") {
       for (const c of j.message?.content || []) if (c.type === "tool_result" && c.is_error) this.push(t, { role: "tool", tool: "error", text: clip(typeof c.content === "string" ? c.content : JSON.stringify(c.content), 300) });
@@ -374,7 +380,7 @@ class ClaudeRunner extends EventEmitter {
   newChat(taskId) {
     const t = taskId ? this.task(taskId) : this.tasks[0];
     if (t.busy || t.queued) throw new Error("Stop this task first");
-    t.sessionId = null; t.messages = []; t.model = null;
+    t.sessionId = null; t.messages = []; t.model = null; t.todos = null;
     this.save();
     this.changed();
   }
