@@ -54,6 +54,24 @@ Check again whenever the others finish something big. Only debug and fix — don
 };
 const ROLE_IDS = Object.keys(ROLES);
 
+/**
+ * How to build in the Studs look — shape language, colours and materials only, never anyone's actual models.
+ * Only the Builder gets the whole guide (it makes every model); the other roles get the short line in PREFS.texture.
+ */
+const STUDS_GUIDE = `STUDS STYLE GUIDE — learn the way of building, never copy. Design your own objects: don't recreate any existing game's models, machines, characters, names, signs, icons or map layout.
+- Shapes: build everything from boxes, wedges and short thick cylinders with exaggerated, chunky proportions, on a 1-stud grid. Beams and frames 1–2 studs thick, heavy bases wider than the top, stepped corner blocks. Blocks keep hard silhouettes with only a tiny bevel (~0.05 stud) that catches the light. No thin, smooth or realistic shapes.
+- Studs: raised square studs with rounded corners, in a straight, evenly spaced grid, on nearly every big face — tops AND sides. The stud keeps the colour of its block (a slightly lighter edge on one side, a soft shadow on the other). Same stud size across the whole game (about one per 1–2 studs): never stretch or rescale it per object. Keep glowing faces, glass, screens and text free of studs.
+- How to make studs: model the block shapes in Blender with clean UVs at one fixed scale, and use one tiling stud texture + normal map for every model, tinted per part. Never model thousands of separate studs as geometry; only a few hero pieces may have real bumps. In Studio use the same texture on the ground and walls (Texture with equal StudsPerTileU/V). If it must be uploaded, ask the user.
+- Detail: break up big faces with small rectangular insets, notches or slots in a row, panel frames, and repeated slats or planks with dark gaps between them. A few big readable details beat many tiny ones.
+- Colours: per object one main colour (often dark: navy, charcoal, dark brown), one second tone for trims and one bright accent. Trims run along the edges and frame the faces. The world is bright and saturated: vivid green ground, orange-brown walls, clear blue sky.
+- Glow: Neon material in ONE accent colour per object — edge strips, inset squares, tubes between dark end caps, simple zigzags or diamonds — next to dark blocks so it pops. Higher upgrade levels get more trim, more glow and a bolder theme (ice, lava, gold, galaxy…).
+- Platforms and glass: see-through coloured panels in wide light/dark stripes held by thick, dark, studded corner posts and beams; stack them as floors.
+- Nature: trunks from stacked, slightly offset blocks (they can curve), leaves from flat drooping slabs or clusters of cubes, rocks from a few chunky blocks. Effects are blocky too: flat layered flames, crystals, simple falling leaves.
+- Map: a wide flat studded ground, very tall studded walls with a grass strip on top as the border, low simple block houses and stalls around the edge, lots of open running space, landmarks readable from far away.
+- Signs: a dark board on a thick post, or floating text — big rounded letters, bright fill, thick dark outline.
+- Light: sunny, soft shadows, a little Bloom so Neon glows, no realistic textures or grime.
+- Speed: one shared texture set, reuse a kit of blocks, merge what never moves, keep it fast on phones.
+Before you submit a model check: is it blocky, studded at the same scale as everything else, three colours or fewer plus glow, readable from far away — and your own design?`;
 /* ---------- Game setup: the questions after you describe your game (quality, main feature, look, monetization) ---------- */
 const LEVELS = {
   low: ["Low", "Simple, chunky shapes — runs on every phone", "simple parts and basic shapes with few details (fast on old phones)"],
@@ -79,7 +97,7 @@ const PREFS = {
   texture: {
     q: "Which look should the game have?",
     options: {
-      studs: ["Studs", "Blocky stud style, bold trims, glowing accents — any colour", "the classic blocky Roblox stud style (make your own models in this style — never copy another game's models): build models from chunky blocks and parts with the stud texture on their surfaces (studs on top faces or a studs Texture) in whatever colours fit each model — not one single colour; give bodies bold contrasting trims and frames along the edges (e.g. bright yellow or white edges on a darker body), add glowing Neon accents like stripes, runes or simple symbols, chunky stylized effects (blocky cartoon flames, crystals, sparkles) and bright saturated colours; ground is a studded grass baseplate; everything reads clearly from far away and stays cheap to render"],
+      studs: ["Studs", "Blocky stud style, bold trims, glowing accents — any colour", "the classic blocky Roblox stud style (make your own models in this style — never copy another game's models): everything is blocky — chunky block shapes (modelled in Blender) with the stud texture on their surfaces, tops and sides, in whatever colours fit each model — not one single colour; give bodies bold contrasting trims and frames along the edges (e.g. bright yellow or white edges on a darker body), add glowing Neon accents like stripes, runes or simple symbols, chunky stylized effects (blocky cartoon flames, crystals, sparkles) and bright saturated colours; ground is a studded grass baseplate; everything reads clearly from far away and stays cheap to render"],
       grass: ["Grassy & nature", "Grass, earth and natural colours", "grassy and natural: grass and ground materials, terrain grass where it fits, natural greens and earth tones"],
       smooth: ["Smooth & clean", "Normal bright colours, no textures", "smooth and clean: SmoothPlastic with normal bright colours and no textures"],
       realistic: ["Realistic", "Real materials (wood, metal, stone)", "realistic: Roblox materials like Wood, Metal, Concrete and Slate, MaterialVariants/PBR"],
@@ -202,7 +220,7 @@ function workerBrief(team, role) {
   const p = team.plan, list = p.work[role] || [];
   const others = WORKERS.filter((r) => r !== role && team.roles[r]?.enabled).map((r) => ROLES[r].name);
   return `[From the Co-Founder] We're building "${p.title}". ${p.summary}
-Main features: ${p.features.join("; ") || "see summary"}.${team.prefs && prefsText(team.prefs) ? "\n" + prefsText(team.prefs) : ""}
+Main features: ${p.features.join("; ") || "see summary"}.${team.prefs && prefsText(team.prefs) ? "\n" + prefsText(team.prefs) : ""}${role === "builder" && team.prefs?.texture === "studs" ? "\n\n" + STUDS_GUIDE : ""}
 Team id: ${team.id}. Working at the same time: ${others.join(", ") || "only you"}.
 
 Your jobs as ${ROLES[role].name}:
@@ -219,4 +237,4 @@ function directorBrief(team) {
 They are all working at the same time right now. Command them like a team lead: check progress with vyron_team_status, send orders, extra details or fixes with vyron_team_message, and use vyron_team_wait to wait for them. As soon as a role reports a job done, check it and give it its next job straight away (or a useful extra job) so nobody sits idle. Keep them out of each other's way: one owner per object, folder and script; when two roles need the same thing (a RemoteEvent, a sound or animation name), decide the name and tell both. Make sure everything fits together (names, RemoteEvents, UI ↔ scripts ↔ shop, which sounds and animations play when). When they are done${on.includes("debug") ? ", have the Debugger check the whole place (flickering, flying parts, errors) and fix what it finds," : ""} do a full play test, fix or delegate problems, and give the user a short final report (what was made, what the user must do, e.g. create gamepasses, import models, upload audio or publish animations).`;
 }
 
-module.exports = { ROLES, ROLE_IDS, WORKERS, PREFS, cleanPrefs, prefsText, planPrompt, parsePlan, workerBrief, directorBrief };
+module.exports = { ROLES, ROLE_IDS, WORKERS, PREFS, STUDS_GUIDE, cleanPrefs, prefsText, planPrompt, parsePlan, workerBrief, directorBrief };

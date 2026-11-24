@@ -186,6 +186,10 @@ function fakeSpawn(exe, args, opts) {
     assert(/3 R\$/.test(txt) && /0\.5%/.test(txt) && /80 R\$/.test(txt), "the full overload as asked");
     assert(/show the odds/.test(txt) && /ArePaidRandomItemsRestricted/.test(txt), "always inside Roblox's rules for paid random items");
     assert.equal(R.prefsText({}), "");
+    // Studs: the Builder (who makes every model) gets the whole style guide; other roles and other looks don't
+    const brief = (role, texture) => R.workerBrief({ id: "x", plan: PLAN, prefs: { texture }, roles: { builder: { enabled: true }, coder: { enabled: true } } }, role);
+    assert(brief("builder", "studs").includes(R.STUDS_GUIDE) && /never copy/.test(R.STUDS_GUIDE) && /tops AND sides/.test(R.STUDS_GUIDE), "the Builder learns the studs style, without copying");
+    assert(!brief("coder", "studs").includes("STUDS STYLE GUIDE") && !brief("builder", "grass").includes("STUDS STYLE GUIDE"), "nobody else spends tokens on it");
     // "Custom": the user types their own answer
     const cu = R.cleanPrefs({ modelQuality: "custom", texture: "custom", money: "custom", map: "escape", biomes: ["galaxy", "custom"], custom: { modelQuality: "  low-poly but with   cute faces ", texture: "", money: "only one 99 R$ VIP pass", biomes: "a giant kitchen", hazard: "ignored" } });
     assert.deepEqual(cu, { modelQuality: "custom", map: "escape", biomes: ["galaxy", "custom"], money: "custom", custom: { modelQuality: "low-poly but with cute faces", money: "only one 99 R$ VIP pass", biomes: "a giant kitchen" } }, "custom answers kept (tidied), an empty custom box is dropped");
