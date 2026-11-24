@@ -22,7 +22,7 @@ const REVIEW_KINDS = ["model", "build", "ui", "gamepass"];
 const REVIEW_NAME = { model: "3D model", build: "Build", ui: "UI", gamepass: "Gamepasses" };
 const BLENDER_ID = "blender";
 /** The game setup questions for the app (after you describe your game). */
-const GAME_SETUP = Object.fromEntries(Object.entries(R.PREFS).map(([k, d]) => [k, { q: d.q, multi: !!d.multi, options: Object.entries(d.options).map(([id, [name, desc]]) => ({ id, name, desc })) }]));
+const GAME_SETUP = Object.fromEntries(Object.entries(R.PREFS).map(([k, d]) => [k, { q: d.q, multi: !!d.multi, rec: d.rec || null, options: Object.entries(d.options).map(([id, [name, desc]]) => ({ id, name, desc })) }]));
 const BLENDER_MCP_MIN = "5.1"; // used until the MCP add-on is installed and its manifest says otherwise
 /** A tidy game name from a Studio window: "Lava Obby (placeId 123)" / "MyGame.rbxl" → "Lava Obby" / "MyGame". */
 const studioName = (s) => String(s?.name || "").replace(/\s*[-–]\s*Roblox Studio\s*$/i, "").replace(/\s*[([](?:place\s*id|placeid|universe|file)[^)\]]*[)\]]\s*$/i, "").replace(/\.rbxlx?$/i, "").trim() || (s?.file ? path.basename(s.file).replace(/\.rbxlx?$/i, "") : "") || "My Roblox game";
@@ -52,6 +52,7 @@ class Backend extends EventEmitter {
     this.useStudio = studio;
     this.pc = pc || new PcDriver();
     this.pcAsks = []; // waiting for the user's OK
+    this.paused = null; // "Pause & add detail": what was working
     this.pcUntil = 0; // "Allow 10 min" ends at
     this.pcLast = 0;
     this.dataDir = dataDir;
@@ -157,6 +158,7 @@ class Backend extends EventEmitter {
       ideas: { categories: CATEGORIES, count: IDEAS.length, custom: this.d.customIdeas, picked: this.d.picked },
       claude: this.claude.public(),
       teams: this.teamsPublic(),
+      paused: this.paused ? { at: this.paused.at, count: this.paused.tasks.length } : null,
       roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { name: R.ROLES[r].name, short: R.ROLES[r].short }])),
       gameSetup: GAME_SETUP,
       blender: { found: !!blenderServer(), on: this.d.settings.blender !== false, ...(this.blenderInfo || {}), checked: !!this.blenderInfo, connecting: !!this._openingBlender },
@@ -414,12 +416,13 @@ class Backend extends EventEmitter {
     this.d.settings.teamRoles = R.WORKERS.filter((r) => r === "builder" || want.includes(r)); // keep the team's order; the Builder always stays (it makes every model in Blender)
     want.push("builder");
     const pid = this.d.settings.activeProjectId;
-    const team = [...this.d.teams].reverse().find((t) => t.status === "building" && (!pid || t.projectId === pid || !t.projectId));
+    const mine = [...this.d.teams].reverse().filter((t) => !pid || t.projectId === pid || !t.projectId);
+    const team = mine.find((t) => t.status === "building") || mine.find((t) => t.status === "proposed" || t.status === "stopped");
     if (team) {
       const added = want.filter((r) => !before.includes(r) && !team.roles[r]?.enabled), removed = before.filter((r) => !want.includes(r));
       for (const r of removed) if (team.roles[r]?.enabled) this.teamSetRole(team.id, r, false);
       for (const r of added) this.teamSetRole(team.id, r, true);
-      if (added.length && team.roles.cofounder?.taskId) this.claude.followUp(team.roles.cofounder.taskId, `[From the user] I added ${added.map((r) => R.ROLES[r].name).join(", ")} to the team. Give ${added.length > 1 ? "them" : "it"} detailed jobs for this game with vyron_team_message.`, this.workDir(), "you");
+      if (added.length && team.status === "building" && team.roles.cofounder?.taskId) this.claude.followUp(team.roles.cofounder.taskId, `[From the user] I added ${added.map((r) => R.ROLES[r].name).join(", ")} to the team. Give ${added.length > 1 ? "them" : "it"} detailed jobs for this game with vyron_team_message.`, this.workDir(), "you");
     }
     this.log(`Team: Co-Founder${this.d.settings.teamRoles.length ? ", " + this.d.settings.teamRoles.map((r) => R.ROLES[r].name).join(", ") : " only"}`, "info", "Team");
     this.save();
@@ -429,6 +432,7 @@ class Backend extends EventEmitter {
     const ro = team.roles[r];
     if (!ro?.enabled) return "off";
     const t = ro.taskId && this.claude.tasks.find((x) => x.id === ro.taskId);
+    if (team.status === "stopped") return "stopped";
     if (!t) return team.status === "building" ? "not started" : "ready";
     return t.busy ? "working" : t.queued ? "waiting" : t.outcome === "failed" || t.outcome === "usage" ? "problem" : "done";
   }
@@ -440,10 +444,12 @@ class Backend extends EventEmitter {
     }));
   }
   /** Ideas tab: the Co-Founder makes a plan (nothing is built until you press Accept). */
-  teamPlan(text, ideaIds, prefs) {
+  teamPlan(text, ideaIds, prefs, roles) {
     text = String(text || "").trim();
     const ideas = (ideaIds || []).map((id) => this.idea(id)).filter(Boolean);
     if (!text && !ideas.length) throw new Error("Tell the Co-Founder your idea, or pick some ideas");
+    // The quiz's last question: who's in this team (a team that is already building something keeps its own roles).
+    if (Array.isArray(roles)) { const want = roles.map((x) => this.roleId(x)); this.d.settings.teamRoles = R.WORKERS.filter((r) => r === "builder" || want.includes(r)); }
     prefs = R.cleanPrefs(prefs); // quality, main feature, look and monetization from the game setup questions
     const idea = [text, ideas.length ? "Ideas to use:\n" + ideas.map((i) => `- ${i.title} (${i.category}): ${i.pitch} Features: ${i.features}`).join("\n") : "", R.prefsText(prefs)].filter(Boolean).join("\n\n");
     const roster = this.teamRoster();
@@ -462,6 +468,7 @@ class Backend extends EventEmitter {
     const team = this.d.teams.find((t) => t.roles.cofounder?.taskId === taskId && (t.status === "planning" || t.status === "revising"));
     if (!team) return this.changed();
     const t = this.claude.tasks.find((x) => x.id === taskId);
+    if (t?.outcome === "stopped" && t.inbox?.length) return; // the stopped step ended; you already let it continue
     const lastUser = t ? t.messages.map((m) => m.role).lastIndexOf("user") : -1;
     const answer = t ? t.messages.slice(lastUser + 1).filter((m) => m.role === "assistant").map((m) => m.text).join("\n") : "";
     const plan = R.parsePlan(answer);
@@ -516,6 +523,84 @@ class Backend extends EventEmitter {
     this.log(`${R.ROLES[r].name} switched ${on ? "on" : "off"}`, "info", "Team");
     this.save();
   }
+  /**
+   * Emergency stop: everything Claude does in VYRON stops right now — every role of every team, the main chat, what's
+   * waiting in line, and PC control. Nothing made so far is deleted. A building team can be continued or removed afterwards.
+   */
+  emergencyStop() {
+    const n = this._haltAll().tasks.length;
+    this.paused = null;
+    this.log(`Emergency stop: ${n} Claude task${n === 1 ? "" : "s"} stopped`, "warn", "Team");
+    this.save();
+    return { stopped: n };
+  }
+  _haltAll() {
+    const teams = [];
+    for (const t of this.d.teams) {
+      if (!["building", "planning", "revising"].includes(t.status)) continue;
+      teams.push({ id: t.id, was: t.status });
+      if (t.status === "building") { t.status = "stopped"; t.stoppedAt = now(); }
+      else { t.status = t.plan ? "proposed" : "failed"; t.error = "You stopped the Co-Founder. Write what you want and press Change to plan again."; }
+    }
+    const tasks = this.claude.halt();
+    for (const t of this.claude.tasks) t.inbox = [];
+    this.pcRevoke(); // refuses PC actions that wait for an answer and takes back "Allow 10 min"
+    return { teams, tasks };
+  }
+  /** Claude tab → "Pause & add detail": everything holds still until you say what to add (or stop it for good). */
+  pauseAll() {
+    if (this.paused) return { paused: this.paused.tasks.length };
+    if (!this.claude.busy) throw new Error("No Claude is working right now");
+    this.paused = { at: now(), ...this._haltAll() };
+    this.log(`Paused: ${this.paused.tasks.length} Claude task${this.paused.tasks.length === 1 ? "" : "s"}`, "info", "Team");
+    this.save();
+    return { paused: this.paused.tasks.length };
+  }
+  /** Continue after a pause: everyone who was working goes on, with the extra detail. */
+  resumeAll(detail) {
+    const P = this.paused;
+    if (!P) throw new Error("Nothing is paused");
+    this.paused = null;
+    const more = String(detail || "").trim().slice(0, 3000), done = new Set();
+    for (const { id, was } of P.teams) {
+      const team = this.d.teams.find((t) => t.id === id);
+      if (!team) continue;
+      for (const r of R.ROLE_IDS) if (team.roles[r]?.taskId) done.add(team.roles[r].taskId); // its tasks are handled with the team
+      if (was === "building") { if (team.status === "stopped") this.teamResume(id, more); continue; }
+      const t = this.claude.tasks.find((x) => x.id === team.roles.cofounder?.taskId);
+      if (!t || !["proposed", "failed"].includes(team.status)) continue;
+      const asked = [...t.messages].reverse().find((m) => m.role === "user")?.text || R.planPrompt(team.idea, R.WORKERS.filter((r) => team.roles[r]?.enabled));
+      t.lost = null;
+      team.status = was; team.error = null;
+      this.claude.followUp(t.id, `${asked}${more ? `\n\nExtra detail from the user: ${more}` : ""}\n\n(You were paused halfway: give the whole answer again, with the full JSON block.)`, this.workDir(), "you");
+    }
+    for (const id of P.tasks) {
+      const t = this.claude.tasks.find((x) => x.id === id);
+      if (!t || done.has(id)) continue;
+      const lost = this.claude.takeLost(t);
+      this.claude.followUp(id, `${lost}[From the user] I paused you for a moment${lost ? "" : "; continue where you stopped, and check first what is really there"}.${more ? `\nExtra detail: ${more}` : ""}`, this.workDir(this.taskProject(id)), "you");
+    }
+    this.log("Continuing" + (more ? " with extra detail" : ""), "ok", "Team");
+    this.save();
+  }
+  /** Continue a team after an emergency stop, optionally with what should change. */
+  teamResume(id, feedback) {
+    const team = this.team(id);
+    if (team.status !== "stopped") throw new Error("This team isn't stopped");
+    const fb = String(feedback || "").trim().slice(0, 3000);
+    team.status = "building"; team.error = null; this.save();
+    this.teamSlots(team);
+    const msg = `[From the user] I stopped the whole team and now let it continue. Your last step may be half done: check what is really there first (vyron_team_status, the Studio place, Blender), then go on with your jobs.${fb ? `\nWhat I want added or changed — do your part of it first (the Co-Founder makes sure it's shared out well): ${fb}` : ""}`;
+    for (const r of R.ROLE_IDS) {
+      const ro = team.roles[r];
+      if (!ro?.enabled) continue;
+      const t = ro.taskId && this.claude.tasks.find((x) => x.id === ro.taskId);
+      if (t) this.claude.followUp(t.id, this.claude.takeLost(t) + msg, this.workDir(), "you");
+      else if (r !== "cofounder") this.teamStartRole(team, r);
+    }
+    this.log(`Team continues building ${team.plan?.title || "the game"}`, "ok", "Team");
+    this.save();
+  }
   teamDiscard(id) {
     const team = this.team(id);
     for (const r of R.ROLE_IDS) if (team.roles[r].taskId && this.claude.tasks.some((x) => x.id === team.roles[r].taskId)) this.claude.stop(team.roles[r].taskId);
@@ -536,6 +621,7 @@ class Backend extends EventEmitter {
   }
   teamMessage(id, role, text, from) {
     const team = this.team(id), r = this.roleId(role), ro = team.roles[r];
+    if (team.status === "stopped") throw new Error("The user pressed Emergency stop. Stop working and don't message anyone.");
     if (!ro.enabled) throw new Error(`${R.ROLES[r].name} is switched off by the user.`);
     if (!String(text || "").trim()) throw new Error("Empty message");
     if (!ro.taskId) { if (r === "cofounder" || team.status !== "building") throw new Error(`${R.ROLES[r].name} hasn't started.`); this.teamStartRole(team, r); }
@@ -1201,6 +1287,29 @@ How:
     return this.blenderInfo;
   }
   /** "Make a 3D model": a Builder & Modeler Claude makes it in Blender. */
+  /** Blender tab → "Test the Builder": one blocky Studs model with everything the Builder was taught; only a test, never put in the game. */
+  testModel(text, level) {
+    text = String(text || "").trim();
+    if (!text) throw new Error("Type what the Builder should make");
+    if (!blenderServer()) throw new Error("Blender's MCP server isn't installed yet (Claude desktop → Settings → Extensions → Blender).");
+    const q = level === "max" ? "max" : "high";
+    this.ensureBlender();
+    const id = this.claude.newTask("Test model: " + clip(text, 48), { role: "builder", test: true });
+    this.claudeSend(`TEST MODEL — make this one model in Blender: ${clip(text, 2000)}
+
+This tests how well you build. Follow everything you were taught: your NEVER BUILD list, the text rules, the main-item rules and this guide${q === "max" ? " (Max quality)" : " (High quality)"}:
+
+${R.studsGuide({ texture: "studs", modelQuality: q, featureQuality: q })}
+
+How:
+1. First write your plan in a few lines: size in studs, the 5–15 big shapes, colours, the one glow, pieces that could move.
+2. Work in a new scene named "Test" followed by the model's name. Don't change, move or delete anything that's already in the open Blender file.
+3. Build it with your own stud texture and the same stud size everywhere, every colour and glowing piece as its own named mesh, pivots where pieces would move. Effects around it (flames, floating pieces) are Blender models too.
+4. Check it with a script and renders from the front, side, back and far away on a studded ground, next to a plain 5-stud figure for size. Go through the checklist at the end of the guide one by one, and fix everything that isn't a clear yes.
+5. Render the best view (render_viewport_to_path to a .png in the project's reviews folder) and send it to me with vyron_submit_review (kind "model", title starting with "Test:"), then vyron_review_wait. If I ask for changes, fix it and send a new picture.
+6. After my OK save it as .fbx in "models/tests" of the project folder and tell me, honestly, what you think is still weak. It's only a test: put nothing in Roblox Studio, don't message the team, and make nothing else.`, id);
+    return id;
+  }
   makeModel(text) {
     text = String(text || "").trim();
     if (!text) throw new Error("Describe the model first");

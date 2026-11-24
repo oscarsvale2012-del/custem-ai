@@ -5,9 +5,9 @@ const METHODS = [
   "publicState", "saveSettings",
   "claudeSend", "claudeStop", "claudeNewChat", "claudeNewTask", "claudeRemoveTask", "claudeStartTask", "claudeLogin", "claudeCheck", "pcAnswer", "pcRevoke",
   "reviewDecide", "setAuto", "reviewImage", "clearReviews",
-  "teamPlan", "teamRevise", "teamAccept", "teamSetRole", "teamDiscard", "setTeamRoles",
+  "teamPlan", "teamRevise", "teamAccept", "teamSetRole", "teamDiscard", "setTeamRoles", "emergencyStop", "teamResume", "pauseAll", "resumeAll",
   "listIdeas", "setPicked", "addCustomIdea", "removeCustomIdea", "ideaPrompt", "buildIdeas",
-  "checkBlender", "openBlender", "enableBlenderMcp", "connectBlender", "blenderDoItForMe", "openApp", "skipSetup", "makeModel", "finishSetup", "skipDiscord", "setDiscord", "clearDiscord", "testDiscord",
+  "checkBlender", "openBlender", "enableBlenderMcp", "connectBlender", "blenderDoItForMe", "openApp", "skipSetup", "makeModel", "testModel", "finishSetup", "skipDiscord", "setDiscord", "clearDiscord", "testDiscord",
   "connectStudio", "detectStudios", "addProject", "addStudioProject", "setTaskProject", "updateProject", "removeProject", "setActiveProject", "refreshGame",
   "accountSyncNow", "linkRoblox", "unlinkRoblox", "setRobloxApiKey", "clearRobloxApiKey", "refreshRevenue", "refreshRates",
 ];

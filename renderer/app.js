@@ -52,7 +52,7 @@ const ICON = {
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>', trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
   edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>', folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/>', x: '<path d="M6 6l12 12M18 6 6 18"/>', play: '<path d="m6 4 14 8-14 8z"/>',
-  bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
+  bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>', pause: '<rect x="6" y="4.5" width="4" height="15" rx="1.2"/><rect x="14" y="4.5" width="4" height="15" rx="1.2"/>', estop: '<path d="M8.2 2.5h7.6l5.7 5.7v7.6l-5.7 5.7H8.2l-5.7-5.7V8.2z"/><path d="M9 9h6v6H9z" fill="currentColor"/>',
   revenue: '<path d="M12 2.5 20.2 7.2v9.6L12 21.5l-8.2-4.7V7.2z"/><path d="M12 7.5 16.1 9.8v4.4L12 16.5l-4.1-2.3V9.8z"/>',
   team: '<path d="M12 2.5 4.5 5.5v6c0 4.6 3.2 8.4 7.5 10 4.3-1.6 7.5-5.4 7.5-10v-6z"/><path d="m8.8 12 2.2 2.2 4.4-4.6"/>',
   connect: '<path d="M7 7h10M7 12h10M7 17h6"/><circle cx="4" cy="7" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="17" r="1"/><path d="m16 15 2 2 4-4"/>',
@@ -214,7 +214,7 @@ function draw() {
   setText($("#title"), PAGES.find((p) => p[0] === ui.route)?.[1] || "");
   setText($("#subtitle"), SUB[ui.route] || "");
   const C = S.claude;
-  morph($("#topActions"), C.busy ? `<button class="btn sm" data-go="claude"><span class="spinner"></span>${C.running} Claude task${C.running === 1 ? "" : "s"} working${C.queued ? ` · ${C.queued} waiting` : ""}</button>` : "");
+  morph($("#topActions"), C.busy ? `<button class="btn sm" data-go="claude"><span class="spinner"></span>${C.running} Claude task${C.running === 1 ? "" : "s"} working${C.queued ? ` · ${C.queued} waiting` : ""}</button>${ui.route === "claude" ? "" : estopBtn()}` : S.paused ? `<button class="btn sm" data-go="claude">${ic("pause")}Paused — add detail</button>` : "");
   const ov = pcOverlay(); if (ov !== lastOverlay) { $("#drawerRoot").innerHTML = ov; lastOverlay = ov; }
   // The installed app glows the whole screen (separate windows); the browser version glows inside the page.
   document.body.classList.toggle("vy-glow", !desktop && !!S.pc?.glow);
@@ -526,6 +526,17 @@ function newStudioBar(t) {
     <button class="btn sm primary" data-act="addStudioProject" data-id="${esc(s.id)}" data-task="${t.id}">${ic("plus")}Add as project &amp; work on it</button><button class="btn sm ghost icon" data-act="hideStudioBar" data-id="${esc(s.id)}" title="Not now">${ic("x")}</button></div>`;
 }
 
+/** Emergency stop button (top bar, plan card and Claude tab). */
+const estopBtn = () => `<button class="btn sm estop" data-act="stopAll" title="Emergency stop: every Claude stops right now. Nothing made so far is deleted.">${ic("estop")}Stop everything</button>`;
+/** Claude tab: pause everyone to add detail, or stop everything. */
+function runBar() {
+  const C = S.claude;
+  if (S.paused) return `<div class="panel run-bar paused"><div class="row" style="gap:10px">${ic("pause")}<div class="grow"><b>Paused — what do you want to add?</b><div class="faint" style="font-size:12px">${S.paused.count} Claude${S.paused.count === 1 ? "" : "s"} will continue with your detail. Nothing made so far is deleted.</div></div></div>
+    <textarea class="input" id="pauseDetail" placeholder="e.g. make the pets shinier, add a lava biome, no big walls"></textarea>
+    <div class="row" style="gap:8px"><span class="faint" style="font-size:12px">Leave it empty to just continue.</span><div class="grow"></div>${estopBtn()}<button class="btn sm primary" data-act="resumeAll">${ic("play")}Continue</button></div></div>`;
+  if (!C.busy) return "";
+  return `<div class="panel run-bar"><div class="row" style="gap:10px"><span class="spinner"></span><b class="grow ell">${C.running} Claude${C.running === 1 ? "" : "s"} working${C.queued ? ` · ${C.queued} waiting` : ""}</b><button class="btn sm" data-act="pauseAll" title="Everyone holds still while you say what to add">${ic("pause")}Pause &amp; add detail</button>${estopBtn()}</div></div>`;
+}
 VIEWS.claude = () => {
   const C = S.claude;
   const t = curTask();
@@ -535,7 +546,7 @@ VIEWS.claude = () => {
       ${x.role ? `<span class="agent-ic sm">${ic(ROLE_ICON[x.role])}</span>` : `<span class="dot ${dot}" title="${label}"></span>`}<div class="grow" style="min-width:0"><div class="ell" style="font-weight:500">${x.role ? `<span class="role-tag r-${x.role}">${esc(S.roles[x.role]?.name || x.role)}</span>` : ""}${esc(x.role ? x.title.replace(/^[^:]{2,22}: /, "") : x.title)}</div>
       <div class="faint ell" style="font-size:11.5px">${label}${x.inbox ? ` · ${x.inbox} message${x.inbox > 1 ? "s" : ""} waiting` : ""}${x.modelName ? " · " + esc(x.modelName) : ""}${x.last ? " · " + esc(x.last) : ""}</div></div></div>`; }).join("");
   return `<div class="chat-wrap" style="height:calc(100vh - 102px)">
-    ${claudeSetupCard()}
+    ${claudeSetupCard()}${runBar()}
     <div class="claude-grid ${ui.tasksHidden ? "solo" : ""}" style="flex:1;min-height:0">
       ${ui.tasksHidden ? "" : `<div class="panel ws-agents"><div class="panel-h"><h3>Tasks</h3><span class="faint" style="font-size:12px">${C.running}/${C.limit} running${C.queued ? ` · ${C.queued} waiting` : ""}</span><div class="grow"></div><button class="btn sm" data-act="newTask" title="Start another Claude that works at the same time">${ic("plus")}New</button></div>
         <div style="padding:8px">${teamColumn()}<div class="label" style="margin:12px 6px 6px">Tasks</div>${list}</div>
@@ -580,6 +591,7 @@ function agentStatus(r) {
   const t = mine.find((x) => x.busy) || (ro?.taskId && C.tasks.find((x) => x.id === ro.taskId && (x.busy || x.queued))) || mine.find((x) => x.queued) || (ro?.taskId && C.tasks.find((x) => x.id === ro.taskId));
   if (t?.busy || (r === "cofounder" && team && (team.status === "planning" || team.status === "revising"))) return ["working", "Working", esc(roleDoing(t) || (r === "cofounder" ? "Planning " + (team?.plan?.title || "the game") : "Working"))];
   if (t?.queued) return ["waiting", "Waiting", `Waiting for a free Claude slot (${C.running}/${C.limit} running)`];
+  if (team?.status === "stopped" && ro?.enabled) return ["offline", "Stopped", "You pressed Stop everything"];
   if (team && ro && !ro.enabled) return ["offline", "Offline", "Switched off"];
   if (ro?.state === "problem" || (r === "cofounder" && team?.status === "failed")) return ["broken", "Broken", esc(t?.last || team?.error || "Its last step failed")];
   return ["idle", "Idle", team?.plan ? (ro?.taskId ? "Done — waiting for the next job" : team.status === "building" ? "Waiting for orders from the Co-Founder" : "Ready") : "No team yet — ask the Co-Founder in Game Ideas"];
@@ -619,6 +631,15 @@ function reviewCard(r) {
       <b class="rev-title">${esc(r.title)}</b>${r.details ? `<div class="muted rev-details">${esc(r.details)}</div>` : ""}
       <div class="row" style="gap:6px;margin-top:10px"><input class="input grow" id="revFb-${r.id}" placeholder="What should change? (optional)" style="height:34px"><button class="btn sm" data-act="revChanges" data-id="${r.id}">Ask for changes</button><button class="btn sm primary" data-act="revApprove" data-id="${r.id}">${ic("check")}Looks good — upload it</button></div></div></div>`;
 }
+/** Blender tab: type anything and see what the Builder makes of it, in the style it was taught. */
+function testModelPanel() {
+  const lv = ui.tmLevel || "high", found = !!S.blender?.found;
+  const t = S.claude.tasks.find((x) => /^Test model: /.test(x.title) && (x.busy || x.queued));
+  return `<div class="panel pad stack test-model"><div class="row" style="gap:12px"><span class="role-ic big r-builder">${ic("cube")}</span><div class="grow"><div class="h3">Test the Builder</div><div class="faint" style="font-size:12.5px">Type anything. The Builder makes it blocky and studded, with everything it was taught. It's only a test and never goes into your game.</div></div>
+      <div class="seg">${[["high", "High"], ["max", "Max detail"]].map(([k, n]) => `<button class="${lv === k ? "on" : ""}" data-act="tmLevel" data-id="${k}">${n}</button>`).join("")}</div></div>
+    ${t ? `<div class="row" style="gap:10px"><span class="spinner"></span><div class="grow ell" style="font-size:12.5px"><b>${esc(t.title.replace(/^Test model: /, ""))}</b> <span class="faint">— ${t.queued ? "waiting for a free Claude" : esc(roleDoing(t) || "building")}</span></div><button class="btn sm" data-act="openTask" data-id="${t.id}">Watch</button><button class="btn sm danger" data-act="claudeStop" data-id="${t.id}">${ic("x")}Stop</button></div>` : `<div class="row" style="gap:8px"><input class="input grow" id="tmText" placeholder="e.g. a jet with a lava engine, a galaxy pet dragon, an ice crate"><button class="btn primary" data-act="testModel" ${found ? "" : "disabled"}>${ic("bolt")}Build test model</button></div>`}
+    <div class="faint" style="font-size:11.5px">${found ? "A picture shows up under “Waiting for your OK” when it's done. Not good? Ask for changes there." : "Connect Blender first."}</div></div>`;
+}
 VIEWS.blender = () => {
   const A = S.settings.autoApprove || {}, allOn = REV_KINDS.every(([k]) => A[k]);
   const R = S.reviews || [], pending = R.filter((r) => r.status === "pending"), done = R.filter((r) => r.status !== "pending");
@@ -628,6 +649,8 @@ VIEWS.blender = () => {
       <button class="btn ${allOn ? "" : "primary"}" data-act="revAuto" data-id="all" data-on="${!allOn}">${allOn ? "All manual" : "All auto"}</button></div>
       <div class="auto-grid">${REV_KINDS.map(([k, name, icon]) => `<div class="auto-item r-${REV_ROLE[k]}"><span class="agent-ic">${ic(icon)}</span><span class="grow"><b>${name}</b><span class="faint" style="display:block;font-size:11.5px">${A[k] ? "Uploads by itself" : "Asks you first"}</span></span><div class="toggle ${A[k] ? "on" : ""}" data-act="revAuto" data-id="${k}" data-on="${!A[k]}"></div></div>`).join("")}</div></div>
   </div>
+  <div class="sp"></div>
+  ${testModelPanel()}
   <div class="sp"></div>
   <div class="row"><div class="h3 grow">Waiting for your OK ${pending.length ? `<span class="count-pill">${pending.length}</span>` : ""}</div></div><div class="sp" style="height:10px"></div>
   ${pending.length ? `<div class="rev-grid">${pending.map(reviewCard).join("")}</div>` : `<div class="panel">${empty("Nothing to check right now", "When the Builder & Modeler, UI Maker or Money Maker finishes something, a picture shows up here and they wait for your OK before it goes in the game.")}</div>`}
@@ -651,14 +674,37 @@ function teamMembers(team) {
 function gsSteps() {
   const s = [["modelQuality"], ["feature", "featureQuality"], ["texture"]];
   if (ui.gs?.prefs.texture === "studs") s.push(["map", "hazard", "biomes"]);
-  s.push(["money"]);
+  s.push(["money"], ["team"]); // last: who's on your team
   return s;
+}
+/** Recommended helpers for most games (the Co-Founder and the Builder are always there). */
+const REC_ROLES = ["coder", "ui", "animator"];
+const gsRoles = () => ROLE_ORDER.filter((r) => !ALWAYS.includes(r) && S.roles[r]);
+/** The quiz's last question: big tiles, one tap per role. */
+function gsTeamStep() {
+  const on = new Set(ui.gs.roles), all = gsRoles();
+  const same = (list) => list.length === on.size && list.every((r) => on.has(r));
+  const tile = (r, i, locked) => `<button style="--i:${i}" class="gs-opt gs-role ${locked || on.has(r) ? "on" : ""} ${locked ? "locked" : ""}" ${locked ? "disabled" : `data-act="gsRole" data-id="${r}" aria-pressed="${on.has(r)}"`}>${!locked && REC_ROLES.includes(r) ? '<em class="gs-rec">Recommended</em>' : ""}<span class="row" style="gap:8px;width:100%"><span class="role-ic big r-${r}">${ic(ROLE_ICON[r])}</span><span class="grow"></span>${locked || on.has(r) ? `<span class="gs-tick">${ic("check")}</span>` : ""}</span><b>${esc(S.roles[r].name)}</b><span>${esc(locked ? "Always on your team" : S.roles[r].short)}</span></button>`;
+  const preset = (id, name, list) => `<button class="btn sm ${same(list) ? "primary" : ""}" data-act="gsRoles" data-id="${id}">${name}</button>`;
+  return `<div class="quiz-q">Who do you want on your team?</div>
+    <div class="quiz-hint">Tap to add or remove. Each one is its own Claude, so a bigger team works faster but uses more of your Claude usage. You can change your team at any time.</div>
+    <div class="row wrap" style="gap:8px;margin:12px 0 16px">${preset("rec", "Recommended", REC_ROLES)}${preset("all", "Everyone", all)}${preset("none", "Just the basics", [])}</div>
+    <div class="gs-opts team">${ALWAYS.map((r, i) => tile(r, i, true)).join("")}${all.map((r, i) => tile(r, i + ALWAYS.length, false)).join("")}</div>`;
+}
+/** On the look question: says what Studs does with the quality you picked. */
+function gsStudsNote(P) {
+  if (P.texture !== "studs") return "";
+  const q = [P.modelQuality, P.featureQuality];
+  const txt = q.some((x) => x === "low" || x === "medium") ? "Studs with Low or Medium quality gives a simpler version. Pick High on both quality questions for the full trained Studs style."
+    : q.includes("max") ? "Max + Studs: the full trained Studs style with an insane amount of small extra details — still blocky and studded."
+    : "High + Studs: the Builder uses the full trained Studs style.";
+  return `<div class="gs-note">${ic("cube")}<span>${txt}</span></div>`;
 }
 const gsKeys = (step) => (gsSteps()[step] || []).filter((k) => (k !== "hazard" && k !== "biomes") || ui.gs.prefs.map === "escape");
 const gsHas = (k, id) => { const v = ui.gs.prefs[k]; return Array.isArray(v) ? v.includes(id) : v === id; };
 function gameSetupModal() {
   const G = S.gameSetup, g = ui.gs, steps = gsSteps(), keys = gsKeys(g.step), last = g.step === steps.length - 1;
-  const opt = (k, o) => `<button class="gs-opt ${gsHas(k, o.id) ? "on" : ""} ${k === "money" && o.id === "overload" ? "hot" : ""}" data-act="gsPick" data-key="${k}" data-id="${o.id}">${k === "texture" ? `<span class="gs-swatch t-${o.id}"></span>` : k === "modelQuality" || k === "featureQuality" ? `<span class="gs-level l-${o.id}"><i></i><i></i><i></i><i></i><i></i></span>` : ""}<b>${esc(o.name)}</b><span>${esc(o.desc)}</span></button>`;
+  const opt = (k, o) => `<button class="gs-opt ${gsHas(k, o.id) ? "on" : ""} ${k === "money" && o.id === "overload" ? "hot" : ""}" data-act="gsPick" data-key="${k}" data-id="${o.id}">${G[k].rec === o.id ? '<em class="gs-rec">Recommended</em>' : ""}${k === "texture" ? `<span class="gs-swatch t-${o.id}"></span>` : k === "modelQuality" || k === "featureQuality" ? `<span class="gs-level l-${o.id}"><i></i><i></i><i></i><i></i><i></i></span>` : ""}<b>${esc(o.name)}</b><span>${esc(o.desc)}</span></button>`;
   const ready = gsReady(keys);
   // "Custom": don't like the choices? type your own answer in the box
   const custom = (k) => { const txt = g.prefs.custom?.[k] || ""; return `<div class="gs-opt gs-custom ${gsHas(k, "custom") ? "on" : ""}" data-custom-tile="${k}"><b>${ic("edit")}Custom</b><input class="input gs-custom-in" data-gs-custom="${k}" maxlength="300" placeholder="Type your own…" value="${esc(txt)}"></div>`; };
@@ -670,16 +716,17 @@ function gameSetupModal() {
     <div class="quiz-body">
       ${idea ? `<div class="quiz-idea">${ic("sparkle")}<span class="ell">“${esc(idea)}”</span></div>` : ""}
       ${g.step === 0 ? `<div class="quiz-hint">A few quick questions so the team builds it the way you want. Skip anything you don't mind.</div>` : ""}
-      ${keys.map((k, qi) => `<div class="quiz-q ${qi ? "sub" : ""}">${esc(G[k].q)}${G[k].multi ? ` <span class="faint">— pick as many as you like</span>` : ""}</div><div class="gs-opts ${k === "feature" ? "chips" : /Quality$/.test(k) ? "levels" : ""}">${G[k].options.map((o, oi) => opt(k, o).replace('<button class="gs-opt', `<button style="--i:${oi}" class="gs-opt`)).join("")}${custom(k)}</div>`).join("")}
+      ${keys.includes("team") ? gsTeamStep() : keys.map((k, qi) => `<div class="quiz-q ${qi ? "sub" : ""}">${esc(G[k].q)}${G[k].multi ? ` <span class="faint">— pick as many as you like</span>` : ""}</div><div class="gs-opts ${k === "feature" ? "chips" : /Quality$/.test(k) ? "levels" : ""}">${G[k].options.map((o, oi) => opt(k, o).replace('<button class="gs-opt', `<button style="--i:${oi}" class="gs-opt`)).join("")}${custom(k)}</div>`).join("")}
+      ${keys.includes("texture") ? gsStudsNote(g.prefs) : ""}
       ${keys.includes("money") && ["lots", "overload"].includes(g.prefs.money) ? `<div class="gs-note">${ic("bell")}<span>Paid crates will show their odds before buying, and are hidden for players in countries where Roblox doesn't allow paid random items. Those are Roblox's own rules, so the game won't get taken down for them.</span></div>` : ""}
     </div>
-    <div class="quiz-foot">${g.step ? `<button class="btn ghost" data-act="gsBack">← Back</button>` : `<span class="faint" style="font-size:12px">Tip: press <kbd>1</kbd>–<kbd>${Math.min(9, G[keys[0]].options.length)}</kbd> to pick, <kbd>Enter</kbd> for next</span>`}<div class="grow"></div><button class="btn ghost" data-act="gsSkip">Skip</button><button class="btn primary quiz-next" data-act="gsNext" ${ready ? "" : "disabled"}>${last ? ic("crown") + "Plan it" : "Next →"}</button></div>
+    <div class="quiz-foot">${g.step ? `<button class="btn ghost" data-act="gsBack">← Back</button>` : `<span class="faint" style="font-size:12px">Tip: press <kbd>1</kbd>–<kbd>${Math.min(9, G[keys[0]].options.length)}</kbd> to pick, <kbd>Enter</kbd> for next</span>`}<div class="grow"></div>${keys.includes("team") ? "" : '<button class="btn ghost" data-act="gsSkip">Skip</button>'}<button class="btn primary quiz-next" data-act="gsNext" ${ready ? "" : "disabled"}>${last ? ic("crown") + "Plan it" : "Next →"}</button></div>
   </div>`;
 }
 /** A question is answered when something is picked — a custom answer counts once it has text. */
 function gsReady(keys) {
   const g = ui.gs, has = (k, v) => (v === "custom" ? !!(g.prefs.custom?.[k] || "").trim() : !!v);
-  return keys.every((k) => { const v = g.prefs[k]; return Array.isArray(v) ? v.length && v.every((x) => has(k, x)) : has(k, v); });
+  return keys.every((k) => { if (k === "team") return true; const v = g.prefs[k]; return Array.isArray(v) ? v.length && v.every((x) => has(k, x)) : has(k, v); });
 }
 /** Typing in a "Custom" box picks it (no redraw, so the cursor stays put). */
 document.addEventListener("input", (e) => {
@@ -702,6 +749,7 @@ document.addEventListener("keydown", (e) => {
   if (e.target.dataset?.gsCustom !== undefined) { if (e.key === "Enter") { e.preventDefault(); const b = $("#modalRoot .quiz-next"); if (b && !b.disabled) ACT.gsNext(); } return; }
   if (e.target.closest?.("input,textarea,select")) return;
   const keys = gsKeys(ui.gs.step);
+  if (keys[0] === "team" && /^[1-9]$/.test(e.key)) { const r = gsRoles()[Number(e.key) - 1]; if (r) { e.preventDefault(); ACT.gsRole({ dataset: { id: r } }); } return; }
   if (/^[1-9]$/.test(e.key)) { const o = S.gameSetup[keys[0]]?.options[Number(e.key) - 1]; if (o) { e.preventDefault(); ACT.gsPick({ dataset: { key: keys[0], id: o.id } }); } }
   else if (e.key === "Enter") { const b = $("#modalRoot .quiz-next"); if (b && !b.disabled) { e.preventDefault(); ACT.gsNext(); } }
 });
@@ -723,16 +771,16 @@ function teamPickModal() {
     ${ROLE_ORDER.filter((r) => !ALWAYS.includes(r) && S.roles[r]).map((r) => `<label class="role-pick ${added.has(r) ? "on" : ""}"><input type="checkbox" data-role-pick="${r}" ${added.has(r) ? "checked" : ""}><span class="role-ic r-${r}">${ic(ROLE_ICON[r])}</span><div class="grow"><b>${esc(S.roles[r].name)}</b><div class="faint" style="font-size:12px">${esc(S.roles[r].short)}</div></div><span class="check-box"></span></label>`).join("")}</div>`;
   modal("Your team", body, `<button class="btn ghost" data-act="teamPickAll">Add all</button><div class="grow"></div><button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="teamPickSave">${ic("check")}Save team</button>`);
 }
-const STATE_DOT = { working: "working", waiting: "connecting", done: "connected", problem: "error", off: "unknown", "not started": "unknown", ready: "unknown" };
+const STATE_DOT = { stopped: "error", working: "working", waiting: "connecting", done: "connected", problem: "error", off: "unknown", "not started": "unknown", ready: "unknown" };
 function roleSwitch(team, r) {
   const ro = team.roles[r];
-  return `<div class="role-row ${ro.enabled ? "" : "off"}"><span class="role-ic r-${r}">${ic(ROLE_ICON[r])}</span><div class="grow" style="min-width:0"><b>${esc(S.roles[r].name)}</b><div class="faint ell" style="font-size:11.5px">${team.status === "building" || team.status === "done" ? `<span class="dot ${STATE_DOT[ro.state] || "unknown"}" style="display:inline-block;width:6px;height:6px;margin-right:5px"></span>${esc(ro.state)}` : esc(S.roles[r].short)}</div></div>
+  return `<div class="role-row ${ro.enabled ? "" : "off"}"><span class="role-ic r-${r}">${ic(ROLE_ICON[r])}</span><div class="grow" style="min-width:0"><b>${esc(S.roles[r].name)}</b><div class="faint ell" style="font-size:11.5px">${["building", "done", "stopped"].includes(team.status) ? `<span class="dot ${STATE_DOT[ro.state] || "unknown"}" style="display:inline-block;width:6px;height:6px;margin-right:5px"></span>${esc(ro.state)}` : esc(S.roles[r].short)}</div></div>
     ${ro.taskId ? `<button class="btn sm ghost" data-act="openTask" data-id="${ro.taskId}">Chat</button>` : ""}<div class="toggle ${ro.enabled ? "on" : ""}" data-act="teamRole" data-id="${team.id}" data-role="${r}" data-on="${!ro.enabled}" title="Switch ${esc(S.roles[r].name)} ${ro.enabled ? "off" : "on"}"></div></div>`;
 }
 function teamCard(t) {
   const P = t.plan;
-  const head = `<div class="row" style="gap:10px"><span class="role-ic r-cofounder">${ic("crown")}</span><div class="grow" style="min-width:0"><b style="font:600 15px var(--f-head)">${esc(P?.title || "New game plan")}</b><div class="faint ell" style="font-size:12px">${esc({ planning: "The Co-Founder is planning…", revising: "The Co-Founder is changing the plan…", proposed: "Plan ready — accept it or ask for changes", building: "The team is building", failed: "Something went wrong", done: "Done" }[t.status] || t.status)}</div></div>
-    ${t.cofounderTaskId ? `<button class="btn sm ghost" data-act="openTask" data-id="${t.cofounderTaskId}">Co-Founder chat</button>` : ""}<button class="btn sm ghost danger icon" data-act="teamDiscard" data-id="${t.id}" title="Remove this plan (stops its team)">${ic("trash")}</button></div>`;
+  const head = `<div class="row" style="gap:10px"><span class="role-ic r-cofounder">${ic("crown")}</span><div class="grow" style="min-width:0"><b style="font:600 15px var(--f-head)">${esc(P?.title || "New game plan")}</b><div class="faint ell" style="font-size:12px">${esc({ planning: "The Co-Founder is planning…", revising: "The Co-Founder is changing the plan…", proposed: "Plan ready — accept it or ask for changes", building: "The team is building", stopped: "Stopped by you — nothing made so far was deleted", failed: "Something went wrong", done: "Done" }[t.status] || t.status)}</div></div>
+    ${t.status === "building" ? estopBtn() : ""}${t.cofounderTaskId ? `<button class="btn sm ghost" data-act="openTask" data-id="${t.cofounderTaskId}">Co-Founder chat</button>` : ""}<button class="btn sm ghost danger icon" data-act="teamDiscard" data-id="${t.id}" title="Remove this plan (stops its team)">${ic("trash")}</button></div>`;
   if (t.status === "planning" || t.status === "revising") return `<div class="panel pad team-card">${head}<div class="row" style="margin-top:12px"><span class="spinner"></span><span class="faint" style="font-size:12.5px">Reading your idea and writing a plan for every role. This takes a minute or two.</span></div></div>`;
   const change = `<div class="row" style="margin-top:12px;gap:8px"><input class="input grow" id="cfChange-${t.id}" placeholder="Want something different? e.g. “make it a horror game, fewer gamepasses”"><button class="btn" data-act="teamRevise" data-id="${t.id}">Change</button>${t.status === "proposed" ? `<button class="btn primary" data-act="teamAccept" data-id="${t.id}">${ic("check")}Accept &amp; start building</button>` : ""}</div>`;
   if (t.status === "failed" || !P) return `<div class="panel pad team-card">${head}<div class="faint" style="margin-top:10px;color:var(--bad)">${esc(t.error || "No plan yet.")}</div>${change}</div>`;
@@ -741,12 +789,13 @@ function teamCard(t) {
     <div class="muted" style="font-size:13px;margin-top:10px">${esc(P.summary)}</div>${prefTags(t.prefs)}
     ${P.features.length ? `<div class="row wrap" style="gap:6px;margin-top:10px">${P.features.map((f) => `<span class="tag">${esc(f)}</span>`).join("")}</div>` : ""}
     <div class="team-grid">${ROLE_ORDER.filter((r) => r === "cofounder" || t.roles[r]?.enabled || t.roles[r]?.taskId || (P.work[r] || []).length).map((r) => `<div class="team-col">${roleSwitch(t, r)}${r === "cofounder" ? '<div class="faint" style="font-size:12px;margin-top:6px">Directs everyone, checks their work and does the final play test.</div>' : `<ul class="jobs">${jobs(r)}</ul>`}</div>`).join("")}</div>
-    ${t.status === "proposed" || t.status === "failed" ? change : `<div class="faint" style="font-size:12px;margin-top:10px">Turn a role off to stop it; turn it on again to let it continue. Each role is its own Claude, and more roles at once use your Claude usage faster.</div>`}</div>`;
+    ${t.status === "stopped" ? `<div class="row" style="margin-top:12px;gap:8px"><input class="input grow" id="cfResume-${t.id}" placeholder="What should be different? (optional) e.g. “no big walls, make the pets better”"><button class="btn primary" data-act="teamResume" data-id="${t.id}">${ic("play")}Continue</button></div><div class="faint" style="font-size:12px;margin-top:8px">Everything the team made is still in Studio and Blender. Continue with your wish, switch roles on or off first, or remove the plan with the bin.</div>` : t.status === "proposed" || t.status === "failed" ? change : `<div class="faint" style="font-size:12px;margin-top:10px">Turn a role off to stop it; turn it on again to let it continue. Each role is its own Claude, and more roles at once use your Claude usage faster.</div>`}</div>`;
 }
 function teamPanel() {
   const teams = S.teams || [];
   const n = S.ideas.picked.length;
-  return `<div class="panel pad stack cofounder-box"><div class="row" style="gap:12px"><span class="role-ic r-cofounder big">${ic("crown")}</span><div class="grow"><div class="h3">Ask the Co-Founder</div><div class="faint" style="font-size:12.5px">Say your idea — the Co-Founder plans the whole Roblox game and splits it into jobs for your team: ${esc(teamMembers(null).filter((r) => r !== "cofounder").map((r) => S.roles[r]?.name).filter(Boolean).join(", "))} (add more with +). Nothing is built until you press Accept.</div></div><button class="btn sm" data-act="teamPick">${ic("plus")}Team</button></div>
+  return `<div class="panel pad stack cofounder-box"><div class="row" style="gap:12px"><span class="role-ic r-cofounder big">${ic("crown")}</span><div class="grow"><div class="h3">Ask the Co-Founder</div><div class="faint" style="font-size:12.5px">Say your idea and answer a few quick questions. Nothing is built until you press Accept.</div></div></div>
+    <div class="row wrap team-chips" style="gap:6px">${teamMembers(null).map((r) => `<button class="team-chip r-${r}" data-act="teamPick" title="Change your team">${ic(ROLE_ICON[r])}${esc(S.roles[r].name)}</button>`).join("")}<button class="team-chip add" data-act="teamPick" title="Add or remove roles — any time">${ic("plus")}Change team</button></div>
     <div class="row" style="gap:8px"><input class="input grow" id="cfIdea" placeholder="e.g. a brainrot pet simulator with trading and a lava obby"><button class="btn primary" data-act="teamPlan">${ic("crown")}Plan it${n ? ` (+${n} picked)` : ""}</button></div></div>
     ${teams.map(teamCard).join("")}<div class="sp" style="height:14px"></div>`;
 }
@@ -1215,7 +1264,8 @@ const ACT = {
     const text = val("cfIdea").trim();
     if (!text && !S.ideas.picked.length) return toast("Tell the Co-Founder your idea first (or pick some ideas)", "error");
     let saved = {}; try { saved = JSON.parse(lsGet("gamePrefs") || "{}"); } catch { /* none */ }
-    ui.gs = { text, ideas: [...S.ideas.picked], step: 0, prefs: { feature: "auto", ...saved } };
+    const mine = (S.settings.teamRoles || []).filter((r) => !ALWAYS.includes(r));
+    ui.gs = { text, ideas: [...S.ideas.picked], step: 0, prefs: { feature: "auto", modelQuality: "high", featureQuality: "high", ...saved }, roles: (S.settings.teamRoles || []).length ? mine : [...REC_ROLES] };
     ui.gsShown = null;
     gameSetupModal();
   },
@@ -1229,6 +1279,12 @@ const ACT = {
     if (k === "texture" && id !== "studs") { delete P.map; delete P.hazard; delete P.biomes; } // the map question is for the Studs look
     gameSetupModal();
   },
+  gsRole: (el) => { const on = new Set(ui.gs.roles), r = el.dataset.id; on.has(r) ? on.delete(r) : on.add(r); ui.gs.roles = [...on]; gameSetupModal(); },
+  gsRoles: (el) => { ui.gs.roles = el.dataset.id === "all" ? gsRoles() : el.dataset.id === "rec" ? [...REC_ROLES] : []; gameSetupModal(); },
+  async stopAll(el) { if (el) el.disabled = true; try { const r = await call("emergencyStop"); toast(r.stopped ? `Everything stopped (${r.stopped} Claude task${r.stopped === 1 ? "" : "s"}). Nothing was deleted.` : "Everything is stopped"); } finally { render(); } },
+  async pauseAll(el) { if (el) el.disabled = true; try { await call("pauseAll"); go("claude"); for (const ms of [150, 500, 1200]) setTimeout(() => { if (!["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)) $("#pauseDetail")?.focus(); }, ms); } finally { render(); } },
+  async resumeAll(el) { if (el) el.disabled = true; const d = val("pauseDetail"); try { await call("resumeAll", d); toast(d.trim() ? "Continuing with your detail" : "Continuing"); } finally { render(); } },
+  async teamResume(el) { await call("teamResume", el.dataset.id, val("cfResume-" + el.dataset.id)); toast("The team continues"); },
   gsBack: () => { ui.gs.step = Math.max(0, ui.gs.step - 1); gameSetupModal(); },
   gsClose: () => { closeModal(); ui.gsShown = null; },
   gsSkip: () => { for (const k of gsSteps()[ui.gs.step]) if (k !== "feature") delete ui.gs.prefs[k]; ACT.gsNext(); },
@@ -1236,7 +1292,7 @@ const ACT = {
     if (ui.gs.step < gsSteps().length - 1) { ui.gs.step++; return gameSetupModal(); }
     const g = ui.gs; closeModal();
     lsSet("gamePrefs", JSON.stringify(g.prefs));
-    await call("teamPlan", g.text, g.ideas, g.prefs);
+    await call("teamPlan", g.text, g.ideas, g.prefs, g.roles);
     if ($("#cfIdea")) $("#cfIdea").value = "";
     toast("The Co-Founder is planning — this takes a minute or two");
   },
@@ -1302,6 +1358,8 @@ const ACT = {
   blenderHelp: () => { ui.blenderHelp = !ui.blenderHelp; render(); },
   async obSkipItem(el) { await call("skipSetup", el.dataset.id); },
   async checkBlender() { const b = await call("checkBlender"); toast(b.open ? "Blender is connected" : b.error || "Blender isn't open", b.open ? "" : "error"); },
+  tmLevel: (el) => { ui.tmLevel = el.dataset.id; render(); },
+  async testModel(el) { const t = val("tmText"); if (!t.trim()) return toast("Type what the Builder should make", "error"); if (el) el.disabled = true; try { await call("testModel", t, ui.tmLevel || "high"); if ($("#tmText")) $("#tmText").value = ""; toast("The Builder is making your test model"); } finally { render(); } },
   async makeModel() { const t = val("mkModel"); if (!t.trim()) return toast("Describe the model first", "error"); ui.taskId = await call("makeModel", t); $("#mkModel").value = ""; go("claude"); },
   obSkipIntro: () => showSetupList(),
   obPrompt: () => { ui.obPrompt = !ui.obPrompt; updateSetupList(); },
@@ -1358,6 +1416,8 @@ document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "b" && !document.body.classList.contains("locked")) { e.preventDefault(); ACT.toggleNav(); }
   if (e.target.id === "claudeInput" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ACT.claudeSend(); }
   if (e.target.id === "quickAsk" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ACT.quickAsk(); }
+  if (e.target.id === "tmText" && e.key === "Enter") { e.preventDefault(); ACT.testModel(); }
+  if (e.target.id === "pauseDetail" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ACT.resumeAll(); }
   if (e.target.id === "cfIdea" && e.key === "Enter") { e.preventDefault(); ACT.teamPlan(); } // done describing the game → the quiz
   if (e.key === "Enter" && e.target.closest?.("#lockRoot") && e.target.tagName === "INPUT") { e.preventDefault(); $("#lockRoot [data-primary]")?.click(); }
 });

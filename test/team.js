@@ -24,10 +24,11 @@ const PLAN = { title: "Lava Pet Tycoon", summary: "Hatch pets and escape lava.",
   work: { builder: [{ title: "Lava map", details: "A 200x200 baseplate with lava rivers" }, { title: "Pet model", details: "Low-poly dragon in Blender" }],
     coder: [{ title: "Pet system", details: "Hatching with 3 rarities" }], ui: [{ title: "Shop UI", details: "6 slots" }], money: [{ title: "2x Coins pass", details: "149 Robux" }] } };
 const runs = [];
-let slow = 0;
+let slow = 0, killDelay = 0;
 function fakeSpawn(exe, args, opts) {
   const p = new EventEmitter(); p.stdout = new EventEmitter(); p.stderr = new EventEmitter();
-  p.stdin = { end: (input) => setTimeout(() => {
+  let timer;
+  p.stdin = { end: (input) => timer = setTimeout(() => {
     runs.push({ args, input });
     const sys = args[args.indexOf("--append-system-prompt") + 1];
     let text = "OK, working on it. Done.";
@@ -39,7 +40,7 @@ function fakeSpawn(exe, args, opts) {
     p.stdout.emit("data", Buffer.from(JSON.stringify({ type: "result", is_error: false, duration_ms: 5, session_id: "s-" + runs.length, sys }) + "\n"));
     p.emit("close", 0);
   }, slow || 10) };
-  p.kill = () => p.emit("close", 1);
+  p.kill = () => { clearTimeout(timer); if (killDelay) setTimeout(() => p.emit("close", 1), killDelay); else p.emit("close", 1); }; // a killed Claude never answers
   return p;
 }
 
@@ -198,6 +199,72 @@ function fakeSpawn(exe, args, opts) {
     assert(/Never plan storage/.test(R.ROLES.cofounder.prompt) && !/extra slots/.test(R.ROLES.money.prompt), "no storage, an inventory without limit");
     assert(!/big plain walls/.test(R.STUDS_GUIDE) && /never around a base/.test(R.STUDS_GUIDE), "tall walls only around the whole map");
     assert(!brief("coder", "studs").includes("STUDS STYLE GUIDE") && !brief("builder", "grass").includes("STUDS STYLE GUIDE"), "nobody else spends tokens on it");
+    // Shop: the UI Maker's style, the Money Maker's pack discounts and gifting
+    assert.deepEqual(R.PACKS, [[1, 0], [5, 20], [10, 30], [50, 35], [100, 40]], "the discounts as asked");
+    assert.deepEqual(R.PACKS.map(([n]) => R.packPrice(120, n)), [120, 480, 840, 3900, 7200]);
+    assert(R.packPrice(1, 5) === 4 && R.packPrice(3, 5) === 12 && R.packPrice(49, 10) === 343, "whole Robux");
+    assert.throws(() => R.packPrice(120, 7), /No pack of 7/);
+    for (const [r, o] of [["few", 3], ["normal", 7]]) for (let i = 1; i < R.PACKS.length; i++) assert(R.packPrice(o * 10, R.PACKS[i][0]) / R.PACKS[i][0] < R.packPrice(o * 10, R.PACKS[i - 1][0]) / R.PACKS[i - 1][0], "a bigger pack is always cheaper per piece " + r);
+    const mm = R.ROLES.money.prompt, um = R.ROLES.ui.prompt;
+    assert(mm.includes(R.BULK_GIFT) && /5 = 20% off, 10 = 30% off, 50 = 35% off, 100 = 40% off/.test(mm) && /100: 7200 R\$/.test(mm), "the Money Maker has the pack table");
+    assert(/gives it to the RECIPIENT, only once per PurchaseId/.test(mm) && /for the buyer AND the recipient/.test(mm) && /never take Robux without giving the item/.test(mm), "safe gifting inside Roblox's rules");
+    assert(um.includes(R.SHOP_UI) && /never copy/.test(R.SHOP_UI) && /"Gift" right next to every buy button/.test(um) && /ViewportFrame/.test(um) && /exactly 100%/.test(um) && /always the true price of buying that many one by one/.test(um), "the UI Maker has the shop style");
+    assert(!/\$\{/.test(mm + um) && !R.ROLES.coder.prompt.includes("UI STYLE"), "filled in, and only for the roles that need it");
+    for (const r of R.ROLE_IDS) assert(R.ROLES[r].prompt.length < 20000, r + "'s instructions are short enough: " + R.ROLES[r].prompt.length);
+    // The whole command (quotes escaped) must fit on Windows' command line of 32,767 characters, for every role with everything on
+    for (const r of R.ROLE_IDS) { const a = be.claude.args({ role: r, teamId: "team-123456", sessionId: "x".repeat(40) }); const n = a.reduce((s, x) => s + x.replace(/"/g, '\\"').length + 3, 200); assert(n < 30000, r + " command line: " + n); }
+    // Everyone sticks to their own job, and the jobs that need several roles have one clear split
+    const pr = (r) => R.ROLES[r].prompt;
+    for (const r of R.ROLE_IDS) assert(pr(r).includes(R.OWNERS), r + " knows who owns what");
+    assert(/Never do another role's job/.test(R.OWNERS) && /Tell it, don't change it/.test(R.OWNERS) && !/or tell the role whose script it is/.test(pr("debug")) && !/UI pops/.test(pr("animator")));
+    for (const r of ["builder", "animator", "coder"]) assert(pr(r).includes(R.MOTION), r + ": moving models");
+    assert(/keeps it looping as long as the player is on it/.test(R.MOTION) && /the Animator makes the whole throw itself without being asked/.test(R.MOTION));
+    for (const r of ["animator", "ui", "coder", "sound"]) assert(pr(r).includes(R.REVEAL), r + ": the reveal");
+    assert(/"\?\?\?" appears/.test(R.REVEAL) && /faster and faster/.test(R.REVEAL) && /TRUE chance/.test(R.REVEAL) && /BEFORE anything is shown/.test(R.REVEAL));
+    assert(pr("builder").includes(R.EFFECTS) && !pr("coder").includes(R.EFFECTS) && /transparent background as PNG/.test(R.EFFECTS) && /galaxy/.test(R.EFFECTS) && /mutation/.test(R.EFFECTS));
+    // Sound Designer: free Creator Store sounds for everything, chill music, never blasting
+    assert(pr("sound").includes(R.SOUNDS) && !pr("coder").includes(R.SOUNDS) && !/music ~0\.3/.test(pr("sound")));
+    for (const re of [/Roblox Creator Store/, /FREE sounds/, /popular/, /chill, calm background music/, /cha-ching/, /Crates and eggs/, /shop, inventory and index/, /Never blasting/, /CompressorSoundEffect/, /everything in the game that should have a sound/]) assert(re.test(R.SOUNDS), "sounds: " + re);
+    // Skies, 12 live events (one at once), boosts, friends, rebirth, the running area
+    assert(R.EVENTS.length === 12 && new Set(R.EVENTS.map((e) => e[0])).size === 12 && ["Starfall", "Rain", "Galaxy"].every((n) => R.EVENTS.some((e) => e[0] === n)), "12 different live events");
+    for (const e of [...R.EVENTS, ...R.SUPER_EVENTS]) assert(["luck", "money", "both"].includes(e[2]) && e[3] > 0 && e[3] < e[4] && e[4] <= 300, e[0]);
+    assert(R.SUPER_EVENTS.some((e) => e[2] === "luck" && e[4] === 300) && R.SUPER_EVENTS.some((e) => e[2] === "money" && e[4] === 300) && R.EVENTS.every((e) => e[4] <= 100), "super rare ones go up to 300%");
+    assert.deepEqual([R.FRIENDS.max, R.FRIENDS.percent, R.DESPAWN], [5, 20, { normal: 5, best: 3, bestFrom: 10 }]);
+    const base = R.luckChances(0), near = (a, b) => Math.abs(a - b) < 1e-9;
+    assert(R.RARITIES.slice(1).every((x, i) => near(base[i + 1], 1 / x[1])), "without luck exactly the chances shown");
+    let rare = 0;
+    for (const L of [0, 0.2, 0.5, 1, 3, 8, 50, 1000, 1e8]) {
+      const c = R.luckChances(L);
+      assert(near(c.reduce((a, b) => a + b, 0), 1) && c.every((x) => x >= 0) && c[0] > 0.0499, "always exactly 100% at luck " + L);
+      const best = c.slice(9).reduce((a, b) => a + b, 0); assert(best >= rare, "more luck is never worse"); rare = best;
+    }
+    assert(near(R.luckChances(3)[14], 4 / 5000000) && near(R.luckChances(3)[9], 4 / 7500), "+300% luck really is 4x for the best");
+    for (const r of ["cofounder", "coder", "ui"]) assert(pr(r).includes(R.WORLD) && pr(r).includes(R.REBIRTH) && pr(r).includes(R.RUN), r + ": the world rules");
+    assert(pr("animator").includes(R.RUN) && /Galaxy/.test(pr("sound")) && /chunky blocky bat/.test(pr("builder")));
+    for (const r of ["cofounder", "coder", "ui", "money"]) assert(/LUCK NEVER TOUCHES THE ROBUX SHOP/.test(pr(r)), r + ": luck and the Robux shop");
+    for (const re of [/ALWAYS DAY/, /Roblox Creator Store/, /delete any script/, /Only ONE event at once/, /at most 5 friends \(\+100%\)/, /Random boosts/]) assert(re.test(R.WORLD), "world: " + re);
+    assert(/\+50% luck/.test(R.REBIRTH) && /NEVER takes pets, vehicles, items/.test(R.REBIRTH) && /ONLY money, upgrades and the base's features/.test(R.REBIRTH));
+    for (const re of [/after 5 minutes/, /Celestial, Cosmic, Eternal, Infinity, Secret, Impossible\) — after 3 minutes/, /STANDS STILL/, /always has a bat/, /CARRYING a crate\/egg in the running area/, /EVERY player is teleported to the spawn/, /15 seconds/, /ONLY its rarity/]) assert(re.test(R.RUN), "run: " + re);
+    // Rarities: 14+, one crate each, 15+ things in each
+    assert(R.RARITIES.length >= 14 && R.CRATE_ITEMS >= 15 && new Set(R.RARITIES.map((x) => x[0])).size === R.RARITIES.length && new Set(R.RARITIES.map((x) => x[2])).size === R.RARITIES.length, "14+ different rarities");
+    const odds = R.RARITIES.slice(1).map((x) => x[1]);
+    assert(odds.every((o, i) => !i || o > odds[i - 1]) && odds.reduce((a, o) => a + 1 / o, 0) < 0.5, "rarer and rarer, and Common stays the most likely");
+    for (const r of ["cofounder", "builder", "coder", "ui"]) assert(pr(r).includes(R.COLLECTION), r + ": the collection");
+    assert(/ONE CRATE \(or egg\) FOR EACH RARITY/.test(R.COLLECTION) && /at least 15 different things/.test(R.COLLECTION) && /completely black/.test(R.COLLECTION) && /"\?\?\?" as its name/.test(R.COLLECTION) && /exactly 100%/.test(R.COLLECTION));
+    const many = { title: "t", summary: "s", features: [], work: { builder: Array.from({ length: 30 }, (_, i) => ({ title: "Crate " + i, details: "x".repeat(5000) })), coder: Array.from({ length: 30 }, () => ({ title: "c", details: "d" })) } };
+    const pp = R.parsePlan("```json\n" + JSON.stringify(many) + "\n```");
+    assert(pp.work.builder.length === 24 && pp.work.builder[0].details.length === 4000 && pp.work.coder.length === 12, "room for one Builder job per crate");
+    assert(/one task per crate/.test(R.planPrompt("x", ["builder", "coder"])));
+    // The whole trained Studs style needs Studs + High (or better) on BOTH quality questions; Max adds insane, still blocky detail
+    const sg = (modelQuality, featureQuality, texture = "studs") => R.studsGuide({ modelQuality, featureQuality, texture });
+    assert.equal(sg("high", "high"), R.STUDS_GUIDE, "High + High + Studs = exactly the trained style");
+    assert.equal(sg("high", "high", "smooth"), "", "only with the Studs look");
+    for (const [a, b] of [["low", "high"], ["high", "medium"], ["low", "max"]]) assert.equal(sg(a, b), R.STUDS_SIMPLE, `${a}/${b}: simple version`);
+    assert(sg("max", "max").startsWith(R.STUDS_GUIDE) && /MAX DETAIL for every model/.test(sg("max", "max")) && /go insane with detail, but it stays Studs and BLOCKY/.test(sg("max", "max")) && /lots of small extras/.test(sg("max", "max")));
+    assert(/MAX DETAIL for the models of the main feature/.test(sg("high", "max")), "Max only on the main thing");
+    assert(sg("super", "high").startsWith(R.STUDS_GUIDE) && !/MAX DETAIL/.test(sg("super", "high")));
+    assert.equal(R.studsGuide({ texture: "studs" }), R.STUDS_GUIDE, "skipped quality = the recommended High");
+    assert(be.publicState().gameSetup.modelQuality.rec === "high" && be.publicState().gameSetup.featureQuality.rec === "high" && !be.publicState().gameSetup.money.rec, "High is recommended on both quality questions");
     // "Custom": the user types their own answer
     const cu = R.cleanPrefs({ modelQuality: "custom", texture: "custom", money: "custom", map: "escape", biomes: ["galaxy", "custom"], custom: { modelQuality: "  low-poly but with   cute faces ", texture: "", money: "only one 99 R$ VIP pass", biomes: "a giant kitchen", hazard: "ignored" } });
     assert.deepEqual(cu, { modelQuality: "custom", map: "escape", biomes: ["galaxy", "custom"], money: "custom", custom: { modelQuality: "low-poly but with cute faces", money: "only one 99 R$ VIP pass", biomes: "a giant kitchen" } }, "custom answers kept (tidied), an empty custom box is dropped");
@@ -218,6 +285,116 @@ function fakeSpawn(exe, args, opts) {
     assert(R.workerBrief({ id: "x", plan: PLAN, prefs: t.prefs, roles: { builder: { enabled: true } } }, "builder").includes("grassy and natural"), "every role gets them");
     assert.equal(be.publicState().gameSetup.money.options.length, 4);
     await idle(); await dispatch(ctx, "teamDiscard", [tid]);
+  });
+  const main = () => be.publicState().teams.find((x) => x.id === id), mainTask = (r) => be.claude.tasks.find((x) => x.id === main().roles[r].taskId);
+  await test("the quiz's team question: the picked roles plan the game, and can be changed any time", async () => {
+    const saved = be.d.settings.teamRoles, building = main().roles;
+    const was = JSON.stringify(Object.fromEntries(Object.entries(building).map(([r, x]) => [r, x.enabled])));
+    const tid = await dispatch(ctx, "teamPlan", ["a candy obby", [], { modelQuality: "high" }, ["coder", "sound"]]);
+    const t = be.d.teams.find((x) => x.id === tid), on = () => R.WORKERS.filter((r) => t.roles[r].enabled);
+    assert.deepEqual(on(), ["builder", "coder", "sound"], "the Builder is always there");
+    assert.deepEqual(be.teamRoster(), ["builder", "coder", "sound"], "remembered for next time");
+    assert.equal(JSON.stringify(Object.fromEntries(Object.entries(main().roles).map(([r, x]) => [r, x.enabled]))), was, "a team that is already building keeps its roles");
+    await assert.rejects(dispatch(ctx, "teamPlan", ["x", [], {}, ["wizard"]]), /Unknown role/);
+    await idle();
+    be.d.teams.find((x) => x.id === id).status = "done"; // only the new plan is left to change
+    await dispatch(ctx, "setTeamRoles", [["coder", "animator"]]);
+    assert.deepEqual(on(), ["builder", "coder", "animator"], "changed on a plan that isn't accepted yet");
+    assert(!t.roles.animator.taskId, "nothing starts before Accept");
+    be.d.teams.find((x) => x.id === id).status = "building";
+    await dispatch(ctx, "teamDiscard", [tid]);
+    be.d.settings.teamRoles = saved;
+    await idle();
+  });
+  await test("emergency stop: every Claude, the line and PC control stop; nothing restarts; the team can continue with a wish", async () => {
+    await idle();
+    slow = 400;
+    const tid = await dispatch(ctx, "teamPlan", ["a stop test", [], {}]);
+    await tool("vyron_team_message", { role: "coder", message: "make the shop" });
+    await tool("vyron_team_message", { role: "builder", message: "make a tree" });
+    await wait(30);
+    await tool("vyron_team_message", { role: "coder", message: "and a second shop" });
+    assert(mainTask("coder").busy && mainTask("builder").busy && mainTask("coder").inbox.length === 1, "working, with a message waiting");
+    be.pcUntil = Date.now() + 60000;
+    const before = runs.length, r = await dispatch(ctx, "emergencyStop", []);
+    assert(r.stopped >= 3, "counts what it stopped: " + r.stopped);
+    assert(!be.claude.busy && be.pcUntil === 0, "everything stopped at once");
+    await wait(600); await idle();
+    const after = runs.slice(before).filter((x) => /second shop/.test(x.input));
+    assert.equal(after.length, 0, "a waiting message never starts after the stop");
+    assert(!be.claude.busy, "nothing started again by itself");
+    assert.equal(main().status, "stopped"); assert.equal(main().roles.coder.state, "stopped");
+    const planned = be.publicState().teams.find((x) => x.id === tid);
+    assert(planned.status === "failed" && /You stopped the Co-Founder/.test(planned.error), "a plan being made is stopped too");
+    await assert.rejects(tool("vyron_team_message", { team_id: id, role: "coder", message: "go on" }), /Emergency stop/);
+    await assert.rejects(dispatch(ctx, "teamResume", [tid]), /isn't stopped/);
+    slow = 0;
+    const n = runs.length;
+    await dispatch(ctx, "teamResume", [id, "no big walls please"]);
+    await idle();
+    assert.equal(main().status, "building");
+    const woke = runs.slice(n).filter((x) => /I stopped the whole team/.test(x.input));
+    assert(woke.length >= 3 && woke.every((x) => /no big walls please/.test(x.input)), "every switched-on role continues with the wish: " + woke.length);
+    assert(woke.some((x) => /second shop/.test(x.input)), "a message that was still waiting isn't lost when the team continues");
+    assert(!woke.some((x) => /You are the UI Maker/.test(x.args[x.args.indexOf("--append-system-prompt") + 1]) && !main().roles.ui.enabled), "a switched-off role stays off");
+    await dispatch(ctx, "teamDiscard", [tid]);
+    await idle();
+  });
+  await test("Claude tab: pause everyone, add detail, continue (team, plan being made and your own chats) — or stop for good", async () => {
+    await idle();
+    await assert.rejects(dispatch(ctx, "pauseAll", []), /No Claude is working/);
+    await assert.rejects(dispatch(ctx, "resumeAll", ["x"]), /Nothing is paused/);
+    slow = 400;
+    const own = await dispatch(ctx, "claudeStartTask", ["write a joke about studs", "My chat"]); // stopped before Claude has a session
+    const tid = await dispatch(ctx, "teamPlan", ["a pause test", [], {}]);
+    await tool("vyron_team_message", { role: "coder", message: "make the pause shop" });
+    await wait(30);
+    const before = runs.length, p = await dispatch(ctx, "pauseAll", []);
+    assert(p.paused >= 3 && !be.claude.busy, "all paused: " + p.paused);
+    assert(be.publicState().paused.count === p.paused);
+    await dispatch(ctx, "pauseAll", []); // pressing it twice changes nothing
+    await wait(600);
+    assert(!be.claude.busy && runs.length === before, "holds still while you think");
+    slow = 0;
+    await dispatch(ctx, "resumeAll", ["add a lava biome"]);
+    await idle();
+    const after = runs.slice(before), T = be.publicState().teams.find((x) => x.id === tid);
+    assert.equal(be.publicState().paused, null);
+    assert(main().status === "building" && after.some((x) => /I stopped the whole team/.test(x.input) && /add a lava biome/.test(x.input)));
+    assert(after.some((x) => /write a joke about studs/.test(x.input) && /add a lava biome/.test(x.input)), "your own chat gets its message again, plus the detail");
+    assert(T.status === "proposed" && after.some((x) => /a pause test/.test(x.input) && /Make the full plan/.test(x.input) && /add a lava biome/.test(x.input)), "the plan is made again with the detail: " + T.status);
+    // a real Claude needs a moment to die: Continue pressed in that moment must not be lost
+    slow = 400; killDelay = 150;
+    await tool("vyron_team_message", { team_id: id, role: "coder", message: "slow one" }); await wait(30);
+    const tid2 = await dispatch(ctx, "teamPlan", ["a quick pause test", [], {}]); await wait(20);
+    const b2 = runs.length;
+    await dispatch(ctx, "pauseAll", []);
+    assert(mainTask("coder").busy, "still dying");
+    slow = 0;
+    await dispatch(ctx, "resumeAll", ["golden studs"]);
+    await wait(400); await idle(); killDelay = 0;
+    const T2 = be.publicState().teams.find((x) => x.id === tid2);
+    assert(T2.status === "proposed" && runs.slice(b2).some((x) => /a quick pause test/.test(x.input) && /golden studs/.test(x.input)), "a plan being made also survives a quick Continue: " + T2.status);
+    await dispatch(ctx, "teamDiscard", [tid2]);
+    assert(runs.slice(b2).some((x) => /You are the Coder/.test(x.args[x.args.indexOf("--append-system-prompt") + 1]) && /golden studs/.test(x.input)), "the Coder still gets it");
+    // stopping is not failing: no "couldn't finish" alerts, whatever the order the process reports its end in
+    const alerts = []; const onAlert = (a) => alerts.push(a); be.on("alert", onAlert);
+    slow = 400; killDelay = 60;
+    await tool("vyron_team_message", { team_id: id, role: "coder", message: "alert test" }); await wait(30);
+    await dispatch(ctx, "pauseAll", []); await wait(250);
+    assert.equal(mainTask("coder").outcome, "stopped");
+    assert(!alerts.some((a) => /couldn't finish/i.test(a.title + " " + a.body)), JSON.stringify(alerts));
+    be.off("alert", onAlert); slow = 0; killDelay = 0;
+    await dispatch(ctx, "resumeAll", []); await idle();
+    // pause, then stop for good
+    slow = 400;
+    await tool("vyron_team_message", { team_id: id, role: "coder", message: "more" }); await wait(30);
+    await dispatch(ctx, "pauseAll", []); await dispatch(ctx, "emergencyStop", []);
+    assert(be.publicState().paused === null && main().status === "stopped" && !be.claude.busy);
+    slow = 0;
+    await dispatch(ctx, "teamResume", [id]); await idle();
+    await dispatch(ctx, "teamDiscard", [tid]); await dispatch(ctx, "claudeRemoveTask", [own]);
+    await idle();
   });
   await test("the whole team works at the same time: the task limit is raised to fit it", async () => {
     const saved = be.d.settings.claudeParallel;
@@ -252,6 +429,21 @@ function fakeSpawn(exe, args, opts) {
     const r = runs.slice(before)[0];
     assert(/Make this 3D model in Blender: a cartoon treasure chest/.test(r.input) && /\.fbx/.test(r.input));
     assert(JSON.parse(fs.readFileSync(r.args[r.args.indexOf("--mcp-config") + 1], "utf8")).mcpServers.blender);
+  });
+  await test("Test the Builder: one studded test model with everything it was taught, never put in the game", async () => {
+    await assert.rejects(dispatch(ctx, "testModel", ["  "]), /Type what the Builder should make/);
+    const before = runs.length;
+    await dispatch(ctx, "testModel", ["a jet with a lava engine", "high"]);
+    await idle();
+    const r = runs.slice(before)[0];
+    assert(/TEST MODEL — make this one model in Blender: a jet with a lava engine/.test(r.input) && r.input.includes(R.STUDS_GUIDE) && !/MAX DETAIL/.test(r.input));
+    assert(/put nothing in Roblox Studio/.test(r.input) && /Don't change, move or delete anything that's already in the open Blender file/.test(r.input) && /vyron_submit_review/.test(r.input));
+    assert(r.args[r.args.indexOf("--append-system-prompt") + 1].includes(R.NEVER_BUILD), "with the never-build list");
+    assert(JSON.parse(fs.readFileSync(r.args[r.args.indexOf("--mcp-config") + 1], "utf8")).mcpServers.blender);
+    await dispatch(ctx, "testModel", ["an ice crate", "max"]); await idle();
+    assert(/MAX DETAIL for every model/.test(runs.at(-1).input));
+    await dispatch(ctx, "testModel", ["a pet", "junk"]); await idle();
+    assert(!/MAX DETAIL/.test(runs.at(-1).input) && runs.at(-1).input.includes(R.STUDS_GUIDE), "anything else is High");
   });
   await test("Blender can be switched off for Claude in Settings", async () => {
     await dispatch(ctx, "saveSettings", [{ blender: false }]);
