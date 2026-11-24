@@ -651,6 +651,9 @@ body.noanim .quiz.in,body.noanim .quiz.in .quiz-body,body.noanim .quiz.in .gs-op
 /* Claude tab: pause and stop */
 .run-bar{padding:10px 14px;margin-bottom:12px;flex:none}.run-bar.paused{display:flex;flex-direction:column;gap:10px;border-color:color-mix(in srgb,var(--warn) 55%,var(--border))}
 .run-bar.paused>.row:first-child>svg{width:20px;height:20px;color:var(--warn);flex:none}.run-bar textarea{min-height:64px;resize:vertical}
+/* Questions and messages are always on top — also over the first-run setup and the quiz */
+.pc-asks{z-index:97}.pc-bar{z-index:96}#toasts{z-index:95}
+body:has(.pc-asks) #toasts{right:auto;left:18px}
 /* emergency stop */
 .btn.estop{background:#d92d3a;border-color:transparent;color:#fff;font-weight:600}.btn.estop:hover{background:#ef4150;color:#fff}.btn.estop svg{width:15px;height:15px}
 

@@ -1462,7 +1462,9 @@ document.addEventListener("pointerdown", (e) => {
       if (first) setTimeout(() => $("#boot").classList.add("gone"), 350);
     }
     if (type === "notify") { toast("Claude: " + payload.text, "note"); ding("message"); }
-    if (type === "alert") { toast(payload.title + " — " + payload.body, payload.kind === "done" ? "" : payload.kind === "approval" ? "note" : "error"); ding(payload.kind === "login" ? "failed" : payload.kind); }
+    if (type === "openPage" && VIEWS[payload]) go(payload);
+    if (type === "alert" && payload.askId) ding("approval"); // the question itself (with Deny and Allow) is on screen
+    else if (type === "alert") { toast(payload.title + " — " + payload.body, payload.kind === "done" ? "" : payload.kind === "approval" ? "note" : "error"); ding(payload.kind === "login" ? "failed" : payload.kind); }
     if (type === "openTask") { ui.taskId = payload; go("claude"); }
   });
   try {

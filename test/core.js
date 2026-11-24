@@ -397,6 +397,31 @@ const reply = (input) => [
     await dispatch(ctx, "pcRevoke", []);
     assert.equal(be.publicState().pc.allowedUntil, 0);
   });
+  await test("PC questions: one at a time, with an id for the pop-up's buttons; nothing runs while one is open; Stop refuses the rest", async () => {
+    await dispatch(ctx, "saveSettings", [{ pcControl: "ask" }]);
+    const alerts = [], onA = (a) => alerts.push(a); be.on("alert", onA);
+    const open = async () => { for (let i = 0; i < 100 && !be.pcAsks.length; i++) await wait(10); return be.pcAsks[0]; };
+    const n = pcDone.length, a = pcCall("vyron_pc_click", { x: 5, y: 6 }), b = pcCall("vyron_pc_type", { text: "two" }), c = pcCall("vyron_pc_type", { text: "three" });
+    const first = await open(); await wait(60);
+    assert.equal(be.pcAsks.length, 1, "only one question at a time");
+    assert(alerts.length === 1 && alerts[0].askId === first.id && alerts[0].kind === "approval" && alerts[0].body === first.what, "the alert carries what the buttons need");
+    assert.equal(pcDone.length, n, "nothing has run");
+    await dispatch(ctx, "pcAnswer", [first.id, "allow"]); await a;
+    const second = await open();
+    assert(second && second.id !== first.id && pcDone.length === n + 1, "the click ran before the next question came up");
+    await dispatch(ctx, "pcAnswer", [second.id, "deny"]);
+    assert((await b).isError, "denied");
+    await open();
+    await dispatch(ctx, "pcRevoke", []);
+    assert((await c).isError && pcDone.length === n + 1, "Stop refuses what's waiting");
+    const d = pcCall("vyron_pc_type", { text: "four" }), e = pcCall("vyron_pc_type", { text: "five" });
+    await open(); await wait(40); await dispatch(ctx, "pcRevoke", []);
+    assert((await d).isError && (await e).isError && !be.pcAsks.length, "also the ones still in line, without asking again");
+    const f = pcCall("vyron_pc_type", { text: "six" }); // and it works again afterwards
+    await dispatch(ctx, "pcAnswer", [(await open()).id, "allow"]);
+    assert(!(await f).isError && pcDone.at(-1) === "type six");
+    be.off("alert", onA);
+  });
   await test("screenshots reach Claude as an image with the mouse position", async () => {
     await dispatch(ctx, "saveSettings", [{ pcControl: "on" }]);
     const r = await pcCall("vyron_pc_screenshot");

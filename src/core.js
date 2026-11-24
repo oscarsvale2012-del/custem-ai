@@ -344,8 +344,21 @@ class Backend extends EventEmitter {
   async pcAction(kind, args = {}) {
     const mode = this.d.settings.pcControl || "off";
     if (mode === "off") throw new Error("PC control is off. The user can turn it on in VYRON → Settings → PC control.");
+    // One action at a time: while a question is on screen nothing else runs, so an approved click can never press
+    // "Allow" on the next question.
+    const gen = this._pcGen || 0, run = () => this._pcRun(kind, args, gen);
+    const p = (this._pcLine || Promise.resolve()).then(run);
+    this._pcLine = p.catch(() => {});
+    return p;
+  }
+  async _pcRun(kind, args, gen) {
+    const stopped = () => { if (gen !== (this._pcGen || 0)) throw new Error("The user stopped PC control. Don't retry it; ask the user."); };
+    stopped();
+    const mode = this.d.settings.pcControl || "off";
+    if (mode === "off") throw new Error("PC control is off. The user can turn it on in VYRON → Settings → PC control.");
     const what = pcDescribe(kind, args);
     if (mode === "ask" && now() > this.pcUntil) await this.pcApproval(kind, what);
+    stopped();
     const glowBefore = this.glowOn();
     this.pcLast = now();
     this.glowChanged(glowBefore);
@@ -364,7 +377,7 @@ class Backend extends EventEmitter {
       const a = { id: uid("pc"), kind, what, at: now(), resolve, reject };
       a.timer = setTimeout(() => this.pcAnswer(a.id, "timeout"), 120000);
       this.pcAsks.push(a);
-      this.emit("alert", { kind: "approval", title: "Claude needs your OK", body: what + " — answer in VYRON", at: now() });
+      this.emit("alert", { kind: "approval", askId: a.id, title: "Claude wants to use your PC", body: what, at: now() });
       this.changed();
     });
   }
@@ -382,6 +395,7 @@ class Backend extends EventEmitter {
   /** Stop button: take back "Allow 10 min", refuse anything waiting and stop all Claude tasks. */
   pcRevoke() {
     this.pcUntil = 0;
+    this._pcGen = (this._pcGen || 0) + 1; // actions still waiting in line are refused too
     const before = this.glowOn();
     this.pcLast = 0; this._doItTask = null;
     (this._glow || new Set()).clear();
@@ -686,7 +700,7 @@ class Backend extends EventEmitter {
     this.d.reviews = this.d.reviews.slice(-200);
     this.save();
     if (auto) this.log(`Auto mode approved ${REVIEW_NAME[kind]}: ${r.title}`, "ok", "Reviews");
-    else this.emit("alert", { kind: "approval", title: `Check this ${REVIEW_NAME[kind].toLowerCase()}: ${r.title}`, body: "Open Blender & Builds to approve it or ask for changes.", at: now() });
+    else this.emit("alert", { kind: "approval", page: "blender", title: `Check this ${REVIEW_NAME[kind].toLowerCase()}: ${r.title}`, body: "Open Blender & Builds to approve it or ask for changes.", at: now() });
     return { review_id: r.id, decision: r.status, auto: !!auto, next: auto ? "Auto mode is on: go ahead and put it in the game." : "Call vyron_review_wait with this review_id and wait for the user's answer. Don't put it in the game before it's approved." };
   }
   reviewDecide(id, approve, feedback) {

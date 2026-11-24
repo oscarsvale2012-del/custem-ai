@@ -98,12 +98,15 @@ function desktopNote(title, body, onClick) {
   n.show();
 }
 /* VYRON-style pop-up in the bottom-right corner (shown even when VYRON is in the tray). */
-let popup = null;
-const POP_W = 400, POP_H = 116, POP_MS = 7000;
+let popup = null, popAsk = null; // popAsk: the PC question the pop-up is showing (it stays until it's answered)
+const POP_W = 400, POP_H = 116, POP_ASK_H = 164, POP_MS = 7000, ASK_MS = 120000;
+const askOpen = (id) => !!id && !!backend?.pcAsks.some((x) => x.id === id);
 function showPopup(a) {
+  if (!a.askId && askOpen(popAsk) && popup && !popup.isDestroyed() && popup.isVisible()) return; // never replace a question that waits for an answer
+  popAsk = a.askId || null;
   const look = backend?.d.settings.themeLook || {};
-  const data = { title: a.title, body: a.body, kind: a.kind, taskId: a.taskId || "", bg: look.bg, accent: look.accent, light: !!look.light, ms: POP_MS };
-  const wa = screen.getPrimaryDisplay().workArea;
+  const data = { title: a.title, body: a.body, kind: a.kind, taskId: a.taskId || "", askId: a.askId || "", page: a.page || "", bg: look.bg, accent: look.accent, light: !!look.light, ms: a.askId ? Math.max(3000, ASK_MS - (Date.now() - (a.at || Date.now()))) : POP_MS };
+  const wa = screen.getPrimaryDisplay().workArea, H = a.askId || a.page ? POP_ASK_H : POP_H;
   if (!popup || popup.isDestroyed()) {
     popup = new BrowserWindow({
       width: POP_W, height: POP_H, x: wa.x + wa.width - POP_W - 12, y: wa.y + wa.height - POP_H - 12,
@@ -116,13 +119,17 @@ function showPopup(a) {
     popup.webContents.on("will-navigate", (e) => e.preventDefault());
     popup.on("closed", () => (popup = null));
   }
+  popup.setBounds({ x: wa.x + wa.width - POP_W - 12, y: wa.y + wa.height - H - 12, width: POP_W, height: H });
   popup.loadFile(path.join(__dirname, "renderer", "popup.html"), { hash: encodeURIComponent(JSON.stringify(data)) }).then(() => popup && !popup.isDestroyed() && popup.showInactive()).catch(() => {});
 }
-function hidePopup() { if (popup && !popup.isDestroyed()) popup.hide(); }
+function hidePopup() { popAsk = null; if (popup && !popup.isDestroyed()) popup.hide(); }
+/** The PC question waiting for an answer, as a pop-up with Deny / Allow (when VYRON isn't in front). */
+function showAsk() { const a = backend?.pcAsks[0]; if (a) showPopup({ kind: "approval", askId: a.id, title: "Claude wants to use your PC", body: a.what, at: a.at }); }
 
 /** Tell the user, the way they chose in Settings: VYRON pop-up, Windows notification, or nothing. */
 function alertUser(a) {
   const style = backend?.d.settings.notifyStyle || "vyron";
+  if (a.askId) return showPopup(a); // a question always has its buttons, whatever the notification style
   if (style === "off") return;
   if (style === "windows") return desktopNote(a.title, a.body, () => a.taskId && win.webContents.send("event", "openTask", a.taskId));
   showPopup(a);
@@ -166,6 +173,9 @@ function createWindow() {
     win.hide();
     if (!hintShown) { hintShown = true; alertUser({ kind: "message", title: "VYRON is still running", body: "Claude keeps working in the background. Click the VYRON icon by the clock to open it, or right-click it to quit." }); }
   });
+  // A PC question follows you: in VYRON when it's in front, otherwise as a pop-up with the same buttons.
+  win.on("focus", () => { if (popAsk) hidePopup(); });
+  win.on("blur", () => showAsk());
   win.on("maximize", () => win.webContents.send("event", "window", { maximized: true }));
   win.on("unmaximize", () => win.webContents.send("event", "window", { maximized: false }));
 }
@@ -187,6 +197,13 @@ ipcMain.handle("host", async (_e, cmd, arg) => {
   if (cmd === "toggleMaximize") (win.isMaximized() ? win.unmaximize() : win.maximize());
   if (cmd === "close") win.close();
   if (cmd === "isDesktop") return true;
+  if (cmd === "popupAnswer") { // only the pop-up itself, only for the question it shows
+    if (!popup || popup.isDestroyed() || _e.sender !== popup.webContents || !arg || arg.id !== popAsk || !["deny", "allow", "allow10"].includes(arg.val)) return null;
+    hidePopup();
+    backend.pcAnswer(arg.id, arg.val);
+    return null;
+  }
+  if (cmd === "popupPage") { hidePopup(); showWindow(); if (/^[a-z]+$/.test(String(arg))) win.webContents.send("event", "openPage", String(arg)); return null; }
   if (cmd === "popupClose") return hidePopup();
   if (cmd === "popupOpen") { hidePopup(); showWindow(); if (arg) win.webContents.send("event", "openTask", String(arg)); return null; }
   if (cmd === "testPopup") return showPopup({ kind: "done", title: "Claude finished", body: "This is how VYRON tells you when a task is done." });
@@ -268,6 +285,7 @@ app.whenReady().then(async () => {
     if (!win || !win.isVisible() || !win.isFocused()) alertUser(a);
     if (win && !win.isFocused()) win.flashFrame(true);
   });
+  backend.on("state", () => { if (popAsk && !askOpen(popAsk)) hidePopup(); }); // answered somewhere else or timed out
   const C = backend.claude;
   const tip = () => tray && tray.setToolTip(C.running() ? `VYRON — Claude: ${C.running()} working${C.tasks.some((t) => t.queued) ? ", more waiting" : ""}` : "VYRON");
   C.on("change", tip);
