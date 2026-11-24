@@ -448,8 +448,10 @@ class Backend extends EventEmitter {
     const t = ro.taskId && this.claude.tasks.find((x) => x.id === ro.taskId);
     if (team.status === "stopped") return "stopped";
     if (!t) return team.status === "building" ? "not started" : "ready";
-    return t.busy ? "working" : t.queued ? "waiting" : t.outcome === "failed" || t.outcome === "usage" ? "problem" : "done";
+    return t.busy ? "working" : t.queued ? "waiting" : t.outcome === "failed" || t.outcome === "usage" || /^Not done:/i.test(this.lastText(t)) ? "problem" : "done";
   }
+  /** A task's newest answer. */
+  lastText(t) { return (t && [...t.messages].reverse().find((m) => m.role === "assistant")?.text.trim()) || ""; }
   teamsPublic() {
     const pid = this.d.settings.activeProjectId;
     return this.d.teams.filter((t) => !pid || t.projectId === pid || !t.projectId).slice(-10).reverse().map((t) => ({
@@ -622,14 +624,19 @@ class Backend extends EventEmitter {
     this.save();
   }
   /* --- tools the Co-Founder (and the roles) use through the connector --- */
-  teamStatus(id) {
+  /** Short on purpose (it costs tokens every time a Claude reads it): states, and a note only when a role has something to say. */
+  teamStatus(id, jobs = true) {
     const team = this.team(id);
     return {
       team: team.id, game: team.plan?.title, status: team.status,
       roles: R.ROLE_IDS.map((r) => {
         const t = team.roles[r].taskId && this.claude.tasks.find((x) => x.id === team.roles[r].taskId);
-        const last = t ? [...t.messages].reverse().find((m) => m.role === "assistant") : null;
-        return { role: r, name: R.ROLES[r].name, state: this.roleState(team, r), waitingMessages: (t?.inbox || []).length, lastUpdate: last ? clip(last.text, 600) : null, jobs: (team.plan?.work[r] || []).map((w) => w.title) };
+        const state = this.roleState(team, r), out = { role: r, state }, last = r === "cofounder" ? "" : this.lastText(t), n = (t?.inbox || []).length;
+        if (n) out.waitingMessages = n;
+        if (state === "problem" && t?.why) out.note = clip(String(t.why), 200);
+        else if (last && state !== "working" && !/^done\.?$/i.test(last)) out.note = clip(last, 200);
+        if (jobs && state !== "off") out.jobs = (team.plan?.work[r] || []).map((w) => w.title);
+        return out;
       }),
     };
   }
@@ -647,8 +654,10 @@ class Backend extends EventEmitter {
     const team = this.team(id);
     const want = (roles && roles.length ? roles.map((x) => this.roleId(x)) : R.WORKERS).filter((r) => team.roles[r].enabled && r !== "cofounder");
     const end = now() + Math.min(900, Math.max(10, seconds)) * 1000;
-    while (now() < end && want.some((r) => ["working", "waiting"].includes(this.roleState(team, r)))) await new Promise((res) => setTimeout(res, 2000));
-    return this.teamStatus(team.id);
+    // Returns as soon as one of them gets free, so nobody sits idle and the Co-Founder doesn't have to keep asking.
+    const active = (r) => ["working", "waiting"].includes(this.roleState(team, r)), busy = want.filter(active);
+    while (now() < end && busy.length && busy.every(active) && team.status !== "stopped") await new Promise((res) => setTimeout(res, 1000));
+    return this.teamStatus(team.id, false);
   }
 
   /* ================= ideas ================= */
@@ -1321,7 +1330,7 @@ How:
 3. Build it with your own stud texture and the same stud size everywhere, every colour and glowing piece as its own named mesh, pivots where pieces would move. Effects around it (flames, floating pieces) are Blender models too.
 4. Check it with a script and renders from the front, side, back and far away on a studded ground, next to a plain 5-stud figure for size. Go through the checklist at the end of the guide one by one, and fix everything that isn't a clear yes.
 5. Render the best view (render_viewport_to_path to a .png in the project's reviews folder) and send it to me with vyron_submit_review (kind "model", title starting with "Test:"), then vyron_review_wait. If I ask for changes, fix it and send a new picture.
-6. After my OK save it as .fbx in "models/tests" of the project folder and tell me, honestly, what you think is still weak. It's only a test: put nothing in Roblox Studio, don't message the team, and make nothing else.`, id);
+6. After my OK save it as .fbx in "models/tests" of the project folder and tell me, honestly and in one line, what you think is still weak. It's only a test: put nothing in Roblox Studio, don't message the team, and make nothing else.`, id);
     return id;
   }
   makeModel(text) {

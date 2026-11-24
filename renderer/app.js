@@ -589,10 +589,11 @@ function agentStatus(r) {
   // Any Claude task doing this role's work counts — the team's task, or one started elsewhere (e.g. "Make a 3D model" runs the Builder in Blender).
   const mine = C.tasks.filter((x) => x.role === r);
   const t = mine.find((x) => x.busy) || (ro?.taskId && C.tasks.find((x) => x.id === ro.taskId && (x.busy || x.queued))) || mine.find((x) => x.queued) || (ro?.taskId && C.tasks.find((x) => x.id === ro.taskId));
-  if (t?.busy || (r === "cofounder" && team && (team.status === "planning" || team.status === "revising"))) return ["working", "Working", esc(roleDoing(t) || (r === "cofounder" ? "Planning " + (team?.plan?.title || "the game") : "Working"))];
+  if (t?.busy || (r === "cofounder" && team && (team.status === "planning" || team.status === "revising"))) return ["working", "Working", esc(roleDoing(t) || (r === "cofounder" ? (team && ["planning", "revising"].includes(team.status) ? "Planning " + (team.plan?.title || "the game") : "Leading the team") : "Working"))];
   if (t?.queued) return ["waiting", "Waiting", `Waiting for a free Claude slot (${C.running}/${C.limit} running)`];
   if (team?.status === "stopped" && ro?.enabled) return ["offline", "Stopped", "You pressed Stop everything"];
   if (team && ro && !ro.enabled) return ["offline", "Offline", "Switched off"];
+  if (ro?.state === "problem" && /^Not done:/i.test(t?.last || "")) return ["broken", "Stuck", esc(t.last.replace(/^Not done:\s*/i, ""))];
   if (ro?.state === "problem" || (r === "cofounder" && team?.status === "failed")) return ["broken", "Broken", esc(t?.last || team?.error || "Its last step failed")];
   return ["idle", "Idle", team?.plan ? (ro?.taskId ? "Done — waiting for the next job" : team.status === "building" ? "Waiting for orders from the Co-Founder" : "Ready") : "No team yet — ask the Co-Founder in Game Ideas"];
 }
@@ -602,7 +603,7 @@ function roleDoing(t) {
   const step = (t.todos || []).find((x) => x.status === "in_progress");
   const plain = { vyron_team_status: "Checking on the team", vyron_team_message: "Giving orders", vyron_team_wait: "Waiting for the team to finish", vyron_submit_review: "Sending you something to check", vyron_review_wait: "Waiting for your OK" };
   const tool = Object.keys(plain).find((k) => (t.now || "").includes(k));
-  return step?.activeForm || (tool ? plain[tool] : t.now) || t.last || "";
+  return step?.activeForm || (tool ? plain[tool] : t.now) || (t.busy ? "" : t.last) || ""; // roles work silently: no old text while they work
 }
 function teamColumn() {
   const team = (S.teams || [])[0];

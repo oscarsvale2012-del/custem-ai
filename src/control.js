@@ -210,11 +210,11 @@ class ControlServer {
     tool("vyron_pc_key", "Press a key or shortcut, e.g. enter, esc, tab, ctrl+s, alt+tab, ctrl+shift+p, f5." + pcNote, { keys: z.string() }, async (a) => { await this.call("pcAction", "key", a); return "Pressed " + a.keys + "."; });
 
     const teamId = z.string().optional().describe("Team id (default: the team that is building now)");
-    tool("vyron_team_status", "Studio team: what each role in the team (Co-Founder plus the roles the user added: Builder & Modeler, Coder, UI Maker, Money Maker, Sound Designer, Animator, Debugger) is doing, their jobs and last update.", { team_id: teamId }, async ({ team_id }) => { await this.state(); return this.call("teamStatus", team_id); });
+    tool("vyron_team_status", "Studio team: what each role in the team (Co-Founder plus the roles the user added: Builder & Modeler, Coder, UI Maker, Money Maker, Sound Designer, Animator, Debugger) is doing: their state and jobs, and a note when one is stuck.", { team_id: teamId }, async ({ team_id }) => { await this.state(); return this.call("teamStatus", team_id); });
     tool("vyron_team_message", "Send a message to a role in the studio team (builder, coder, ui, money, sound, animator, debug or cofounder). It reaches them right away, or as soon as their current step ends.", {
       role: z.string(), message: z.string(), team_id: teamId, from: z.string().optional().describe("Your role name, e.g. Coder"),
     }, async ({ role, message, team_id, from }) => { await this.state(); return this.call("teamMessage", team_id, role, message, from); });
-    tool("vyron_team_wait", "Wait until roles finish their current work (default: all workers), then return the team status.", {
+    tool("vyron_team_wait", "Wait until one of the roles gets free — done or stuck (default: any worker) — then return every role's state. Returns at once when nobody is working.", {
       roles: z.array(z.string()).optional(), timeout_seconds: z.number().int().min(10).max(900).optional(), team_id: teamId,
     }, async ({ roles, timeout_seconds, team_id }) => { await this.state(); return this.call("teamWait", team_id, roles, timeout_seconds); });
 

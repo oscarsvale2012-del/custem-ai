@@ -24,7 +24,7 @@ const PLAN = { title: "Lava Pet Tycoon", summary: "Hatch pets and escape lava.",
   work: { builder: [{ title: "Lava map", details: "A 200x200 baseplate with lava rivers" }, { title: "Pet model", details: "Low-poly dragon in Blender" }],
     coder: [{ title: "Pet system", details: "Hatching with 3 rarities" }], ui: [{ title: "Shop UI", details: "6 slots" }], money: [{ title: "2x Coins pass", details: "149 Robux" }] } };
 const runs = [];
-let slow = 0, killDelay = 0;
+let slow = 0, killDelay = 0, answer = null;
 function fakeSpawn(exe, args, opts) {
   const p = new EventEmitter(); p.stdout = new EventEmitter(); p.stderr = new EventEmitter();
   let timer;
@@ -34,6 +34,7 @@ function fakeSpawn(exe, args, opts) {
     let text = "OK, working on it. Done.";
     if (/Make the full plan/.test(input)) text = "Here is my plan!\n```json\n" + JSON.stringify(PLAN) + "\n```";
     if (/Change the plan/.test(input)) text = "Updated:\n```json\n" + JSON.stringify({ ...PLAN, title: "Horror Pet Tycoon" }) + "\n```";
+    if (answer) text = answer;
     if (/no json please/.test(input)) text = "I forgot the plan, sorry.";
     p.stdout.emit("data", Buffer.from(JSON.stringify({ type: "system", subtype: "init", session_id: "s-" + runs.length, model: "claude-opus-5-5" }) + "\n"));
     p.stdout.emit("data", Buffer.from(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text }] } }) + "\n"));
@@ -245,6 +246,14 @@ function fakeSpawn(exe, args, opts) {
     for (const re of [/ALWAYS DAY/, /Roblox Creator Store/, /delete any script/, /Only ONE event at once/, /at most 5 friends \(\+100%\)/, /Random boosts/]) assert(re.test(R.WORLD), "world: " + re);
     assert(/\+50% luck/.test(R.REBIRTH) && /NEVER takes pets, vehicles, items/.test(R.REBIRTH) && /ONLY money, upgrades and the base's features/.test(R.REBIRTH));
     for (const re of [/after 5 minutes/, /Celestial, Cosmic, Eternal, Infinity, Secret, Impossible\) — after 3 minutes/, /STANDS STILL/, /always has a bat/, /CARRYING a crate\/egg in the running area/, /EVERY player is teleported to the spawn/, /15 seconds/, /ONLY its rarity/]) assert(re.test(R.RUN), "run: " + re);
+    // Saving tokens: only the Co-Founder writes, the plan stays complete
+    for (const r of R.WORKERS) assert(pr(r).includes(R.QUIET) && !pr(r).includes(R.QUIET_LEAD), r + " works silently");
+    assert(pr("cofounder").includes(R.QUIET_LEAD) && !pr("cofounder").includes(R.QUIET));
+    assert(/Write no chat text/.test(R.QUIET) && /end with exactly "Done\."/.test(R.QUIET) && /"Not done: "/.test(R.QUIET) && /never means doing, thinking, checking or testing less/.test(R.QUIET));
+    assert(/as complete and detailed as ever/.test(R.QUIET_LEAD) && /one prompt from the user must be enough for the team to make the whole game/.test(R.QUIET_LEAD) && /never tell the user what the roles are working on/.test(R.QUIET_LEAD));
+    const pl = R.planPrompt("x", R.WORKERS), db = R.directorBrief({ id: "x", plan: PLAN, roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { enabled: true }])) });
+    assert(/enough for the team to make the full game without asking/.test(pl) && /enough detail that they can be done without asking/.test(pl) && /names, sizes, colours, numbers/.test(pl), "the full plan from one prompt");
+    assert(/one short line that the team has started/.test(db) && /as soon as a role gets free/.test(db) && !/final report/.test(db + pr("cofounder")) && !/one-line report/.test(R.workerBrief({ id: "x", plan: PLAN, roles: {} }, "coder")));
     // Rarities: 14+, one crate each, 15+ things in each
     assert(R.RARITIES.length >= 14 && R.CRATE_ITEMS >= 15 && new Set(R.RARITIES.map((x) => x[0])).size === R.RARITIES.length && new Set(R.RARITIES.map((x) => x[2])).size === R.RARITIES.length, "14+ different rarities");
     const odds = R.RARITIES.slice(1).map((x) => x[1]);
@@ -405,8 +414,30 @@ function fakeSpawn(exe, args, opts) {
       assert.equal(be.d.settings.claudeParallel, 7, "6 roles + your own chat");
       be.d.settings.claudeParallel = 12; be.teamSlots(fake);
       assert.equal(be.d.settings.claudeParallel, 12, "never lowered");
-      assert(/AT THE SAME TIME|at the same time/.test(R.workerBrief({ id: "x", plan: PLAN, roles: fake.roles }, "coder")) && /after EACH job/.test(R.workerBrief({ id: "x", plan: PLAN, roles: fake.roles }, "coder")), "workers report after each job");
+      assert(/AT THE SAME TIME|at the same time/.test(R.workerBrief({ id: "x", plan: PLAN, roles: fake.roles }, "coder")) && /Don't report finished jobs/.test(R.workerBrief({ id: "x", plan: PLAN, roles: fake.roles }, "coder")), "workers work on without reporting");
     } finally { be.d.settings.claudeParallel = saved; }
+  });
+  await test("states without chat: working, done and stuck still show; the team tools stay short; wait returns when one gets free", async () => {
+    await idle();
+    const say = async (role, text) => { answer = text; await tool("vyron_team_message", { team_id: id, role, message: "go" }); await idle(); answer = null; };
+    await say("coder", "Done.");
+    const one = (s, r) => s.roles.find((x) => x.role === r);
+    let s = await tool("vyron_team_status", { team_id: id });
+    assert.deepEqual([one(s, "coder").state, one(s, "coder").note, one(s, "coder").lastUpdate], ["done", undefined, undefined], "a silent Done costs nothing to read");
+    await say("builder", "Not done: the jet needs its wing texture uploaded by the user");
+    s = await tool("vyron_team_status", { team_id: id });
+    assert(one(s, "builder").state === "problem" && /wing texture/.test(one(s, "builder").note), "stuck is never hidden");
+    assert.equal(main().roles.builder.state, "problem", "and the app shows it too");
+    assert(JSON.stringify(s).length < 1500, "short: " + JSON.stringify(s).length);
+    // wait: back as soon as ONE is free
+    slow = 2600; await tool("vyron_team_message", { team_id: id, role: "builder", message: "long job" }); await wait(30);
+    slow = 200; await tool("vyron_team_message", { team_id: id, role: "coder", message: "short job" }); await wait(30);
+    assert(main().roles.builder.state === "working" && main().roles.coder.state === "working", "shown as working");
+    const t0 = Date.now(), w = await tool("vyron_team_wait", { team_id: id, timeout_seconds: 20 });
+    assert(Date.now() - t0 < 2400 && one(w, "coder").state === "done" && one(w, "builder").state === "working", "the Coder is free, the Builder still works");
+    assert(!one(w, "coder").jobs, "no job lists while waiting");
+    slow = 0; await idle(); await say("builder", "Done.");
+    assert.equal(main().roles.builder.state, "done", "fixed → done again");
   });
   await test("wait returns when the roles are done", async () => {
     const s = await tool("vyron_team_wait", { timeout_seconds: 10 });
