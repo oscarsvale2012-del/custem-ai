@@ -43,13 +43,13 @@ function fakeSpawn(script, ms = 10) {
     live++; peak = Math.max(peak, live);
     const p = new EventEmitter();
     p.stdout = new EventEmitter(); p.stderr = new EventEmitter();
-    let input = "";
-    p.stdin = { end: (t) => { input = t; setTimeout(() => {
+    let input = "", timer;
+    p.stdin = { end: (t) => { input = t; timer = setTimeout(() => {
       spawned.push({ exe, args, opts, input });
       for (const l of script(input, args)) p.stdout.emit("data", Buffer.from(JSON.stringify(l) + "\n"));
       live--; p.emit("close", 0);
     }, ms); } };
-    p.kill = () => { live--; p.emit("close", 1); };
+    p.kill = () => { clearTimeout(timer); live--; p.emit("close", 1); };
     p.unref = () => {};
     return p;
   };
