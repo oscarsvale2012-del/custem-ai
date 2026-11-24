@@ -75,7 +75,7 @@ class Backend extends EventEmitter {
     this.claude = new ClaudeRunner({
       dataDir, log: (t, l) => this.log(t, l, "Claude"),
       control: () => (this.controlInfo ? this.controlInfo(true) : null),
-      settings: () => ({ access: this.d.settings.claudeAccess || "safe", model: this.d.settings.claudeModel || "", parallel: this.d.settings.claudeParallel || 3, blender: this.d.settings.blender !== false, pc: this.d.settings.pcControl || "off" }),
+      settings: () => ({ access: this.d.settings.claudeAccess || "safe", model: this.d.settings.claudeModel || "", parallel: this.d.settings.claudeParallel || 3, teamParallel: this.d.settings.teamParallel || 0, blender: this.d.settings.blender !== false, pc: this.d.settings.pcControl || "off" }),
       ...(claude || {}),
     });
     this.claude.on("change", () => this.changed());
@@ -173,7 +173,7 @@ class Backend extends EventEmitter {
   }
 
   saveSettings(patch) {
-    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook", "uiSounds", "uiHover", "uiPack", "blender", "autoApprove", "usageStyle", "autoOpenBlender", "autoConnectBlender", "blenderStartPrompt", "blenderExe", "hotkeysOn"]) if (k in patch) this.d.settings[k] = patch[k];
+    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "teamParallel", "mapFirst", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook", "uiSounds", "uiHover", "uiPack", "blender", "autoApprove", "usageStyle", "autoOpenBlender", "autoConnectBlender", "blenderStartPrompt", "blenderExe", "hotkeysOn"]) if (k in patch) this.d.settings[k] = patch[k];
     const S = this.d.settings;
     const hk0 = JSON.stringify([S.hotkeysOn, S.hotkeys]);
     if (patch.hotkeys && typeof patch.hotkeys === "object") {
@@ -206,6 +206,8 @@ class Backend extends EventEmitter {
     if (this.d.settings.pcControl !== "on") this.pcUntil = 0;
     if (!["safe", "full"].includes(this.d.settings.claudeAccess)) this.d.settings.claudeAccess = "safe";
     this.d.settings.claudeParallel = Math.min(20, Math.max(1, Math.round(Number(this.d.settings.claudeParallel) || 3)));
+    S.teamParallel = Math.min(7, Math.max(0, Math.round(Number(S.teamParallel) || 0))); // 0 = the whole team at once
+    S.mapFirst = S.mapFirst !== false; // on unless turned off
     this.claude.pump();
     this.d.settings.claudeModel = String(this.d.settings.claudeModel || "").replace(/[^\w.:\-[\]]/g, "").slice(0, 60);
     this.save();
@@ -436,7 +438,7 @@ class Backend extends EventEmitter {
       const added = want.filter((r) => !before.includes(r) && !team.roles[r]?.enabled), removed = before.filter((r) => !want.includes(r));
       for (const r of removed) if (team.roles[r]?.enabled) this.teamSetRole(team.id, r, false);
       for (const r of added) this.teamSetRole(team.id, r, true);
-      if (added.length && team.status === "building" && team.roles.cofounder?.taskId) this.claude.followUp(team.roles.cofounder.taskId, `[From the user] I added ${added.map((r) => R.ROLES[r].name).join(", ")} to the team. Give ${added.length > 1 ? "them" : "it"} detailed jobs for this game with vyron_team_message.`, this.workDir(), "you");
+      if (added.length && team.status === "building" && team.phase !== "map" && team.roles.cofounder?.taskId) this.claude.followUp(team.roles.cofounder.taskId, `[From the user] I added ${added.map((r) => R.ROLES[r].name).join(", ")} to the team. Give ${added.length > 1 ? "them" : "it"} detailed jobs for this game with vyron_team_message.`, this.workDir(), "you");
     }
     this.log(`Team: Co-Founder${this.d.settings.teamRoles.length ? ", " + this.d.settings.teamRoles.map((r) => R.ROLES[r].name).join(", ") : " only"}`, "info", "Team");
     this.save();
@@ -447,15 +449,19 @@ class Backend extends EventEmitter {
     if (!ro?.enabled) return "off";
     const t = ro.taskId && this.claude.tasks.find((x) => x.id === ro.taskId);
     if (team.status === "stopped") return "stopped";
-    if (!t) return team.status === "building" ? "not started" : "ready";
+    if (!t) return team.status === "building" ? (team.phase === "map" && r !== "builder" ? "after the map" : "not started") : "ready";
     return t.busy ? "working" : t.queued ? "waiting" : t.outcome === "failed" || t.outcome === "usage" || /^Not done:/i.test(this.lastText(t)) ? "problem" : "done";
   }
-  /** A task's newest answer. */
-  lastText(t) { return (t && [...t.messages].reverse().find((m) => m.role === "assistant")?.text.trim()) || ""; }
+  /** A task's newest answer to its newest message. */
+  lastText(t) {
+    if (!t) return "";
+    const m = t.messages.slice(t.messages.map((x) => x.role).lastIndexOf("user") + 1);
+    return [...m].reverse().find((x) => x.role === "assistant")?.text.trim() || "";
+  }
   teamsPublic() {
     const pid = this.d.settings.activeProjectId;
     return this.d.teams.filter((t) => !pid || t.projectId === pid || !t.projectId).slice(-10).reverse().map((t) => ({
-      id: t.id, status: t.status, error: t.error || null, idea: t.idea, prefs: t.prefs || {}, plan: t.plan, createdAt: t.createdAt, cofounderTaskId: t.roles.cofounder?.taskId || null,
+      id: t.id, status: t.status, phase: t.phase || "build", error: t.error || null, idea: t.idea, prefs: t.prefs || {}, plan: t.plan, createdAt: t.createdAt, cofounderTaskId: t.roles.cofounder?.taskId || null,
       roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { enabled: !!t.roles[r]?.enabled, taskId: t.roles[r]?.taskId || null, state: this.roleState(t, r) }])),
     }));
   }
@@ -481,6 +487,12 @@ class Backend extends EventEmitter {
   }
   /** A role's Claude finished a step: read the Co-Founder's plan when it was planning. */
   teamTaskFinished(taskId) {
+    const mapTeam = this.d.teams.find((t) => t.phase === "map" && t.status === "building" && t.roles.builder?.taskId === taskId);
+    if (mapTeam) {
+      const t = this.claude.tasks.find((x) => x.id === taskId);
+      if (t?.outcome === "done" && !t.inbox?.length && !/^Not done:/i.test(this.lastText(t))) this._mapDone(mapTeam);
+      return this.changed();
+    }
     const team = this.d.teams.find((t) => t.roles.cofounder?.taskId === taskId && (t.status === "planning" || t.status === "revising"));
     if (!team) return this.changed();
     const t = this.claude.tasks.find((x) => x.id === taskId);
@@ -503,16 +515,40 @@ class Backend extends EventEmitter {
   teamAccept(id) {
     const team = this.team(id);
     if (team.status !== "proposed") throw new Error("There's no plan to accept yet");
-    team.status = "building"; team.acceptedAt = now(); this.save();
+    team.status = "building"; team.acceptedAt = now();
+    // "Build the full map first" (Settings): only the Builder starts, with the map; everyone else waits until it's finished.
+    team.phase = this.d.settings.mapFirst !== false && team.roles.builder?.enabled ? "map" : "build";
+    this.save();
     this.teamSlots(team);
-    for (const r of R.WORKERS) if (team.roles[r].enabled) this.teamStartRole(team, r);
-    if (team.roles.cofounder.enabled) this.claude.followUp(team.roles.cofounder.taskId, R.directorBrief(team), this.workDir(), "you");
-    this.log(`Team started building ${team.plan.title}`, "ok", "Team");
+    if (team.phase === "map") this.teamStartRole(team, "builder");
+    else this._teamStartAll(team);
+    this.log(`Team started building ${team.plan.title}${team.phase === "map" ? " — the full map first" : ""}`, "ok", "Team");
     this.save();
   }
-  /** The whole team works at the same time: make room for every switched-on role (+1 for your own chat). */
+  _teamStartAll(team) {
+    for (const r of R.WORKERS) if (team.roles[r].enabled) this.teamStartRole(team, r);
+    if (team.roles.cofounder.enabled) this.claude.followUp(team.roles.cofounder.taskId, R.directorBrief(team), this.workDir(), "you");
+  }
+  /** The map is finished (the Builder said so, or you did): now the whole team works. */
+  _mapDone(team) {
+    team.phase = "build"; team.mapBuilt = true; this.save();
+    const t = team.roles.builder.enabled && this.claude.tasks.find((x) => x.id === team.roles.builder.taskId);
+    if (t) { const next = R.afterMapBrief(team); if (next) this.claude.followUp(t.id, next, this.workDir(), "you"); }
+    this._teamStartAll(team);
+    this.log(`The map of ${team.plan?.title || "the game"} is finished — the rest of the team starts`, "ok", "Team");
+    this.emit("alert", { kind: "done", title: "The map is finished", body: "The rest of the team starts now.", at: now() });
+    this.save();
+  }
+  /** "The map is ready" on the plan card: go on without waiting for the Builder to say so. */
+  teamMapDone(id) {
+    const team = this.team(id);
+    if (team.status !== "building" || team.phase !== "map") throw new Error("This team isn't building its map");
+    this._mapDone(team);
+  }
+  /** The whole team works at the same time: make room for every switched-on role, or as many as you allow in Settings (+ the Co-Founder, +1 for your own chat). */
   teamSlots(team) {
-    const need = Math.min(20, R.ROLE_IDS.filter((r) => team.roles[r]?.enabled).length + 1);
+    const workers = R.WORKERS.filter((r) => team.roles[r]?.enabled).length, most = this.d.settings.teamParallel || 0;
+    const need = Math.min(20, (most ? Math.min(workers, most) : workers) + (team.roles.cofounder?.enabled ? 1 : 0) + 1);
     if ((this.d.settings.claudeParallel || 3) < need) {
       this.d.settings.claudeParallel = need;
       this.log(`Claude tasks at the same time raised to ${need} so the whole team works at once (Settings → Claude)`, "info", "Team");
@@ -520,6 +556,7 @@ class Backend extends EventEmitter {
     }
   }
   teamStartRole(team, r) {
+    if (team.phase === "map" && r !== "builder") return; // starts by itself when the map is finished
     if (r === "builder" && blenderServer()) this.ensureBlender();
     if (team.roles[r].taskId && this.claude.tasks.some((x) => x.id === team.roles[r].taskId)) return;
     const taskId = this.claude.newTask(`${R.ROLES[r].name}: ${team.plan?.title || "game"}`, { role: r, teamId: team.id });
@@ -609,7 +646,7 @@ class Backend extends EventEmitter {
     const msg = `[From the user] I stopped the whole team and now let it continue. Your last step may be half done: check what is really there first (vyron_team_status, the Studio place, Blender), then go on with your jobs.${fb ? `\nWhat I want added or changed — do your part of it first (the Co-Founder makes sure it's shared out well): ${fb}` : ""}`;
     for (const r of R.ROLE_IDS) {
       const ro = team.roles[r];
-      if (!ro?.enabled) continue;
+      if (!ro?.enabled || (team.phase === "map" && r !== "builder")) continue;
       const t = ro.taskId && this.claude.tasks.find((x) => x.id === ro.taskId);
       if (t) this.claude.followUp(t.id, this.claude.takeLost(t) + msg, this.workDir(), "you");
       else if (r !== "cofounder") this.teamStartRole(team, r);
@@ -644,6 +681,7 @@ class Backend extends EventEmitter {
     const team = this.team(id), r = this.roleId(role), ro = team.roles[r];
     if (team.status === "stopped") throw new Error("The user pressed Emergency stop. Stop working and don't message anyone.");
     if (!ro.enabled) throw new Error(`${R.ROLES[r].name} is switched off by the user.`);
+    if (team.phase === "map" && r !== "builder" && r !== "cofounder") throw new Error(`The map is built first. ${R.ROLES[r].name} starts by itself when it's finished.`);
     if (!String(text || "").trim()) throw new Error("Empty message");
     if (!ro.taskId) { if (r === "cofounder" || team.status !== "building") throw new Error(`${R.ROLES[r].name} hasn't started.`); this.teamStartRole(team, r); }
     this.claude.followUp(ro.taskId, `[From ${String(from || "the Co-Founder").slice(0, 40)}] ${String(text).slice(0, 6000)}`, this.workDir(), from || "cofounder");

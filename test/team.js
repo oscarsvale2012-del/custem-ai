@@ -57,7 +57,7 @@ function fakeSpawn(exe, args, opts) {
   await be.init(); await control.start();
   be.setActiveProject(await be.addProject({ name: "Test", rojoDir: path.join(TMP, "game") }));
   const ctx = { backend: be, auth: null, control };
-  await dispatch(ctx, "saveSettings", [{ claudeParallel: 10, autoOpenBlender: false }]); // tests never start the real Blender
+  await dispatch(ctx, "saveSettings", [{ claudeParallel: 10, autoOpenBlender: false, mapFirst: false }]); // tests never start the real Blender
   const idle = async () => { for (let i = 0; i < 200 && be.claude.busy; i++) await wait(20); };
   const team = () => be.publicState().teams[0];
   const taskOf = (r) => be.claude.tasks.find((x) => x.id === team().roles[r].taskId);
@@ -438,6 +438,84 @@ function fakeSpawn(exe, args, opts) {
     assert(!one(w, "coder").jobs, "no job lists while waiting");
     slow = 0; await idle(); await say("builder", "Done.");
     assert.equal(main().roles.builder.state, "done", "fixed → done again");
+  });
+  await test("Settings: how many AIs work at the same time on one game (the Co-Founder isn't counted, waiting never blocks)", async () => {
+    await idle();
+    const set = (x) => dispatch(ctx, "saveSettings", [x]);
+    for (const [v, want] of [["3", 3], [99, 7], [-2, 0], ["junk", 0], [0, 0]]) { await set({ teamParallel: v }); assert.equal(be.d.settings.teamParallel, want); }
+    const workers = ["builder", "coder", "animator"], busy = () => be.claude.tasks.filter((t) => t.teamId === tid && t.role !== "cofounder" && t.busy).length;
+    let tid = null, peak = 0;
+    const go = async (n) => {
+      await set({ teamParallel: n });
+      tid = await dispatch(ctx, "teamPlan", ["parallel test", [], {}, workers]); await idle();
+      slow = 120; peak = 0;
+      await dispatch(ctx, "teamAccept", [tid]);
+      for (let i = 0; i < 200 && be.claude.busy; i++) { peak = Math.max(peak, busy()); await wait(10); }
+      slow = 0;
+      const T = be.publicState().teams.find((x) => x.id === tid);
+      assert(workers.every((r) => T.roles[r].state === "done"), "everyone got their turn with limit " + n);
+      await dispatch(ctx, "teamDiscard", [tid]);
+      return peak;
+    };
+    assert.equal(await go(1), 1); assert.equal(await go(2), 2); assert.equal(await go(0), 3, "0 = all at once");
+    // a lower limit needs fewer slots; a role that only waits for its team takes none
+    const saved = be.d.settings.claudeParallel; be.d.settings.claudeParallel = 1; be.d.settings.teamParallel = 2;
+    be.teamSlots({ roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { enabled: true }])) });
+    assert.equal(be.d.settings.claudeParallel, 4, "2 roles + the Co-Founder + your own chat");
+    be.d.settings.claudeParallel = 1;
+    const lead = be.claude.task(main().cofounderTaskId); lead.busy = true; lead.now = "vyron · vyron_team_wait";
+    const before = runs.length; await tool("vyron_team_message", { team_id: id, role: "coder", message: "with one slot" }); await wait(80);
+    lead.busy = false; lead.now = null;
+    assert(runs.slice(before).some((x) => /with one slot/.test(x.input)), "the waiting Co-Founder doesn't block the only slot");
+    be.d.settings.claudeParallel = saved; await set({ teamParallel: 0 }); await idle();
+  });
+  await test("Settings: the full map first — only the Builder works until it's finished, then everyone", async () => {
+    await idle();
+    assert.equal((await (async () => { await dispatch(ctx, "saveSettings", [{ mapFirst: undefined }]); return be.d.settings.mapFirst; })()), true, "on unless turned off");
+    const plan = { ...PLAN, work: { ...PLAN.work, builder: [{ title: "Pet model", details: "a dragon" }, { title: "Lava map", details: "rivers", map: true }, { title: "Bases", details: "six plots", map: true }], coder: [{ title: "Shop", details: "s" }] } };
+    assert.deepEqual(R.parsePlan("```json\n" + JSON.stringify(plan) + "\n```").work.builder.map((w) => !!w.map), [false, true, true]);
+    assert(!R.parsePlan("```json\n" + JSON.stringify({ ...plan, work: { coder: [{ title: "x", details: "y", map: true }] } }) + "\n```").work.coder[0].map, "only Builder jobs are map jobs");
+    assert.deepEqual(R.mapJobs(plan).map.map((w) => w.title), ["Lava map", "Bases"]);
+    assert.deepEqual(R.mapJobs({ work: { builder: [{ title: "Dragon pet", details: "" }, { title: "Spawn and paths", details: "" }] } }).map.map((w) => w.title), ["Spawn and paths"], "unmarked plans: what sounds like the map");
+    const none = R.mapJobs({ work: { builder: [{ title: "Dragon pet", details: "" }] } }); assert(none.map[0].title === "The full map" && none.rest.length === 1, "or one job for the whole map");
+    assert(/"map": true/.test(R.planPrompt("x", ["builder", "coder"])) && !/"map": true/.test(R.planPrompt("x", ["coder"])));
+    const start = async () => { const tid = await dispatch(ctx, "teamPlan", ["map first test", [], {}, ["coder", "animator"]]); await idle(); be.d.teams.find((x) => x.id === tid).plan = plan; return tid; };
+    const T = (tid) => be.publicState().teams.find((x) => x.id === tid);
+    let tid = await start(), n = runs.length;
+    slow = 250; await dispatch(ctx, "teamAccept", [tid]); await wait(40);
+    assert.equal(T(tid).phase, "map");
+    assert.deepEqual([T(tid).roles.builder.state, T(tid).roles.coder.state, T(tid).roles.animator.state, T(tid).roles.animator.taskId], ["working", "after the map", "after the map", null]);
+    assert(!be.claude.task(T(tid).cofounderTaskId).busy, "the Co-Founder uses nothing meanwhile");
+    await assert.rejects(tool("vyron_team_message", { team_id: tid, role: "coder", message: "start already" }), /The map is built first/);
+    await dispatch(ctx, "teamSetRole", [tid, "sound", true]);
+    assert(!T(tid).roles.sound.taskId, "a role added now waits too");
+    slow = 0; await idle();
+    const ran = runs.slice(n), first = ran[0];
+    assert(/MAP FIRST/.test(first.input) && /Lava map/.test(first.input) && /Bases/.test(first.input) && !/Pet model/.test(first.input), "the Builder got only the map");
+    assert(T(tid).phase === "build" && ran.some((x) => /The map is finished and the whole team works now/.test(x.input) && /Pet model/.test(x.input) && !/Lava map/.test(x.input)), "then its other jobs");
+    assert(["coder", "animator", "sound"].every((r) => T(tid).roles[r].taskId) && ran.some((x) => /Your jobs as Coder/.test(x.input) && /The full map is already built/.test(x.input)), "then everyone else");
+    assert(ran.some((x) => /already built in Studio/.test(x.input) && /accepted your plan/.test(x.input)), "and the Co-Founder directs");
+    await dispatch(ctx, "teamDiscard", [tid]); await idle();
+    // not really finished → nobody starts; stop and continue keeps waiting for the map; you can say it's ready
+    tid = await start(); n = runs.length; answer = "Not done: import the map models in Studio";
+    await dispatch(ctx, "teamAccept", [tid]); await idle(); answer = null;
+    assert(T(tid).phase === "map" && T(tid).roles.builder.state === "problem" && runs.length === n + 1, "stuck: the others still wait");
+    slow = 300; await tool("vyron_team_message", { team_id: tid, role: "builder", message: "keep going" }); await wait(30);
+    await dispatch(ctx, "emergencyStop", []); slow = 0; await idle();
+    assert(T(tid).phase === "map" && T(tid).status === "stopped");
+    await assert.rejects(dispatch(ctx, "teamMapDone", [tid]), /isn't building its map/);
+    answer = "Not done: still one zone missing"; await dispatch(ctx, "teamResume", [tid]); await idle(); answer = null;
+    assert(T(tid).phase === "map" && !T(tid).roles.coder.taskId && runs.slice(n).every((x) => !/Your jobs as Coder/.test(x.input)), "continuing only wakes the Builder");
+    await dispatch(ctx, "teamMapDone", [tid]); await idle();
+    assert(T(tid).phase === "build" && T(tid).roles.coder.state === "done", "you can start the others yourself");
+    await dispatch(ctx, "teamDiscard", [tid]); await idle();
+    // without a Builder there's no map to wait for, and the setting can be turned off
+    tid = await start(); await dispatch(ctx, "teamSetRole", [tid, "builder", false]); await dispatch(ctx, "teamAccept", [tid]); await idle();
+    assert(T(tid).phase === "build" && T(tid).roles.coder.taskId); await dispatch(ctx, "teamDiscard", [tid]);
+    await dispatch(ctx, "saveSettings", [{ mapFirst: false }]);
+    tid = await start(); await dispatch(ctx, "teamAccept", [tid]); await idle();
+    assert(T(tid).phase === "build" && runs.some((x) => /Pet model/.test(x.input) && /Lava map/.test(x.input))); await dispatch(ctx, "teamDiscard", [tid]); await idle();
+    await dispatch(ctx, "teamResume", [id]).catch(() => {}); await idle(); // the emergency stop above also stopped the main test team
   });
   await test("wait returns when the roles are done", async () => {
     const s = await tool("vyron_team_wait", { timeout_seconds: 10 });

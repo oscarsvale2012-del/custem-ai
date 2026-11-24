@@ -190,6 +190,7 @@ const QUIET = `WORK SILENTLY — this saves the user's Claude usage, and it neve
 - Write no chat text: no greeting, no plan, no explaining, no progress, no summary of what you did. Go from one tool call straight to the next. When all your jobs are done and tested, end with exactly "Done."
 - Never report progress or finished jobs to anyone. VYRON shows by itself who is working, waiting, idle or done.
 - Message another role only when it can't go on without it or must know an exact name, size or time: one short message, no thanks, no status, no small talk. Don't answer messages that need no answer.
+- Never wait for another role (vyron_team_wait is only for the Co-Founder): do your other jobs, or end; a message wakes you up again.
 - Task list (TodoWrite): one short line per job, updated only when a job is finished.
 - Be honest: if something isn't finished, failed or needs the user, send the Co-Founder ONE line that says exactly what, go on with everything else, and end with "Not done: " and that one line instead of "Done."
 - Only when the user asks you something directly in this chat, answer it shortly.`;
@@ -364,7 +365,7 @@ const WORKERS = ROLE_IDS.filter((r) => r !== "cofounder");
 function planPrompt(idea, roles = WORKERS) {
   roles = roles.filter((r) => WORKERS.includes(r));
   const keys = roles.length ? roles : ["cofounder"];
-  const rows = keys.map((r, i) => `  "${r}": [{"title": "${i ? "..." : "short task"}", "details": "${i ? "..." : "exact, detailed instructions"}"}]`).join(",\n");
+  const rows = keys.map((r, i) => `  "${r}": [{"title": "${i ? "..." : "short task"}", "details": "${i ? "..." : "exact, detailed instructions"}"${r === "builder" ? ', "map": true' : ""}}]`).join(",\n");
   return `${idea}
 
 Make the full plan for this Roblox game as the Co-Founder. Do NOT build or change anything yet — you may look at the open Studio place to understand it.
@@ -376,7 +377,7 @@ Answer with one short sentence for the user, then exactly one JSON block in this
 ${rows}
  }}
 \`\`\`
-Give ${roles.length ? "each role" : "yourself"} 2-6 tasks${roles.includes("builder") ? " (the Builder as many as it needs, up to 24: with a collection, one task per crate that names all its things)" : ""} with enough detail that they can be done without asking (names, sizes, colours, numbers, RemoteEvent names, prices, sound and animation names).${roles.includes("builder") ? ` Every 3D model in the game (buildings, props, items, pets, brainrots, weapons, vehicles…) goes in the builder's list, to be made in Blender — list each model with its size, colours and level of detail.` : ""}`;
+Give ${roles.length ? "each role" : "yourself"} 2-6 tasks${roles.includes("builder") ? " (the Builder as many as it needs, up to 24: with a collection, one task per crate that names all its things)" : ""} with enough detail that they can be done without asking (names, sizes, colours, numbers, RemoteEvent names, prices, sound and animation names).${roles.includes("builder") ? ` Every 3D model in the game (buildings, props, items, pets, brainrots, weapons, vehicles…) goes in the builder's list, to be made in Blender — list each model with its size, colours and level of detail. The map is built completely before anything else: put the Builder's map tasks first and mark each with "map": true (ground, borders, zones, paths, bases, buildings, places to go, signs, spawn, nature, landmarks — together they must give the whole finished map); leave "map" out of everything else (pets, vehicles, items, crates, weapons, effects).` : ""}`;
 }
 
 /** Pull the plan out of the Co-Founder's answer. */
@@ -388,20 +389,36 @@ function parsePlan(text) {
       if (!j || typeof j !== "object" || !j.work) continue;
       const work = {};
       for (const r of ROLE_IDS) work[r] = (Array.isArray(j.work[r]) ? j.work[r] : []).filter((w) => w && (w.title || w.details)).slice(0, r === "builder" ? 24 : 12)
-        .map((w) => ({ title: String(w.title || "Task").slice(0, 120), details: String(w.details || "").slice(0, r === "builder" ? 4000 : 2000) }));
+        .map((w) => ({ title: String(w.title || "Task").slice(0, 120), details: String(w.details || "").slice(0, r === "builder" ? 4000 : 2000), ...(r === "builder" && w.map === true ? { map: true } : {}) }));
       return { title: String(j.title || "New game").slice(0, 80), summary: String(j.summary || "").slice(0, 800), features: (Array.isArray(j.features) ? j.features : []).map(String).slice(0, 15), work };
     } catch { /* try the next block */ }
   }
   return null;
 }
 
+/** The Builder's jobs split into the map and the rest. Plans that don't mark their map jobs: the ones that sound like it, or one job for the whole map. */
+function mapJobs(plan) {
+  const all = plan?.work?.builder || [];
+  let map = all.filter((w) => w.map === true);
+  if (!map.length) map = all.filter((w) => /\b(map|world|terrain|ground|baseplate|zones?|areas?|paths?|track|walls?|fences?|lobby|spawn|plots?|bases?|landmarks?|biomes?)\b/i.test(w.title));
+  const rest = all.filter((w) => !map.includes(w));
+  if (!map.length) map = [{ title: "The full map", details: "Build the whole map this game needs: ground, borders, zones, paths, bases, buildings and places to go, spawn, nature and landmarks, so everything in the plan has its place." }];
+  return { map, rest };
+}
+const MAP_FIRST = `MAP FIRST: build the COMPLETE map now and nothing else — ground, borders, every zone and path, all bases with their fences, buildings and shops, every place players go, signs and ground letters, spawn and safe zone, nature, landmarks and lamps — made in Blender, imported and placed in Studio. No pets, vehicles, crates, eggs, items, weapons, effects or animations yet, not even a few: nobody else works until the map is finished. It's finished when the whole map is really in Studio: nothing missing or floating, every place reachable on foot, checked from above and from a player's height. Only then end with "Done."; if a part isn't really there yet (e.g. models the user still has to import), end with "Not done: " and what's missing. You get your other jobs after that.`;
+/** The Builder's next jobs once the map is finished ("" when there are none). */
+function afterMapBrief(team) {
+  const { rest } = mapJobs(team.plan);
+  return rest.length ? `[From the Co-Founder] The map is finished and the whole team works now. Keep the map as it is unless you're asked to change it. Your next jobs:\n${rest.map((w, i) => `${i + 1}. ${w.title} — ${w.details}`).join("\n")}` : "";
+}
 /** Brief for a worker role when the team starts. */
 function workerBrief(team, role) {
-  const p = team.plan, list = p.work[role] || [];
+  const mapNow = role === "builder" && team.phase === "map";
+  const p = team.plan, list = mapNow ? mapJobs(p).map : p.work[role] || [];
   const others = WORKERS.filter((r) => r !== role && team.roles[r]?.enabled).map((r) => ROLES[r].name);
   return `[From the Co-Founder] We're building "${p.title}". ${p.summary}
 Main features: ${p.features.join("; ") || "see summary"}.${team.prefs && prefsText(team.prefs) ? "\n" + prefsText(team.prefs) : ""}${role === "builder" && studsGuide(team.prefs) ? "\n\n" + studsGuide(team.prefs) : ""}
-Team id: ${team.id}. Working at the same time: ${others.join(", ") || "only you"}.
+Team id: ${team.id}. ${mapNow ? "Only you work now; the others start when the map is finished." : `Working at the same time: ${others.join(", ") || "only you"}.`}${team.mapBuilt ? " The full map is already built: look at it first, use its places and names, and don't change it." : ""}${mapNow ? "\n\n" + MAP_FIRST : ""}
 
 Your jobs as ${ROLES[role].name}:
 ${list.map((w, i) => `${i + 1}. ${w.title} — ${w.details}`).join("\n") || "Wait for instructions from the Co-Founder (check with vyron_team_status)."}
@@ -413,8 +430,8 @@ function directorBrief(team) {
   const on = WORKERS.filter((r) => team.roles[r]?.enabled);
   const own = (team.plan.work.cofounder || []).map((w, i) => `${i + 1}. ${w.title} — ${w.details}`).join("\n");
   if (!on.length) return `The user accepted your plan for "${team.plan.title}" (team id ${team.id}). There are no other roles, so build it yourself now, step by step:\n${own || "Do everything in your plan."}\nTest each part in play mode. When it's done, do a full play test, and at the end tell the user only what they must do themself (e.g. publish, create gamepasses, upload audio or animations) and what doesn't work yet.`;
-  return `The user accepted your plan for "${team.plan.title}". The team has started (team id ${team.id}): ${on.map((r) => ROLES[r].name).join(", ")} each got their jobs from your plan.${own ? `\nYour own jobs:\n${own}` : ""}
+  return `${team.mapBuilt ? "The full map is already built in Studio: check that it fits the plan and have the Builder fix only what's wrong. " : ""}The user accepted your plan for "${team.plan.title}". The team has started (team id ${team.id}): ${on.map((r) => ROLES[r].name).join(", ")} each got their jobs from your plan.${own ? `\nYour own jobs:\n${own}` : ""}
 They are all working at the same time right now. They don't report to you, to save tokens. First write the user one short line that the team has started. Then command them like a team lead: vyron_team_wait returns as soon as a role gets free or is stuck (vyron_team_status only when you need the job lists); check what that role really made in Studio, send orders, extra details or fixes with vyron_team_message, and give it its next job straight away (or a useful extra job) so nobody sits idle. Keep them out of each other's way: one owner per object, folder and script; when two roles need the same thing (a RemoteEvent, a sound or animation name), decide the name and tell both. Make sure everything fits together (names, RemoteEvents, UI ↔ scripts ↔ shop, which sounds and animations play when). When they are done${on.includes("debug") ? ", have the Debugger check the whole place (flickering, flying parts, errors) and fix what it finds," : ""} do a full play test and have the owners fix the problems. At the very end tell the user in one line that the game is ready, plus only what they must do themself (e.g. create gamepasses, import models, upload audio or publish animations) and what doesn't work yet.`;
 }
 
-module.exports = { ROLES, ROLE_IDS, WORKERS, PREFS, STUDS_GUIDE, STUDS_SIMPLE, studsGuide, NEVER_BUILD, SHOP_UI, BULK_GIFT, PACKS, packPrice, OWNERS, MOTION, REVEAL, EFFECTS, COLLECTION, RARITIES, CRATE_ITEMS, SOUNDS, EVENTS, SUPER_EVENTS, FRIENDS, DESPAWN, WORLD, REBIRTH, RUN, luckChances, QUIET, QUIET_LEAD, cleanPrefs, prefsText, planPrompt, parsePlan, workerBrief, directorBrief };
+module.exports = { ROLES, ROLE_IDS, WORKERS, PREFS, STUDS_GUIDE, STUDS_SIMPLE, studsGuide, NEVER_BUILD, SHOP_UI, BULK_GIFT, PACKS, packPrice, OWNERS, MOTION, REVEAL, EFFECTS, COLLECTION, RARITIES, CRATE_ITEMS, SOUNDS, EVENTS, SUPER_EVENTS, FRIENDS, DESPAWN, WORLD, REBIRTH, RUN, luckChances, QUIET, QUIET_LEAD, mapJobs, MAP_FIRST, afterMapBrief, cleanPrefs, prefsText, planPrompt, parsePlan, workerBrief, directorBrief };

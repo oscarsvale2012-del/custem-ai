@@ -149,6 +149,10 @@ class ClaudeRunner extends EventEmitter {
   task(id) { const t = this.tasks.find((x) => x.id === id); if (!t) throw new Error("Task not found"); return t; }
   limit() { return Math.min(20, Math.max(1, Number(this.o.settings().parallel) || 3)); }
   running() { return this.tasks.filter((t) => t.busy).length; }
+  /** Only waiting for its team (vyron_team_wait): it isn't working, so it never blocks the roles it waits for. */
+  waitsForTeam(t) { return !!t.busy && /vyron_team_wait/.test(t.now || ""); }
+  /** How many roles of a team are working (the Co-Founder leads and doesn't count). */
+  teamRunning(teamId) { return this.tasks.filter((t) => t.teamId === teamId && t.role !== "cofounder" && t.busy && !this.waitsForTeam(t)).length; }
   get busy() { return this.tasks.some((t) => t.busy || t.queued); }
   get model() { return [...this.tasks].filter((t) => t.model).sort((a, b) => (b.modelAt || 0) - (a.modelAt || 0))[0]?.model || null; }
 
@@ -285,8 +289,10 @@ class ClaudeRunner extends EventEmitter {
   /** Start queued tasks while there is room. */
   pump() {
     const waiting = this.tasks.filter((t) => t.queued).sort((a, b) => a.queued.at - b.queued.at);
+    const most = Number(this.o.settings().teamParallel) || 0; // Settings: roles of one game working at the same time (0 = all)
     for (const t of waiting) {
-      if (this.running() >= this.limit()) break;
+      if (this.running() - this.tasks.filter((x) => this.waitsForTeam(x)).length >= this.limit()) break;
+      if (most && t.teamId && t.role !== "cofounder" && this.teamRunning(t.teamId) >= most) continue;
       const { text, cwd } = t.queued;
       t.queued = null;
       this.start(t, text, cwd);
@@ -352,7 +358,7 @@ class ClaudeRunner extends EventEmitter {
         else if (c.type === "tool_use" && c.name === "TodoWrite") {
           // Claude's own task list: shown in VYRON like in Claude Code (read from the stream — no extra tokens).
           if (Array.isArray(c.input?.todos)) { t.todos = c.input.todos.slice(0, 20).map((x) => ({ content: clip(String(x.content || ""), 120), status: ["pending", "in_progress", "completed"].includes(x.status) ? x.status : "pending", activeForm: clip(String(x.activeForm || x.content || ""), 120) })); this.changed(); }
-        } else if (c.type === "tool_use") { t.now = toolLabel(c.name, c.input); this.push(t, { role: "tool", tool: c.name, text: t.now }); }
+        } else if (c.type === "tool_use") { t.now = toolLabel(c.name, c.input); this.push(t, { role: "tool", tool: c.name, text: t.now }); if (this.waitsForTeam(t)) this.pump(); }
       }
     } else if (j.type === "user") {
       for (const c of j.message?.content || []) if (c.type === "tool_result" && c.is_error) this.push(t, { role: "tool", tool: "error", text: clip(typeof c.content === "string" ? c.content : JSON.stringify(c.content), 300) });
