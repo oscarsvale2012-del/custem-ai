@@ -189,6 +189,14 @@ function fakeSpawn(exe, args, opts) {
     // Studs: the Builder (who makes every model) gets the whole style guide; other roles and other looks don't
     const brief = (role, texture) => R.workerBrief({ id: "x", plan: PLAN, prefs: { texture }, roles: { builder: { enabled: true }, coder: { enabled: true } } }, role);
     assert(brief("builder", "studs").includes(R.STUDS_GUIDE) && /never copy/.test(R.STUDS_GUIDE) && /tops AND sides/.test(R.STUDS_GUIDE), "the Builder learns the studs style, without copying");
+    for (const re of [/EASY shapes that still look good/, /LEFT and BOTTOM/, /big FLAT angled faces/, /stair-stepped/, /3D block letters modelled in Blender/, /own named mesh object/, /your own design/]) assert(re.test(R.STUDS_GUIDE), "studs lesson: " + re);
+    assert(/never add detail in Roblox Studio/.test(R.ROLES.builder.prompt) && /only place your imported models and add effects/.test(R.ROLES.builder.prompt) && !/placeholder/.test(R.ROLES.builder.prompt), "Studio is for effects only; details are made in Blender");
+    assert(/no text on models/.test(R.ROLES.builder.prompt) && /free-standing signs/.test(R.ROLES.builder.prompt) && /hovering text is made by the UI Maker, over places players go/.test(R.ROLES.builder.prompt), "text only on signs, on the ground and hovering over places to go");
+    assert(R.ROLES.builder.prompt.includes(R.NEVER_BUILD), "the Builder knows the wrong ways to build, in every look");
+    for (const re of [/No roof on a player base/, /No big walls around a player base/, /easily jump over/, /No storage/, /No text on objects/, /No screens or buttons with text/, /text and a see-through colour on the same object/, /MAIN ITEMS MUST LOOK SUPER GOOD/]) assert(re.test(R.NEVER_BUILD), "never build: " + re);
+    assert(/smooth BillboardGuis over places players go/.test(R.ROLES.ui.prompt) && /Never put text on a model itself/.test(R.ROLES.ui.prompt), "the UI Maker makes the hovering text");
+    assert(/Never plan storage/.test(R.ROLES.cofounder.prompt) && !/extra slots/.test(R.ROLES.money.prompt), "no storage, an inventory without limit");
+    assert(!/big plain walls/.test(R.STUDS_GUIDE) && /never around a base/.test(R.STUDS_GUIDE), "tall walls only around the whole map");
     assert(!brief("coder", "studs").includes("STUDS STYLE GUIDE") && !brief("builder", "grass").includes("STUDS STYLE GUIDE"), "nobody else spends tokens on it");
     // "Custom": the user types their own answer
     const cu = R.cleanPrefs({ modelQuality: "custom", texture: "custom", money: "custom", map: "escape", biomes: ["galaxy", "custom"], custom: { modelQuality: "  low-poly but with   cute faces ", texture: "", money: "only one 99 R$ VIP pass", biomes: "a giant kitchen", hazard: "ignored" } });
