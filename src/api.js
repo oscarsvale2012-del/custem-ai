@@ -9,10 +9,10 @@ const METHODS = [
   "listIdeas", "setPicked", "addCustomIdea", "removeCustomIdea", "ideaPrompt", "buildIdeas",
   "checkBlender", "openBlender", "enableBlenderMcp", "connectBlender", "blenderDoItForMe", "openApp", "skipSetup", "makeModel", "testModel", "finishSetup", "skipDiscord", "setDiscord", "clearDiscord", "testDiscord",
   "connectStudio", "detectStudios", "addProject", "addStudioProject", "setTaskProject", "updateProject", "removeProject", "setActiveProject", "refreshGame",
-  "accountSyncNow", "linkRoblox", "unlinkRoblox", "setRobloxApiKey", "clearRobloxApiKey", "refreshRevenue", "refreshRates",
+  "accountSyncNow", "linkRoblox", "unlinkRoblox", "setRobloxApiKey", "clearRobloxApiKey", "setOpenAIKey", "clearOpenAIKey", "refreshRevenue", "refreshRates",
 ];
 // Read-only helpers the connector uses (not reachable from the UI's bridge list above).
-const INTERNAL = ["revenueKr", "notify", "pcAction", "teamStatus", "teamMessage", "teamWait", "submitReview", "reviewWait"];
+const INTERNAL = ["revenueKr", "notify", "pcAction", "teamStatus", "teamMessage", "teamWait", "submitReview", "reviewWait", "imageGenerate", "imageEdit", "imageList"];
 
 /** VYRON account (always required). Reachable while locked. */
 const AUTH = {

@@ -30,7 +30,10 @@ const SHOP_UI = `UI STYLE — learn the way of designing, never copy: your own l
 - Buy buttons: a row of big bright green buttons with a thick dark green outline, the Robux icon and a huge white price; below each one what you get ("1 Egg", "5 Eggs"). Packs also show how much you save ("20% OFF") and the normal price crossed out in red above — always the true price of buying that many one by one. The best pack gets a small "Best value" tag. If they don't all fit, use two rows or let the row scroll.
 - Gift: a square light-blue button with a gift icon and "Gift" right next to every buy button that can be gifted. It opens a player picker (friends first, then everyone in the server, with avatar and name), then one clear confirm ("Gift 5 Eggs to …?").
 - Other buttons and menus use the same language: solid bright colour, faint pattern, thick dark outline, big icon with its own outline on the left, big white word.
-- Smooth: buttons grow a little on hover and press in on click (TweenService, ~0.1 s), windows pop open and closed softly, numbers count up, a soft shine on the best offer. No jumping layouts, no lag: make UI once and reuse it, stop turning models that aren't visible.
+- Smooth: buttons grow a little on hover and press in on click (TweenService, ~0.1 s), numbers count up, a soft shine on the best offer. No jumping layouts, no lag: make UI once and reuse it, stop turning models that aren't visible.
+- Size: a menu and its side tabs are one group in the MIDDLE of the screen (AnchorPoint 0.5, 0.5, Position 0.5, 0.5), not too big — about 80% of a 1280×720 layout — so the game shows around it.
+- Pop: every menu POPS: open = UIScale 0.6→1, EasingStyle Back Out ~0.35 s (AnchorPoint in the middle), tiles pop in one by one; close = Back In ~0.16 s, then hide; a tab click squashes it 0.97→1; ignore clicks mid-pop.
+- Sound: a soft cartoon pop when a menu opens (pitch ~1.1) and closes (~0.85), a short click for tabs and buttons, ±5% random pitch, quiet (0.35–0.5). Free Creator Store sounds made for games or licensed, never sounds taken from other games; check they load.
 - Fits every screen: Scale sizes with UIAspectRatioConstraint and UITextSizeConstraint, touch targets big enough for thumbs, check phone, tablet and PC sizes. Show the real price from MarketplaceService (GetProductInfo), never a typed-in number that could be wrong.`;
 /** Pack discounts and gifting. */
 const BULK_GIFT = `PACKS: everything players can buy more than once (eggs, crates, currency, boosts, spins…) is sold in packs with these discounts: ${PACKS.map(([n, off]) => (off ? `${n} = ${off}% off` : `${n} = normal price`)).join(", ")}. Pack price = single price × amount × (100 − discount) ÷ 100, rounded to whole Robux (e.g. single 120 R$ → ${PACKS.map(([n]) => `${n}: ${packPrice(120, n)} R$`).join(", ")}). Every pack is its own developer product; keep amounts, discounts and product ids together in the Monetization module, and give the UI Maker that table. Things you own once (gamepasses, VIP) have no packs. Changing a single price means working out all its pack prices again.
@@ -200,9 +203,10 @@ const QUIET_LEAD = `SAVE TOKENS — you are the only one who writes to the user,
 - A question, only if the game can't be made without the answer.
 - At the very end: one line that the game is ready, plus only what the user must do themself and what honestly doesn't work yet.
 Nothing else: never tell the user what the roles are working on, no progress, no summaries (VYRON shows who is working, idle or done). Messages to roles are short and exact: what to do, names, numbers — never repeat what's already in their jobs. Use vyron_team_wait instead of asking roles how it's going. This never means checking or testing less.`;
+const IMAGES = `PICTURES (vyron_image_generate / vyron_image_edit): only when the user added an OpenAI key, and every picture costs them money — make only pictures the game really uses, write one exact description, try with quality "low" and make the final one once. UI Maker: menu and currency icons (one style for all, transparent background), the game icon and thumbnails, the seamless stud pattern tile for the UI. Builder: seamless textures that can't be modelled well (galaxy, lava, flames, gold) and effect sprites. Always your own designs in the game's look (Studs: blocky, toy-like, bright, thick outlines): no logos, brands, real people, or anything from other games, and no text inside icons. Show them first (vyron_submit_review, kind "ui"); uploading them to Roblox is the user's job — give them a short list with vyron_notify.`;
 const EXTRA = {
-  cofounder: [OWNERS, COLLECTION, MOTION, WORLD, REBIRTH, RUN], builder: [OWNERS, MOTION, EFFECTS, COLLECTION, `LIVE EVENTS AND RUNNING AREA: you also make the light sky effects of the live events (${[...EVENTS, ...SUPER_EVENTS].map((e) => e[0]).join(", ")}), a chunky blocky bat, the gate that locks the long way, and crates/eggs that can be carried above the head. The sky itself is the UI Maker's.`],
-  coder: [OWNERS, MOTION, REVEAL, COLLECTION, WORLD, REBIRTH, RUN], ui: [OWNERS, REVEAL, COLLECTION, WORLD, REBIRTH, RUN],
+  cofounder: [OWNERS, COLLECTION, MOTION, WORLD, REBIRTH, RUN], builder: [OWNERS, MOTION, EFFECTS, IMAGES, COLLECTION, `LIVE EVENTS AND RUNNING AREA: you also make the light sky effects of the live events (${[...EVENTS, ...SUPER_EVENTS].map((e) => e[0]).join(", ")}), a chunky blocky bat, the gate that locks the long way, and crates/eggs that can be carried above the head. The sky itself is the UI Maker's.`],
+  coder: [OWNERS, MOTION, REVEAL, COLLECTION, WORLD, REBIRTH, RUN], ui: [OWNERS, IMAGES, REVEAL, COLLECTION, WORLD, REBIRTH, RUN],
   money: [OWNERS, "LUCK NEVER TOUCHES THE ROBUX SHOP: luck from events, friends, rebirths or boosts never changes the chances of anything bought with Robux. A rebirth never takes anything bought with Robux."], sound: [OWNERS, SOUNDS, REVEAL, `LIVE EVENTS: a soft start sound and a calm ambience for each (${[...EVENTS, ...SUPER_EVENTS].map((e) => e[0]).join(", ")}); for the running area: swing, bonk, pick-up, drop, timer running out, gate closing and opening, the 15-second countdown, and a special sound when one of the best crates spawns.`], animator: [OWNERS, MOTION, REVEAL, RUN], debug: [OWNERS],
 };
 for (const r of ROLE_IDS) ROLES[r].prompt += "\n" + [...EXTRA[r], r === "cofounder" ? QUIET_LEAD : QUIET].join("\n");
@@ -252,6 +256,27 @@ function studsGuide(prefs) {
   const max = p.modelQuality === "max" ? "every model" : p.featureQuality === "max" ? "the models of the main feature" : "";
   return STUDS_GUIDE + (max ? "\n\n" + studsMax(max) : q.includes("super") ? "\nSuper detailed was chosen: add a second layer of small blocky details (trims, vents, bolts, slats, little steps) in the same style." : "");
 }
+
+/** The stud overlay picture (uploaded to Roblox from the user's own stud texture): grey is see-through, light edges white, dark edges black. */
+const STUD_IMAGE = "103461112873786";
+/** The Studs look for every screen (UI Maker): the way of designing, learned from examples — never their names, icons, items or layouts. */
+const STUDS_UI = `STUDS UI STYLE — every screen looks like it's built from the same toy blocks as the world. Learn the way of designing, never copy: your own names, icons, items and layouts.
+- Blocks: every bar, button, tab and panel is a bright colour with a faint raised-stud pattern on it: many SMALL studs (about 10–12 px each, tightly spaced, much smaller than the text) in a straight grid, soft and low-contrast — each a rounded square barely lighter than the colour, with a light top-right edge and a slightly darker bottom-left edge — so they read as a gentle texture, never as big repeated squares. The colour goes from a lighter top to a darker bottom (UIGradient), with a thin light line just inside a thin black outline, rounded corners (UICorner) and a small shadow under it, so it looks like a shiny plastic block.
+- Text: a very bold rounded cartoon font, big and white, with a thick BLACK outline (UIStroke about 3–5 px, pure black, round joins), big titles; the same on every bar, tab and tile. Make text look cool, never flat: a soft top-to-bottom UIGradient (white to a hint of its bar's colour), and a black drop shadow (a copy 2–3 px lower-right, a little see-through) under titles, names and "???".
+- Rarity names: big and bold (a fixed TextSize about 26–28, smaller only for long names so they fit the tile), each rarity its own shiny gradient (Common white to grey, Uncommon lime to green, Rare light blue to deep blue, Epic pink to purple, Legendary yellow to orange, the rarest rainbow), a black outline, and a 3D edge: two darker copies of the name in the rarity's deep colour, 2 and 4 px lower. From Rare up the colours move while the menu is open (the gradient's Offset or Rotation animated with RunService; Legendary and up get a light sweeping across), and the rarest flow like a rainbow. Important words in one strong colour: yellow for NEW, red for time left and old prices, the rarity colours for chances.
+- Windows: a thick header bar in a bright gradient (e.g. yellow to orange) with studs, a big 3D-looking icon on the left that sticks out over the bar's edge, the title next to it, and a square red X with its own studs in the top-right corner. Below it the body in a darker frame, scrolling, with a chunky scroll bar. Opens with a short pop, closes softly.
+- Shop: built exactly like the Index — the same group in the middle of the screen with studded side tabs (Featured, Crates, Passes, Boosts…), a studded orange-yellow header "Shop | <tab>" with a 3D icon and the red X, the black see-through glass body, the same pop and sounds; B opens the Shop and I the Index, only one menu at a time. Inside, a scrolling list of offer cards: each card has its own bright gradient, the stud picture on top, slowly turning light rays behind a big 3D item, a thick black outline with a thin light line inside, and all text white with a soft gradient, black outline and drop shadow. Nothing may overlap: tags go where there is room (make a card taller rather than cover a price). "NEW!" tags and "BEST VALUE" bob gently while the menu is open. Below that, more detail:
+- Shop cards: in two columns, and wide cards across for big offers (VIP, server luck). Every card has its own bright colour or gradient (rainbow for the best things) with studs and a sunburst of light rays behind the item; the item big on the left, sticking out a little; "NEW" top-left; the name in big outlined letters at the top; one or two lines that say what it does; a purple price button with the Robux icon and a big white number, a little sparkle in its corners, and a square green gift button next to it. Small facts in small text at the bottom (e.g. "4.6s cooldown").
+- Crate and egg offers: the crate big in the background on the left; a row of item tiles whose background is their rarity colour (green, blue, purple, gold, rainbow for the rarest — the rarest a bit bigger with a sparkle), the chance on every tile, and a small purple eye button that shows the item in 3D. Below, lime-green buy buttons in a row, the true normal price crossed out in red above the bigger packs, and the crate's icon with ×1, ×5, ×10… under each.
+- Boost offers (e.g. server luck): a big icon with the current multiplier on it, "1x → 2x", what it does in one line, the exact numbers in small text, and in red what it does NOT change (luck never changes Robux rolls).
+- Index: only the header is studded (green, a book icon, big "Index | <page>"), with the red X next to it. The body under it is plain — no studs — black see-through glass with no other colour (black, BackgroundTransparency about 0.7), so the game shows through it, and while a menu is open the game behind it is blurred a little (a BlurEffect in Lighting, faded in and out). On the left, outside the window, a tall list of tabs, one per crate or special version (Normal, Gold, Diamond, Emerald…), each a studded bar in its own colour with a big outlined name, the open one with a bright green border; the list scrolls with the mouse wheel (ScrollingFrame) when there are more than fit. On the right a grid that also scrolls: big square tiles of black see-through glass (black, about 0.55) with a dark outline (no corner marks), the rarity name top-right in its colour, the model in the middle, and the name bottom-left — for what isn't found yet a black silhouette and a big "???". Real items have different shapes, so the silhouettes give hints.
+- HUD: on the left a grid of square dark see-through buttons, two per row, each with a big 3D-looking icon and a short white outlined word under it (Store, Index, Rebirth with its count, Invite with the friend bonus, VIP…), and a small red tilted "NEW!" tag on the one with something new. Under them toggles as wide light bars ("[T] Slow: OFF"). Bottom-left the currencies, each an icon and a big short number (476.74K, 136.04Sx) with a small + to buy more. Top-centre the event banner: an icon, the event's name with the seconds left, and one line of news under it, in yellow with a dark outline. Bottom-right a small round timer. Nothing covers the middle of the screen or the thumb areas on phones.
+- Season pass (if the game has one): a yellow header with a gift icon, the title and "Ends in 17d 23h"; a purple Quests button with a red number badge; a progress bar with the level; Skip and Gift buttons; two rows of reward tiles (Free in grey, Pass in gold) with the level above each and a padlock on locked ones; the best rewards in a column on the right; a big yellow "Buy Pass" button at the bottom.
+- Spin wheels: a frame in the wheel's own theme with blocky stepped edges, segments with the prize model, amount and chance, a pin at the top, a side panel with the chances of a secret prize pool, "Free spin in 1h 58m", buttons to buy 1 or more spins (a crossed-out price only when it's a real discount), and a Fast Spin box.
+- Big choice buttons (Buy / Sell…): wide blocks in clear colours — blue, green, red — with studs, the black outline and a big white outlined word, a short explanation under them.
+- Signs over places in the world (BillboardGui): a font and outline colour that fit the place, the name big and one small line under it ("EARN REWARDS").
+- How to build it well: the stud pattern is ONE small tiling image (ImageLabel named "Studs", ScaleType Tile, TileSize about 21×21 for two studs, so the studs are a fine, tight texture, ImageTransparency about 0.1, the same UICorner as its bar) laid over the colour — never hundreds of little frames, which make screens slow on phones. VYRON's stud picture is rbxassetid://${STUD_IMAGE}: an overlay where grey is see-through, the light edges are white and the dark edges black, so it takes the colour of whatever bar it lies on. Use it on every studded bar, tab and button (it can take a moment to load the first time). Icons and items in menus are the Builder's real models in ViewportFrames, with the camera looking at their front so faces show. A card's colour gradient goes on a background layer inside the card, never on a CanvasGroup (that tints everything on it); use a CanvasGroup only where light rays must be clipped. Keep tiles, prices and labels inside their card with a little room, and look at every screen in Studio at phone and PC size before you call it done.
+- Never: thin flat buttons, plain grey boxes, tiny text, text without an outline on a busy background, or two different styles in one game.`;
 
 /* ---------- Game setup: the questions after you describe your game (quality, main feature, look, monetization) ---------- */
 const LEVELS = {
@@ -315,6 +340,41 @@ const PREFS = {
       candy: ["Candy", "Sweets and bright colours", "candy land"],
     },
   },
+  systems: {
+    q: "Which menus and systems should the game have?", multi: true,
+    options: {
+      all: ["Everything", "All of them", "every menu and system below"],
+      store: ["Store", "Robux shop with gifting", "a Store with Robux offers, packs and gifting"],
+      index: ["Index", "Collection book with ???", "an Index of everything to collect, unfound things black with ???"],
+      rebirth: ["Rebirth", "Start over for lasting boosts", "Rebirth with lasting boosts"],
+      invite: ["Invite friends", "Friend boost", "an Invite button and the friend boost"],
+      vip: ["VIP", "A VIP pass with perks", "a VIP gamepass with perks (tag, VIP room, bonus)"],
+      trade: ["Trading", "Players swap things", "trading between players (both confirm, safe, logged)"],
+      pass: ["Season pass", "Free and paid rewards, quests", "a season pass with quests, a free and a paid reward row and a real end date"],
+      wheel: ["Spin wheel", "Free daily spin + more spins", "a spin wheel with a free spin every few hours and spins to buy"],
+      merchant: ["Merchant", "A shop that changes", "a merchant whose offers change every few hours"],
+      daily: ["Daily rewards", "Gifts for coming back", "daily and playtime rewards"],
+    },
+  },
+  mutations: {
+    q: "Should things come in special versions?", rec: "few",
+    options: {
+      none: ["No", "Every thing has one look", "no special versions"],
+      few: ["A few", "Like Gold, Diamond and Rainbow", "a few special versions (e.g. Gold, Diamond, Rainbow): rarer, worth more, their own colours and aura, and their own Index tab"],
+      many: ["Many", "8 or more, rarer and rarer", "8 or more special versions (e.g. Gold, Diamond, Emerald, Blood, Electric, Radioactive, Galaxy, Rainbow), rarer and rarer, each with its own colours, aura and Index tab"],
+      auto: ["Let the Co-Founder decide", "Whatever fits", "special versions only if they fit the game"],
+    },
+  },
+  uiColors: {
+    q: "What colours should the menus have?", rec: "sunny",
+    options: {
+      sunny: ["Bright & sunny", "Yellow headers, green buy buttons", "bright and sunny: yellow-orange headers, green buy buttons, purple Robux buttons, red close buttons"],
+      ocean: ["Cool blue", "Blue and teal", "cool blue and teal with white text and green buy buttons"],
+      neon: ["Dark neon", "Dark with glowing colours", "dark panels with glowing neon green, purple and blue"],
+      candy: ["Candy", "Pink, purple and mint", "candy colours: pink, purple and mint"],
+      auto: ["Let the Co-Founder decide", "Whatever fits the game", "colours that fit the game"],
+    },
+  },
   money: {
     q: "How much should the game sell?",
     options: {
@@ -356,6 +416,9 @@ function prefsText(p) {
   if (p.map) lines.push(`- Map: ${say("map", p.map)}.`);
   if (p.hazard) lines.push(`- What chases the players: ${say("hazard", p.hazard)}.`);
   if (p.biomes) lines.push(`- Zones / biomes: ${p.biomes.map((b) => say("biomes", b)).join("; ")}.`);
+  if (p.systems) lines.push(`- Menus and systems: ${p.systems.map((x) => say("systems", x)).join("; ")}.`);
+  if (p.mutations) lines.push(`- Special versions: ${say("mutations", p.mutations)}.`);
+  if (p.uiColors) lines.push(`- Menu colours: ${say("uiColors", p.uiColors)}.`);
   if (p.money) lines.push(`- Monetization: ${say("money", p.money)}. Always within Roblox's rules: show the odds of every paid random item (crates, eggs) in the shop before buying, check PolicyService:GetPolicyInfoForPlayerAsync(player).ArePaidRandomItemsRestricted and hide paid random items for players where they're not allowed (offer a non-random paid option instead), show clear prices, only prompt a purchase after the player clicks, and no fake countdowns or misleading buttons.`);
   return `Game settings the user chose (follow them in everything you make; where it says "the user's own words", do what they wrote):\n${lines.join("\n")}`;
 }
@@ -417,7 +480,7 @@ function workerBrief(team, role) {
   const p = team.plan, list = mapNow ? mapJobs(p).map : p.work[role] || [];
   const others = WORKERS.filter((r) => r !== role && team.roles[r]?.enabled).map((r) => ROLES[r].name);
   return `[From the Co-Founder] We're building "${p.title}". ${p.summary}
-Main features: ${p.features.join("; ") || "see summary"}.${team.prefs && prefsText(team.prefs) ? "\n" + prefsText(team.prefs) : ""}${role === "builder" && studsGuide(team.prefs) ? "\n\n" + studsGuide(team.prefs) : ""}
+Main features: ${p.features.join("; ") || "see summary"}.${team.prefs && prefsText(team.prefs) ? "\n" + prefsText(team.prefs) : ""}${role === "builder" && studsGuide(team.prefs) ? "\n\n" + studsGuide(team.prefs) : ""}${role === "ui" && cleanPrefs(team.prefs).texture === "studs" ? "\n\n" + STUDS_UI : ""}
 Team id: ${team.id}. ${mapNow ? "Only you work now; the others start when the map is finished." : `Working at the same time: ${others.join(", ") || "only you"}.`}${team.mapBuilt ? " The full map is already built: look at it first, use its places and names, and don't change it." : ""}${mapNow ? "\n\n" + MAP_FIRST : ""}
 
 Your jobs as ${ROLES[role].name}:
@@ -434,4 +497,4 @@ function directorBrief(team) {
 They are all working at the same time right now. They don't report to you, to save tokens. First write the user one short line that the team has started. Then command them like a team lead: vyron_team_wait returns as soon as a role gets free or is stuck (vyron_team_status only when you need the job lists); check what that role really made in Studio, send orders, extra details or fixes with vyron_team_message, and give it its next job straight away (or a useful extra job) so nobody sits idle. Keep them out of each other's way: one owner per object, folder and script; when two roles need the same thing (a RemoteEvent, a sound or animation name), decide the name and tell both. Make sure everything fits together (names, RemoteEvents, UI ↔ scripts ↔ shop, which sounds and animations play when). When they are done${on.includes("debug") ? ", have the Debugger check the whole place (flickering, flying parts, errors) and fix what it finds," : ""} do a full play test and have the owners fix the problems. At the very end tell the user in one line that the game is ready, plus only what they must do themself (e.g. create gamepasses, import models, upload audio or publish animations) and what doesn't work yet.`;
 }
 
-module.exports = { ROLES, ROLE_IDS, WORKERS, PREFS, STUDS_GUIDE, STUDS_SIMPLE, studsGuide, NEVER_BUILD, SHOP_UI, BULK_GIFT, PACKS, packPrice, OWNERS, MOTION, REVEAL, EFFECTS, COLLECTION, RARITIES, CRATE_ITEMS, SOUNDS, EVENTS, SUPER_EVENTS, FRIENDS, DESPAWN, WORLD, REBIRTH, RUN, luckChances, QUIET, QUIET_LEAD, mapJobs, MAP_FIRST, afterMapBrief, cleanPrefs, prefsText, planPrompt, parsePlan, workerBrief, directorBrief };
+module.exports = { ROLES, ROLE_IDS, WORKERS, PREFS, STUDS_GUIDE, STUDS_SIMPLE, STUDS_UI, studsGuide, NEVER_BUILD, SHOP_UI, BULK_GIFT, PACKS, packPrice, OWNERS, MOTION, REVEAL, EFFECTS, COLLECTION, RARITIES, CRATE_ITEMS, SOUNDS, EVENTS, SUPER_EVENTS, FRIENDS, DESPAWN, WORLD, REBIRTH, RUN, luckChances, QUIET, QUIET_LEAD, IMAGES, mapJobs, MAP_FIRST, afterMapBrief, cleanPrefs, prefsText, planPrompt, parsePlan, workerBrief, directorBrief };

@@ -422,6 +422,54 @@ const reply = (input) => [
     assert(!(await f).isError && pcDone.at(-1) === "type six");
     be.off("alert", onA);
   });
+  await test("Pictures: the team makes pictures with the user's own OpenAI key — kept secret, limited per day, only in the images folder", async () => {
+    const KEY = "sk-test" + "x".repeat(40), PNG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]).toString("base64");
+    const calls = []; let reply = { status: 200, body: { data: [{ b64_json: PNG }] } };
+    const realFetch = be.fetch;
+    be.fetch = async (url, o) => { calls.push({ url, o, body: JSON.parse(o.body) }); return { ok: reply.status < 300, status: reply.status, json: async () => reply.body }; };
+    const tool = (name, args) => client.callTool({ name, arguments: args || {} });
+    try {
+      const off = await tool("vyron_image_generate", { prompt: "a crate icon" });
+      assert(off.isError && /hasn't added an OpenAI API key/.test(off.content[0].text) && !calls.length, "off without a key, nothing is sent");
+      await assert.rejects(dispatch(ctx, "setOpenAIKey", ["hello"]), /doesn't look like an OpenAI API key/);
+      await dispatch(ctx, "setOpenAIKey", [KEY]);
+      const st = JSON.stringify(be.publicState()) + JSON.stringify(be.exportForAccount());
+      assert(be.publicState().images.set && !st.includes(KEY), "the key never reaches the app's screen or the account sync");
+      const r = await tool("vyron_image_generate", { prompt: "a blocky red crate icon", filename: "crate_icon.png", transparent: true });
+      assert(!r.isError && r.content[0].type === "image" && r.content[0].data === PNG && r.content[0].mimeType === "image/png", "Claude sees the picture");
+      const c = calls.at(-1);
+      assert.equal(c.url, "https://api.openai.com/v1/images/generations");
+      assert.equal(c.o.headers.Authorization, "Bearer " + KEY);
+      assert.deepEqual(c.body, { model: "gpt-image-2.6-flare", prompt: "a blocky red crate icon", n: 1, size: "1024x1024", quality: "medium", background: "transparent", output_format: "png" });
+      const saved = path.join(be.imageDir(), "crate_icon.png");
+      assert(fs.existsSync(saved) && fs.readFileSync(saved).toString("base64") === PNG, "saved in the project's images folder");
+      await tool("vyron_image_generate", { prompt: "again", filename: "crate_icon.png" });
+      assert(fs.existsSync(path.join(be.imageDir(), "crate_icon_2.png")), "never overwrites");
+      assert((await tool("vyron_image_generate", { prompt: "x", filename: "../evil.png" })).isError, "no paths in file names");
+      assert((await tool("vyron_image_edit", { image: "../../secret.png", prompt: "x" })).isError, "only pictures from the images folder");
+      const e = await tool("vyron_image_edit", { image: "crate_icon.png", prompt: "make it gold", filename: "crate_gold.png" });
+      assert(!e.isError && calls.at(-1).url.endsWith("/images/edits") && calls.at(-1).body.images[0].image_url === "data:image/png;base64," + PNG, "edit sends the picture itself");
+      assert(fs.readFileSync(saved).toString("base64") === PNG, "the original is untouched");
+      await dispatch(ctx, "saveSettings", [{ imageModel: "gpt-image-2.5-sunburst", imageQuality: "high", imageDailyCap: "4" }]);
+      await tool("vyron_image_generate", { prompt: "y" });
+      assert(calls.at(-1).body.model === "gpt-image-2.5-sunburst" && calls.at(-1).body.quality === "high", "the user's settings");
+      assert.equal(be.publicState().images.today, 4);
+      const n = calls.length, capped = await tool("vyron_image_generate", { prompt: "z" });
+      assert(capped.isError && /picture limit \(4\)/.test(capped.content[0].text) && calls.length === n, "the daily limit stops it before anything is paid");
+      await dispatch(ctx, "saveSettings", [{ imageDailyCap: 50, imageModel: "gpt-image-9", imageQuality: "ultra" }]);
+      assert(be.d.settings.imageModel === "gpt-image-2.6-flare" && be.d.settings.imageQuality === "medium", "unknown settings fall back");
+      reply = { status: 401, body: { error: { message: "Incorrect API key provided: " + KEY } } };
+      const bad = await tool("vyron_image_generate", { prompt: "w" });
+      assert(bad.isError && /key is wrong or was revoked/.test(bad.content[0].text) && !bad.content[0].text.includes(KEY));
+      reply = { status: 400, body: { error: { message: "Your request was rejected by the safety system. key " + KEY } } };
+      const mod = await tool("vyron_image_generate", { prompt: "w" });
+      assert(/safety system/.test(mod.content[0].text) && !mod.content[0].text.includes(KEY), "OpenAI's reason, without the key");
+      const list = JSON.parse((await tool("vyron_image_list")).content[0].text);
+      assert(list.pictures.includes("crate_gold.png"));
+      await dispatch(ctx, "clearOpenAIKey", []);
+      assert(!be.publicState().images.set && !be.d.secrets.openaiKey);
+    } finally { be.fetch = realFetch; delete be.d.secrets.openaiKey; }
+  });
   await test("screenshots reach Claude as an image with the mouse position", async () => {
     await dispatch(ctx, "saveSettings", [{ pcControl: "on" }]);
     const r = await pcCall("vyron_pc_screenshot");

@@ -254,6 +254,9 @@ function fakeSpawn(exe, args, opts) {
     const pl = R.planPrompt("x", R.WORKERS), db = R.directorBrief({ id: "x", plan: PLAN, roles: Object.fromEntries(R.ROLE_IDS.map((r) => [r, { enabled: true }])) });
     assert(/enough for the team to make the full game without asking/.test(pl) && /enough detail that they can be done without asking/.test(pl) && /names, sizes, colours, numbers/.test(pl), "the full plan from one prompt");
     assert(/one short line that the team has started/.test(db) && /as soon as a role gets free/.test(db) && !/final report/.test(db + pr("cofounder")) && !/one-line report/.test(R.workerBrief({ id: "x", plan: PLAN, roles: {} }, "coder")));
+    // Pictures: the UI Maker and Builder know when (and when not) to make them
+    for (const r of ["ui", "builder"]) assert(pr(r).includes(R.IMAGES), r + " can make pictures");
+    assert(!pr("coder").includes(R.IMAGES) && /costs them money/.test(R.IMAGES) && /no logos, brands, real people, or anything from other games/.test(R.IMAGES) && /uploading them to Roblox is the user's job/.test(R.IMAGES));
     // Rarities: 14+, one crate each, 15+ things in each
     assert(R.RARITIES.length >= 14 && R.CRATE_ITEMS >= 15 && new Set(R.RARITIES.map((x) => x[0])).size === R.RARITIES.length && new Set(R.RARITIES.map((x) => x[2])).size === R.RARITIES.length, "14+ different rarities");
     const odds = R.RARITIES.slice(1).map((x) => x[1]);
@@ -264,6 +267,20 @@ function fakeSpawn(exe, args, opts) {
     const pp = R.parsePlan("```json\n" + JSON.stringify(many) + "\n```");
     assert(pp.work.builder.length === 24 && pp.work.builder[0].details.length === 4000 && pp.work.coder.length === 12, "room for one Builder job per crate");
     assert(/one task per crate/.test(R.planPrompt("x", ["builder", "coder"])));
+    // Studs UI: the UI Maker designs every screen in the studs style, only when the Studs look is picked
+    const ub = (texture, role = "ui") => R.workerBrief({ id: "x", plan: PLAN, prefs: { texture }, roles: { ui: { enabled: true } } }, role);
+    assert(ub("studs").includes(R.STUDS_UI) && !ub("smooth").includes("STUDS UI STYLE") && !ub("studs", "coder").includes("STUDS UI STYLE") && !ub("studs", "builder").includes("STUDS UI STYLE"));
+    for (const re of [/never copy/, /faint raised-stud pattern/, /square red X/, /purple price button/, /square green gift button/, /"Index \| <page>"/, /black silhouette and a big "\?\?\?"/, /Season pass/, /Spin wheels/, /luck never changes Robux rolls/, /only when it's a real discount/, /ONE small tiling image/, /never on a CanvasGroup/, /camera looking at their front/, /only the header is studded/, /rbxassetid:\/\/103461112873786/, /TileSize about 21×21/, /many SMALL studs/, /never as big repeated squares/, /thick BLACK outline/, /Shop: built exactly like the Index/, /Nothing may overlap/, /each rarity its own shiny gradient/, /a 3D edge: two darker copies/, /From Rare up the colours move/, /black see-through glass with no other colour/, /no corner marks/, /BackgroundTransparency about 0\.7\), so the game shows through it/, /BlurEffect in Lighting/, /scrolls with the mouse wheel/]) assert(re.test(R.STUDS_UI), "studs UI: " + re);
+    for (const re of [/every menu POPS/, /one group in the MIDDLE of the screen/, /EasingStyle Back Out/, /soft cartoon pop when a menu opens/, /never sounds taken from other games/]) assert(re.test(R.ROLES.ui.prompt), "UI Maker, every look: " + re);
+    // More quiz questions: menus and systems, special versions, menu colours
+    const q = R.cleanPrefs({ systems: ["store", "trade", "nope", "store"], mutations: "many", uiColors: "neon" });
+    assert.deepEqual(q, { systems: ["store", "trade"], mutations: "many", uiColors: "neon" });
+    assert.deepEqual(R.cleanPrefs({ systems: ["pass", "all"] }).systems, ["all"], "Everything on its own");
+    assert.deepEqual(R.cleanPrefs({ mutations: "lots", uiColors: 3 }), {}, "unknown answers dropped");
+    const qt = R.prefsText(q);
+    assert(/Menus and systems: a Store with Robux offers, packs and gifting; trading between players/.test(qt) && /Special versions: 8 or more/.test(qt) && /Menu colours: dark panels with glowing neon/.test(qt), qt);
+    const gs = be.publicState().gameSetup;
+    assert(gs.systems.multi && gs.systems.options.length === 11 && gs.mutations.rec === "few" && gs.uiColors.rec === "sunny" && Object.keys(gs).length === 11, "the new questions are in the quiz");
     // The whole trained Studs style needs Studs + High (or better) on BOTH quality questions; Max adds insane, still blocky detail
     const sg = (modelQuality, featureQuality, texture = "studs") => R.studsGuide({ modelQuality, featureQuality, texture });
     assert.equal(sg("high", "high"), R.STUDS_GUIDE, "High + High + Studs = exactly the trained style");

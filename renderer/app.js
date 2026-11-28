@@ -676,7 +676,7 @@ function teamMembers(team) {
 function gsSteps() {
   const s = [["modelQuality"], ["feature", "featureQuality"], ["texture"]];
   if (ui.gs?.prefs.texture === "studs") s.push(["map", "hazard", "biomes"]);
-  s.push(["money"], ["team"]); // last: who's on your team
+  s.push(["systems"], ["mutations", "uiColors"], ["money"], ["team"]); // last: who's on your team
   return s;
 }
 /** Recommended helpers for most games (the Co-Founder and the Builder are always there). */
@@ -760,7 +760,7 @@ function prefTags(p) {
   const G = S.gameSetup; if (!G || !p) return "";
   const own = (k) => `“${String(p.custom?.[k] || "").slice(0, 40)}${String(p.custom?.[k] || "").length > 40 ? "…" : ""}”`;
   const name = (k) => (p[k] === "custom" ? own(k) : G[k]?.options.find((o) => o.id === p[k])?.name);
-  const tags = [p.modelQuality && "Models: " + name("modelQuality"), p.feature && p.feature !== "auto" && name("feature") + (p.featureQuality ? ": " + name("featureQuality") : ""), p.feature === "auto" && p.featureQuality && "Main feature: " + name("featureQuality"), p.texture && "Look: " + name("texture"), p.map && "Map: " + name("map"), p.hazard && "Chased by: " + name("hazard"), p.biomes?.length && "Worlds: " + p.biomes.map((b) => (b === "custom" ? own("biomes") : G.biomes?.options.find((o) => o.id === b)?.name)).filter(Boolean).join(", "), p.money && "Robux: " + name("money")].filter(Boolean);
+  const tags = [p.modelQuality && "Models: " + name("modelQuality"), p.feature && p.feature !== "auto" && name("feature") + (p.featureQuality ? ": " + name("featureQuality") : ""), p.feature === "auto" && p.featureQuality && "Main feature: " + name("featureQuality"), p.texture && "Look: " + name("texture"), p.map && "Map: " + name("map"), p.hazard && "Chased by: " + name("hazard"), p.biomes?.length && "Worlds: " + p.biomes.map((b) => (b === "custom" ? own("biomes") : G.biomes?.options.find((o) => o.id === b)?.name)).filter(Boolean).join(", "), p.systems?.length && "Menus: " + p.systems.map((x) => (x === "custom" ? own("systems") : G.systems?.options.find((o) => o.id === x)?.name)).filter(Boolean).join(", "), p.mutations && "Versions: " + name("mutations"), p.uiColors && "Menu colours: " + name("uiColors"), p.money && "Robux: " + name("money")].filter(Boolean);
   return tags.length ? `<div class="row wrap" style="gap:6px;margin-top:8px">${tags.map((t) => `<span class="tag gs-tag">${esc(t)}</span>`).join("")}</div>` : "";
 }
 
@@ -981,6 +981,17 @@ function devexPanel() {
 
 
 /* ---------- settings ---------- */
+/** Settings → Pictures: the team makes pictures with the user's own OpenAI key. */
+function picturesPanel() {
+  const P = S.images || {}, s = S.settings;
+  return `<div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("image")}</div><div class="grow"><div class="h3">Pictures</div><div class="faint" style="font-size:12.5px">The UI Maker and Builder can make icons, game icons, thumbnails and textures with OpenAI's image models.</div></div><span class="chip ${P.set ? "ok" : ""}"><span class="dot ${P.set ? "connected" : "unknown"}"></span>${P.set ? "On" : "Off"}</span></div>
+    ${P.set ? `<div class="row" style="gap:8px"><span class="grow faint" style="font-size:12.5px">OpenAI key saved on this PC (encrypted). ${P.today || 0} of ${P.cap} pictures made today.</span><button class="btn sm ghost danger" data-act="clearOpenAIKey">Remove key</button></div>`
+      : `<div class="row" style="gap:8px"><input class="input grow" type="password" id="openaiKey" placeholder="Paste your OpenAI API key (sk-…)" autocomplete="off"><button class="btn primary" data-act="saveOpenAIKey">Save key</button></div>
+      <div class="faint" style="font-size:12px">Make a key at platform.openai.com → API keys. API use is paid separately from ChatGPT; set a monthly limit there. If you're under 18, ask a parent to set up the account and billing. The key stays on this PC: it isn't synced to your VYRON account and the AIs never see it.</div>`}
+    <label class="field"><span>Model</span><select class="select" data-change="setting" data-key="imageModel">${(P.models || []).map((m) => `<option value="${m}" ${P.model === m ? "selected" : ""}>${m.replace("gpt-image-", "GPT-Image ").replace("-flare", " Flare").replace("-sunburst", " Sunburst")}${m === (P.models || [])[0] ? " (newest)" : ""}</option>`).join("")}</select></label>
+    <div class="row"><span class="grow">Quality <span class="faint" style="font-size:12px">(higher costs more)</span></span><div class="seg">${[["low", "Low"], ["medium", "Medium"], ["high", "High"]].map(([k, l]) => `<button class="${(P.quality || "medium") === k ? "on" : ""}" data-act="setting" data-key="imageQuality" data-val="${k}">${l}</button>`).join("")}</div></div>
+    <label class="field"><span>Most pictures per day</span><select class="select" data-change="setting" data-key="imageDailyCap">${[5, 10, 20, 30, 50, 100].map((n) => `<option value="${n}" ${(P.cap || 30) === n ? "selected" : ""}>${n}</option>`).join("")}</select><small>A safety limit so the team can't spend more than you expect.</small></label></div>`;
+}
 VIEWS.settings = () => {
   const s = S.settings, C = S.claude;
   const A = S.auth;
@@ -1018,6 +1029,7 @@ VIEWS.settings = () => {
       <div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("sparkle")}</div><div class="grow"><div class="h3">Setup &amp; connections</div><div class="faint" style="font-size:12.5px">${S.setup ? S.setup.done + " of " + S.setup.total + " connected" : ""}</div></div><button class="btn sm" data-act="openSetup">Open setup</button></div>
         <div class="row" style="gap:8px"><span class="grow">Discord <span class="faint" style="font-size:12px">${S.discord?.set ? "connected — VYRON posts task news to your channel" + (S.discord.lastError ? " · " + esc(S.discord.lastError) : "") : "not connected"}</span></span>${S.discord?.set ? '<button class="btn sm" data-act="discordTest">Test</button><button class="btn sm ghost" data-act="discordClear">Disconnect</button>' : '<button class="btn sm" data-act="openSetup">Connect</button>'}</div></div>
       ${hotkeysPanel()}
+      ${picturesPanel()}
       <div class="panel pad stack"><div class="row" style="gap:12px"><div class="ava" style="border-radius:10px">${ic("bell")}</div><div class="grow"><div class="h3">Notifications &amp; sounds</div><div class="faint" style="font-size:12.5px">When a task is done, fails, runs out of usage, or Claude needs your OK.</div></div></div>
         <div class="row"><span class="grow">Pop-ups</span><div class="seg">${[["vyron", "VYRON style"], ["windows", "Windows"], ["off", "Off"]].map(([k, l]) => `<button class="${(s.notifyStyle || "vyron") === k ? "on" : ""}" data-act="setting" data-key="notifyStyle" data-val="${k}">${l}</button>`).join("")}</div><button class="btn sm ghost" data-act="testPopup" title="Show a test pop-up">Test</button></div>
         <div class="row"><span class="grow">Keep running when I close the window <span class="faint" style="font-size:12px">(Claude keeps working; VYRON stays by the clock)</span></span><div class="toggle ${s.keepRunning !== false ? "on" : ""}" data-act="setting" data-key="keepRunning" data-val="${s.keepRunning === false}"></div></div>
@@ -1256,6 +1268,8 @@ const ACT = {
   async unlinkRoblox() { if (confirm("Unlink your Roblox account and sign it out of VYRON?")) { await call("unlinkRoblox"); toast("Roblox account unlinked"); } },
   async refreshRevenue() { await call("refreshRevenue", true); },
   revTf: (el) => { ui.revTf = el.dataset.id; render(); },
+  async saveOpenAIKey() { const k = val("openaiKey"); if (!k.trim()) return; await call("setOpenAIKey", k); if ($("#openaiKey")) $("#openaiKey").value = ""; toast("OpenAI key saved — the team can make pictures"); },
+  async clearOpenAIKey() { if (confirm("Remove the OpenAI key? The team can't make pictures until you add one again.")) await call("clearOpenAIKey"); },
   async saveRbxKey() { const k = val("rbxKey"); if (!k.trim()) return; await call("setRobloxApiKey", k); $("#rbxKey").value = ""; toast("API key saved — loading game analytics"); },
   async clearRbxKey() { if (confirm("Remove the Open Cloud API key?")) await call("clearRobloxApiKey"); },
   async pcAnswer(el) { await call("pcAnswer", el.dataset.id, el.dataset.val); },
@@ -1270,7 +1284,7 @@ const ACT = {
     if (!text && !S.ideas.picked.length) return toast("Tell the Co-Founder your idea first (or pick some ideas)", "error");
     let saved = {}; try { saved = JSON.parse(lsGet("gamePrefs") || "{}"); } catch { /* none */ }
     const mine = (S.settings.teamRoles || []).filter((r) => !ALWAYS.includes(r));
-    ui.gs = { text, ideas: [...S.ideas.picked], step: 0, prefs: { feature: "auto", modelQuality: "high", featureQuality: "high", ...saved }, roles: (S.settings.teamRoles || []).length ? mine : [...REC_ROLES] };
+    ui.gs = { text, ideas: [...S.ideas.picked], step: 0, prefs: { feature: "auto", modelQuality: "high", featureQuality: "high", systems: ["store", "index", "rebirth", "invite", "vip"], mutations: "few", uiColors: "sunny", ...saved }, roles: (S.settings.teamRoles || []).length ? mine : [...REC_ROLES] };
     ui.gsShown = null;
     gameSetupModal();
   },

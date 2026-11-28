@@ -198,6 +198,15 @@ class ControlServer {
       return "Shown in VYRON.";
     });
 
+    const imgNote = " Costs the user money per picture (their own OpenAI key) and only works when they added one in VYRON → Settings → Pictures. Saved as PNG in the project's images folder; the user uploads pictures to Roblox.";
+    const imgOpts = { filename: z.string().optional().describe("Simple file name, e.g. shop_icon.png"), size: z.enum(["1024x1024", "1536x1024", "1024x1536"]).optional(), quality: z.enum(["low", "medium", "high"]).optional().describe("low for tries, the user's setting for final pictures"), transparent: z.boolean().optional().describe("Transparent background (icons, effects)") };
+    tool("vyron_image_generate", "Make a new picture (icon, game icon, thumbnail, texture, effect sprite, UI pattern) from a detailed description." + imgNote, { prompt: z.string().describe("Exactly what to draw: subject, style, colours, background, framing"), ...imgOpts }, async (a) => {
+      const r = await this.call("imageGenerate", a); return { __image: r.b64, mime: "image/png", text: r.text };
+    });
+    tool("vyron_image_edit", "Make a changed copy of a picture from the project's images folder (the original stays)." + imgNote, { image: z.string().describe("File name in the images folder"), prompt: z.string().describe("What to change, exactly"), ...imgOpts }, async (a) => {
+      const r = await this.call("imageEdit", a); return { __image: r.b64, mime: "image/png", text: r.text };
+    });
+    tool("vyron_image_list", "The pictures in the project's images folder, and how many may still be made today.", {}, async () => this.call("imageList"));
     const xy = { x: z.number().describe("x in pixels of the latest vyron_pc_screenshot"), y: z.number().describe("y in pixels of the latest vyron_pc_screenshot") };
     const pcNote = " Only works when the user turned on PC control in VYRON; they may have to approve it.";
     tool("vyron_pc_screenshot", "See the user's whole screen (all monitors). Use before clicking: coordinates for the other vyron_pc_ tools are pixels in this image." + pcNote, {}, async () => {

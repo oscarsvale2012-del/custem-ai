@@ -46,6 +46,9 @@ if ($h -ne 0) { if ([VyWin]::IsIconic($h)) { [VyWin]::ShowWindowAsync($h, 9) | O
   return new Promise((resolve) => require("child_process").execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(ps, "utf16le").toString("base64")], { windowsHide: true, timeout: 10000 }, () => resolve()));
 }
 
+/** OpenAI image models VYRON can use (newest first). */
+const IMAGE_MODELS = ["gpt-image-2.6-flare", "gpt-image-2.6-sunburst", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"];
+const today = () => new Date().toISOString().slice(0, 10);
 class Backend extends EventEmitter {
   constructor({ dataDir, encrypt, decrypt, host = {}, fetchImpl, claude, studio = true, pc }) {
     super();
@@ -152,6 +155,7 @@ class Backend extends EventEmitter {
       setup: this.setupStatus(),
       reviews: this.d.reviews.slice(-60).reverse().map(({ file, ...r }) => ({ ...r, hasImage: !!file })),
       discord: { set: !!this.d.secrets.discordWebhook, lastError: this.discordError || null },
+      images: this.imagesPublic(),
       studioError: this.studioError,
       revenue: this.revenuePublic(),
       rates: this.d.rates,
@@ -173,7 +177,7 @@ class Backend extends EventEmitter {
   }
 
   saveSettings(patch) {
-    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "teamParallel", "mapFirst", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook", "uiSounds", "uiHover", "uiPack", "blender", "autoApprove", "usageStyle", "autoOpenBlender", "autoConnectBlender", "blenderStartPrompt", "blenderExe", "hotkeysOn"]) if (k in patch) this.d.settings[k] = patch[k];
+    for (const k of ["animations", "reduceEffects", "theme", "claudeAccess", "claudeModel", "claudeParallel", "teamParallel", "mapFirst", "imageModel", "imageQuality", "imageDailyCap", "pcControl", "keepRunning", "notifyStyle", "sounds", "volume", "soundMap", "themeId", "themeLook", "uiSounds", "uiHover", "uiPack", "blender", "autoApprove", "usageStyle", "autoOpenBlender", "autoConnectBlender", "blenderStartPrompt", "blenderExe", "hotkeysOn"]) if (k in patch) this.d.settings[k] = patch[k];
     const S = this.d.settings;
     const hk0 = JSON.stringify([S.hotkeysOn, S.hotkeys]);
     if (patch.hotkeys && typeof patch.hotkeys === "object") {
@@ -208,6 +212,9 @@ class Backend extends EventEmitter {
     this.d.settings.claudeParallel = Math.min(20, Math.max(1, Math.round(Number(this.d.settings.claudeParallel) || 3)));
     S.teamParallel = Math.min(7, Math.max(0, Math.round(Number(S.teamParallel) || 0))); // 0 = the whole team at once
     S.mapFirst = S.mapFirst !== false; // on unless turned off
+    if (!IMAGE_MODELS.includes(S.imageModel)) S.imageModel = IMAGE_MODELS[0];
+    if (!["low", "medium", "high"].includes(S.imageQuality)) S.imageQuality = "medium";
+    S.imageDailyCap = Math.min(500, Math.max(1, Math.round(Number(S.imageDailyCap) || 30)));
     this.claude.pump();
     this.d.settings.claudeModel = String(this.d.settings.claudeModel || "").replace(/[^\w.:\-[\]]/g, "").slice(0, 60);
     this.save();
@@ -301,6 +308,7 @@ class Backend extends EventEmitter {
     d.roblox = { account: null, history: [], analytics: {}, summary: null, games: [] };
     delete d.secrets.robloxApiKey;
     delete d.secrets.discordWebhook;
+    delete d.secrets.openaiKey;
     this.claude.importTasks([]);
     this.host.robloxLogout?.();
     this.save();
@@ -1515,6 +1523,88 @@ Work in the open Blender file: build it step by step with clean, named objects a
     await this.host.robloxLogout?.();
     this.d.roblox = { account: null, history: [], analytics: this.d.roblox.analytics || {}, summary: null, games: [] };
     this.save();
+  }
+  /* ================= pictures (OpenAI Images, with the user's own key) ================= */
+  setOpenAIKey(key) {
+    key = String(key || "").trim();
+    if (!/^sk-[A-Za-z0-9_-]{20,}$/.test(key)) throw new Error("That doesn't look like an OpenAI API key (it starts with sk-).");
+    this.d.secrets.openaiKey = key;
+    this.save();
+    this.log("OpenAI key saved — the team can make pictures", "ok", "Pictures");
+  }
+  clearOpenAIKey() { delete this.d.secrets.openaiKey; this.save(); this.log("OpenAI key removed", "info", "Pictures"); }
+  imagesPublic() {
+    const S = this.d.settings, u = this.d.imageUsage || {};
+    return { set: !!this.d.secrets.openaiKey, model: S.imageModel || IMAGE_MODELS[0], quality: S.imageQuality || "medium", cap: S.imageDailyCap || 30, today: u.day === today() ? u.n : 0, models: IMAGE_MODELS };
+  }
+  imageDir() { const d = path.join(this.workDir(), "images"); fs.mkdirSync(d, { recursive: true }); return d; }
+  _imageName(filename) {
+    let name = String(filename || "picture.png").trim();
+    if (path.basename(name) !== name || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(name)) throw new Error("filename must be a simple name like shop_icon.png (letters, numbers, . _ -).");
+    if (!/\.png$/i.test(name)) name += ".png";
+    const dir = this.imageDir();
+    let out = path.join(dir, name), i = 2;
+    while (fs.existsSync(out)) out = path.join(dir, name.replace(/\.png$/i, `_${i++}.png`));
+    return out;
+  }
+  async _openaiImage(endpoint, body) {
+    const key = this.d.secrets.openaiKey;
+    if (!key) throw new Error("Pictures are off: the user hasn't added an OpenAI API key in VYRON → Settings → Pictures. Make the game without new pictures, or tell the user.");
+    const u = this.d.imageUsage && this.d.imageUsage.day === today() ? this.d.imageUsage : { day: today(), n: 0 };
+    const cap = this.d.settings.imageDailyCap || 30;
+    if (u.n >= cap) throw new Error(`Today's picture limit (${cap}) is reached. The user can raise it in VYRON → Settings → Pictures.`);
+    const res = await this.fetch("https://api.openai.com/v1/images/" + endpoint, { method: "POST", headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(240000) }).catch(() => null);
+    if (!res) throw new Error("Couldn't reach OpenAI. Check the internet connection and try again.");
+    let j = null; try { j = await res.json(); } catch { /* not JSON */ }
+    const why = clip(String(j?.error?.message || "").replace(/sk-[A-Za-z0-9_-]+/g, "sk-…"), 300);
+    if (res.status === 401) throw new Error("OpenAI says the API key is wrong or was revoked. The user can add a new one in VYRON → Settings → Pictures.");
+    if (res.status === 403) throw new Error("OpenAI refused: " + (why || "this key can't use image models yet (the account may need Organization Verification in the OpenAI dashboard)."));
+    if (res.status === 429) throw new Error("OpenAI's limit was reached (too many pictures, or no credit left): " + (why || "try again later or check billing."));
+    if (!res.ok) throw new Error(`OpenAI couldn't make it (${res.status})${why ? ": " + why : ""}. If it's about safety rules, change the description.`);
+    const b64 = j?.data?.[0]?.b64_json;
+    if (!b64) throw new Error("OpenAI sent no picture back.");
+    this.d.imageUsage = { day: u.day, n: u.n + 1 }; this.save(); this.changed();
+    return b64;
+  }
+  _imageBody(o) {
+    const prompt = String(o.prompt || "").trim();
+    if (!prompt) throw new Error("Describe the picture first.");
+    if (prompt.length > 32000) throw new Error("The description is too long (at most 32,000 characters).");
+    const S = this.d.settings;
+    return {
+      model: IMAGE_MODELS.includes(S.imageModel) ? S.imageModel : IMAGE_MODELS[0], prompt, n: 1,
+      size: ["1024x1024", "1536x1024", "1024x1536"].includes(o.size) ? o.size : "1024x1024",
+      quality: ["low", "medium", "high"].includes(o.quality) ? o.quality : ["low", "medium", "high"].includes(S.imageQuality) ? S.imageQuality : "medium",
+      background: o.transparent ? "transparent" : "auto", output_format: "png",
+    };
+  }
+  /** The team's "make a picture" tool: saved as a PNG in the project's images folder. */
+  async imageGenerate(o = {}) {
+    const body = this._imageBody(o), out = this._imageName(o.filename);
+    const b64 = await this._openaiImage("generations", body);
+    fs.writeFileSync(out, Buffer.from(b64, "base64"));
+    this.log(`Picture made: ${path.basename(out)}`, "ok", "Pictures");
+    return { path: out, b64, text: `Picture saved to ${out}` };
+  }
+  /** Change a copy of a picture from the project's images folder (the original stays). */
+  async imageEdit(o = {}) {
+    const dir = this.imageDir(), src = path.resolve(dir, String(o.image || ""));
+    const rel = path.relative(dir, src);
+    if (!o.image || rel.startsWith("..") || path.isAbsolute(rel)) throw new Error("Only pictures in the project's images folder can be changed: " + dir);
+    if (!fs.existsSync(src) || !fs.statSync(src).isFile()) throw new Error("That picture isn't in the images folder.");
+    const ext = path.extname(src).toLowerCase(), mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[ext];
+    if (!mime) throw new Error("Use a PNG, JPG or WEBP picture.");
+    if (fs.statSync(src).size > 15 * 1024 * 1024) throw new Error("The picture must be smaller than 15 MB.");
+    const body = { ...this._imageBody(o), images: [{ image_url: `data:${mime};base64,${fs.readFileSync(src).toString("base64")}` }] };
+    const out = this._imageName(o.filename || path.basename(src, ext) + "_edit.png");
+    const b64 = await this._openaiImage("edits", body);
+    fs.writeFileSync(out, Buffer.from(b64, "base64"));
+    this.log(`Picture changed: ${path.basename(out)}`, "ok", "Pictures");
+    return { path: out, b64, text: `New picture saved to ${out} (the original wasn't changed)` };
+  }
+  imageList() {
+    const dir = this.imageDir(), files = fs.readdirSync(dir).filter((f) => /\.(png|jpe?g|webp)$/i.test(f));
+    return { folder: dir, pictures: files, today: this.imagesPublic().today, limit: this.imagesPublic().cap };
   }
   setRobloxApiKey(key) {
     key = String(key || "").trim();
